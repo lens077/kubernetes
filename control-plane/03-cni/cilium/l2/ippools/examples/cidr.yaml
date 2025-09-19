@@ -1,0 +1,8 @@
+# https://docs.cilium.io/en/stable/network/lb-ipam/#lb-ipam-pools
+apiVersion: "cilium.io/v2"
+kind: CiliumLoadBalancerIPPool
+metadata:
+  name: "lb-pool"
+spec:
+  blocks:
+    - cidr: "192.168.3.0/24

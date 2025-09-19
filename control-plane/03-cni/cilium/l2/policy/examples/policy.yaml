@@ -1,0 +1,10 @@
+apiVersion: cilium.io/v2alpha1
+kind: CiliumL2AnnouncementPolicy
+metadata:
+  name: default-policy
+spec:
+  serviceSelector: {}
+  nodeSelector: {}
+  externalIPs: true
+  interfaces:
+    - enp0s5 # 你的机器的网卡设备，如果不同，需要改成正则

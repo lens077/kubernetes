@@ -24,22 +24,146 @@ done
 echo "http_proxy:$http_proxy https_proxy:$https_proxy"
 
 # 此命令用于生成containerd默认的配置文件
-generate_default_config_file () {
+generate_default_config_filecontainerd_v1  () {
   containerd config default | tee /etc/containerd/config.toml
 }
 
 # 添加源命令参数
-update_config_file (){
+update_config_file_containerd_v1  (){
   export CONTAINERD_CONFIG_FILE_PATH="/etc/containerd/config.toml"
   sed -i '/\[plugins\."io\.containerd\.grpc\.v1\.cri"\.registry\]/!b;n;s/config_path = .*/config_path = "\/etc\/containerd\/certs.d"/' /etc/containerd/config.toml
   cat -n /etc/containerd/config.toml | grep -A 1 "\[plugins\.\"io\.containerd\.grpc\.v1\.cri\"\.registry\]"
 }
 
+update_config_file_containerd_v2() {
+  export CONTAINERD_CONFIG_FILE_PATH="/etc/containerd/config.toml"
+
+  # 匹配 [plugins."io.containerd.grpc.v1.cri".registry] 区块，并修改其下的 config_path
+  sed -i -E \
+    '/\[plugins\."io\.containerd\.grpc\.v1\.cri"\.registry\]/ {
+      :a
+      n
+      /^[[:space:]]*config_path[[:space:]]*=/ {
+        s|config_path[[:space:]]*=.*|config_path = "/etc/containerd/certs.d"|
+        b
+      }
+      ba
+    }' "$CONTAINERD_CONFIG_FILE_PATH"
+
+  # 验证修改
+  echo "修改后的配置片段:"
+  grep -A 2 '\[plugins\."io\.containerd\.grpc\.v1\.cri"\.registry\]' "$CONTAINERD_CONFIG_FILE_PATH"
+}
 set_proxy_url () {
   # docker hub镜像加速
   mkdir -p /etc/containerd/certs.d/docker.io
   cat > /etc/containerd/certs.d/docker.io/hosts.toml << EOF
+[host."https://a.ussh.net"]
+capabilities = ["pull", "resolve"]
+
+[host."https://docker.io"]
 server = "https://docker.io"
+
+[host."https://docker.1ms.run"]
+capabilities = ["pull", "resolve"]
+
+[host."https://docker.nastool.de"]
+server = "https://docker.io"
+
+[host."https://dockerpull.org"]
+capabilities = ["pull", "resolve"]
+
+[host."https://docker.unsee.tech/"]
+server = "https://docker.io"
+
+[host."https://docker.1panel.live/"]
+capabilities = ["pull", "resolve"]
+
+[host."https://docker.udayun.com/"]
+server = "https://docker.io"
+
+[host."https://docker.nastool.de/"]
+capabilities = ["pull", "resolve"]
+
+[host."https://646f636b6572.boown.com"]
+server = "https://docker.io"
+
+[host."https://docker.rainbond.cc"]
+capabilities = ["pull", "resolve"]
+
+[host."https://dockerproxy.cn"]
+server = "https://docker.io"
+
+[host."https://docker.udayun.com"]
+capabilities = ["pull", "resolve"]
+
+[host."https://docker.211678.top"]
+server = "https://docker.io"
+
+[host."https://docker-cf.registry.cyou"]
+capabilities = ["pull", "resolve"]
+
+[host."https://dockercf.jsdelivr.fyi"]
+server = "https://docker.io"
+
+[host."https://docker.jsdelivr.fyi"]
+capabilities = ["pull", "resolve"]
+
+[host."https://dockertest.jsdelivr.fyi"]
+server = "https://docker.io"
+
+[host."https://dockerproxy.com"]
+capabilities = ["pull", "resolve"]
+
+[host."https://mirror.baidubce.com"]
+server = "https://docker.io"
+
+[host."https://docker.m.daocloud.io"]
+capabilities = ["pull", "resolve"]
+
+[host."https://docker.nju.edu.cn"]
+server = "https://docker.io"
+
+[host."https://docker.mirrors.sjtug.sjtu.edu.cn"]
+capabilities = ["pull", "resolve"]
+
+[host."https://docker.mirrors.ustc.edu.cn"]
+server = "https://docker.io"
+
+[host."https://mirror.iscas.ac.cn"]
+capabilities = ["pull", "resolve"]
+
+[host."https://docker.rainbond.cc"]
+server = "https://docker.io"
+
+server = "https://docker.io"
+[host."https://646f636b6572.boown.com"]
+capabilities = ["pull", "resolve"]
+
+[host."https://docker.1panel.live"]
+capabilities = ["pull", "resolve"]
+
+[host."https://do.nark.eu.org"]
+capabilities = ["pull", "resolve"]
+
+[host."https://dc.j8.work"]
+capabilities = ["pull", "resolve"]
+
+[host."https://pilvpemn.mirror.aliyuncs.com"]
+capabilities = ["pull", "resolve"]
+
+[host."https://docker.m.daocloud.io"]
+capabilities = ["pull", "resolve"]
+
+[host."https://dockerproxy.com"]
+capabilities = ["pull", "resolve"]
+
+[host."https://docker.mirrors.ustc.edu.cn"]
+capabilities = ["pull", "resolve"]
+
+[host."https://docker.nju.edu.cn"]
+capabilities = ["pull", "resolve"]
+
 [host."https://646f636b6572.boown.com"]
 capabilities = ["pull", "resolve"]
 
@@ -83,6 +207,9 @@ EOF
   tee /etc/containerd/certs.d/gcr.io/hosts.toml << 'EOF'
 server = "https://gcr.io"
 
+[host."https://gcr.nju.edu.cn"]
+  capabilities = ["pull", "resolve", "push"]
+
 [host."https://gcr.kubesre.xyz"]
   capabilities = ["pull", "resolve", "push"]
 EOF
@@ -102,6 +229,9 @@ EOF
   mkdir -p /etc/containerd/certs.d/k8s.gcr.io
   tee /etc/containerd/certs.d/k8s.gcr.io/hosts.toml << 'EOF'
 server = "https://k8s.gcr.io"
+[host."https://gcr.nju.edu.cn/google-containers/"]
+  capabilities = ["pull", "resolve", "push"]
+
 [host."https://k8s-gcr-io.mirrors.sjtug.sjtu.edu.cn"]
   capabilities = ["pull", "resolve", "push"]
 
@@ -171,6 +301,7 @@ server = "https://rocks.canonical.com"
   capabilities = ["pull", "resolve", "push"]
 EOF
 
+  systemctl daemon-reload
   systemctl restart containerd
   # systemctl status containerd
 
@@ -208,9 +339,9 @@ verify () {
 }
 
 main () {
-  update_config_file
+  update_config_file_containerd_v2
   set_proxy_url
-  http_proxy "$https_proxy" "$http_proxy"
+  #http_proxy "$https_proxy" "$http_proxy"
   verify
 }
 

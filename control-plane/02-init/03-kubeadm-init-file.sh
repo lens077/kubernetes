@@ -9,11 +9,11 @@ set -e -o posix -o pipefail
 mkdir -p /etc/kubernetes/manifests
 HOME="/home/kubernetes"
 cd $HOME || exit
-if kubeadm init phase preflight --dry-run --config kubeadm.yaml; then
+if kubeadm init phase preflight --dry-run --config kubeadm.yml; then
   echo "预检成功"
   # 安装
   kubeadm init \
-  --config=kubeadm.yaml \
+  --config=kubeadm.yml \
   --upload-certs \
   --v=7
 
@@ -27,3 +27,4 @@ fi
 
 # 重新生成token
 # kubeadm token create --print-join-command
+

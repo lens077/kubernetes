@@ -76,3 +76,4 @@ chmod +x ./cn-base-start.sh && ./cn-base-start.sh
 
 1. https://kubernetes.io/docs/tasks/tools/install-kubectl-linux/
 2. https://kubernetes.io/docs/setup/production-environment/tools/kubeadm/install-kubeadm/#installing-kubeadm-kubelet-and-kubectl
+3. https://mp.weixin.qq.com/s/9JFmukUP7Zi_4HAKC2TSDA

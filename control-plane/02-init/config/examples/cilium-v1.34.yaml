@@ -10,7 +10,7 @@ bootstrapTokens:
 kind: InitConfiguration
 localAPIEndpoint:
   # 优先使用内网IP, 如果不知道,请注释该advertiseAddress参数,k8s会自动获取
-  advertiseAddress: 10.21.22.210
+  advertiseAddress: 192.168.3.100
   bindPort: 6443
 nodeRegistration:
   criSocket: unix:///var/run/containerd/containerd.sock
@@ -32,15 +32,7 @@ skipPhases:
 ---
 apiServer:
   certSANs:
-    - 10.21.22.210
-    - 10.21.22.211
-    - 10.21.22.212
-    - ubuntu-200
-    - ubuntu-201
-    - ubuntu-202
-    - ubuntu-210
-    - ubuntu-211
-    - ubuntu-212
+    - 192.168.3.100
 apiVersion: kubeadm.k8s.io/v1beta4
 caCertificateValidityPeriod: 87600h0m0s
 certificateValidityPeriod: 8760h0m0s
@@ -53,7 +45,7 @@ etcd:
 #imageRepository: registry.k8s.io
 imageRepository: registry.aliyuncs.com/google_containers
 kind: ClusterConfiguration
-kubernetesVersion: 1.32.2
+kubernetesVersion: 1.34.0
 controllerManager:
   extraArgs:
     - name: "allocate-node-cidrs"
