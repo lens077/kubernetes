@@ -1,20 +1,22 @@
 apiVersion: cilium.io/v2alpha1
 kind: CiliumLoadBalancerIPPool
 metadata:
-  name: purelb-pool
+  name: default-pool
 spec:
   # IP池范围
   blocks:
-    - start: 192.168.3.103
+    - start: 192.168.3.104
       stop: 192.168.3.250
 ---
+# https://docs.cilium.io/en/latest/network/l2-announcements/#policies
 apiVersion: cilium.io/v2alpha1
 kind: CiliumL2AnnouncementPolicy
 metadata:
   name: default-policy
 spec:
-  serviceSelector: {}
-  nodeSelector: {}
-  externalIPs: true
+#  serviceSelector: {}
+#  nodeSelector: {}
+  externalIPs: false
+  loadBalancerIPs: true
   interfaces:
     - enp0s5 # 你的机器的网卡设备

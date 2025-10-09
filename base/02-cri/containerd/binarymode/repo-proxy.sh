@@ -3,6 +3,8 @@
 # 当镜像的路径是server的某一条时,
 # 就会通过这些源进行代理
 
+# TODO 替换conf_path
+
 declare http_proxy="http://192.168.3.220:7890"
 declare https_proxy="http://192.168.3.220:7890"
 while [[ $# -gt 0 ]]; do
@@ -24,36 +26,10 @@ done
 echo "http_proxy:$http_proxy https_proxy:$https_proxy"
 
 # 此命令用于生成containerd默认的配置文件
-generate_default_config_filecontainerd_v1  () {
+generate_default_config_filecontainerd_v1 () {
   containerd config default | tee /etc/containerd/config.toml
 }
 
-# 添加源命令参数
-update_config_file_containerd_v1  (){
-  export CONTAINERD_CONFIG_FILE_PATH="/etc/containerd/config.toml"
-  sed -i '/\[plugins\."io\.containerd\.grpc\.v1\.cri"\.registry\]/!b;n;s/config_path = .*/config_path = "\/etc\/containerd\/certs.d"/' /etc/containerd/config.toml
-  cat -n /etc/containerd/config.toml | grep -A 1 "\[plugins\.\"io\.containerd\.grpc\.v1\.cri\"\.registry\]"
-}
-
-update_config_file_containerd_v2() {
-  export CONTAINERD_CONFIG_FILE_PATH="/etc/containerd/config.toml"
-
-  # 匹配 [plugins."io.containerd.grpc.v1.cri".registry] 区块，并修改其下的 config_path
-  sed -i -E \
-    '/\[plugins\."io\.containerd\.grpc\.v1\.cri"\.registry\]/ {
-      :a
-      n
-      /^[[:space:]]*config_path[[:space:]]*=/ {
-        s|config_path[[:space:]]*=.*|config_path = "/etc/containerd/certs.d"|
-        b
-      }
-      ba
-    }' "$CONTAINERD_CONFIG_FILE_PATH"
-
-  # 验证修改
-  echo "修改后的配置片段:"
-  grep -A 2 '\[plugins\."io\.containerd\.grpc\.v1\.cri"\.registry\]' "$CONTAINERD_CONFIG_FILE_PATH"
-}
 set_proxy_url () {
   # docker hub镜像加速
   mkdir -p /etc/containerd/certs.d/docker.io
@@ -339,7 +315,6 @@ verify () {
 }
 
 main () {
-  update_config_file_containerd_v2
   set_proxy_url
   #http_proxy "$https_proxy" "$http_proxy"
   verify

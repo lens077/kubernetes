@@ -1,0 +1,61 @@
+# gateway.yaml
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: minio-gateway
+  namespace: minio
+spec:
+  addresses:
+    - type: IPAddress
+      value: 192.168.3.101
+  # 替换成你集群中实际安装的 Gateway Controller Class 名称
+  gatewayClassName: cilium
+  listeners:
+    - name: http-console
+      protocol: HTTP
+      port: 9090
+    - name: http-api
+      protocol: HTTP
+      port: 9000
+---
+# minio-console-httproute.yaml
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: minio-console-route
+  namespace: minio
+spec:
+  parentRefs:
+    - name: minio-gateway # 绑定到上面创建的 Gateway
+  hostnames:
+    - "minio-console.app.com" # <-- 替换成你的实际域名
+  rules:
+    - matches:
+        # 需要匹配的路径
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: minio-service
+          port: 9090 # 路由到 MinIO Service 的 Console 端口
+---
+# minio-api-httproute.yaml
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: minio-api-route
+  namespace: minio
+spec:
+  parentRefs:
+    - name: minio-gateway # 绑定到上面创建的 Gateway
+  hostnames:
+    - "minio-api.app.com" # <-- 替换成你的实际域名
+  rules:
+    - matches:
+        # 需要匹配的路径
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: minio-service
+          port: 9000 # 路由到 MinIO Service 的 API 端口

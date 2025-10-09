@@ -12,13 +12,9 @@ chmod +x ./rebase-config.sh
 chmod +x ./base/01-env/01-config.sh
 ./base/01-env/01-config.sh --resolve_dns=1.1.1.1
 
-# IPVS, 可选, 如果不需要IPVS,只需在执行时到该脚本时输入n即可
-chmod +x ./base/01-env/02-ipvs.sh
-./base/01-env/02-ipvs.sh
-
 # 放行kubernetes所需的端口
-chmod +x ./base/01-env/03-allow-port.sh
-./base/01-env/03-allow-port.sh
+chmod +x ./base/01-env/allow-port.sh
+./base/01-env/allow-port.sh
 
 # 基础软件包
 chmod +x ./base/01-env/tools/01-install-tools.sh

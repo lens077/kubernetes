@@ -4,12 +4,19 @@ helm repo add cilium https://helm.cilium.io/
 helm repo update
 
 保留原有的参数升级
-helm upgrade cilium cilium/cilium \
+cilium upgrade cilium  \
 --namespace kube-system \
 --reuse-values \
+--set sessionAffinity=true \
+
+
+kubectl -n kube-system rollout restart deployment/cilium-operator
+kubectl -n kube-system rollout restart ds/cilium
 
 # 卸载
 cilium uninstall
+
+
 
 查询
 
@@ -320,7 +327,7 @@ native, (XDP BPF程序直接通过网络驱动程序的早期接收运行path)�
 对于本地部署，Cilium XDP 加速可以与 Kubernetes 的 LoadBalancer 服务实现（如 MetalLB）结合使用。加速只能在用于直接路由的单个设备上启用
 https://docs.cilium.io/en/stable/network/kubernetes/kubeproxy-free/#advanced-configuration
 --set routingMode=native \
---set loadBalancer.acceleration=native oadBalancer 和 NodePort XDP 加速, 默认为disabled
+--set loadBalancer.acceleration=native loadBalancer 和 NodePort XDP 加速, 默认为disabled
 
 BGP 控制平面, 只有ipam.mode=kubernetes或者
 --set bgpControlPlane.enabled=true
