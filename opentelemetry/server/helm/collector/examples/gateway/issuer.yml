@@ -1,8 +1,0 @@
-apiVersion: cert-manager.io/v1
-kind: Issuer
-metadata:
-  name: observability-internal-issuer
-  namespace: observability
-spec:
-  ca:
-    secretName: observability-root-ca-secret # 引用上面生成的 Secret

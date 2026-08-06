@@ -6,6 +6,8 @@ metadata:
 spec:
   parentRefs:
     - name: cilium-gateway
+      namespace: default
+      sectionName: http
   hostnames:
     - "es.app.com"
   rules:

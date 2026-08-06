@@ -11,7 +11,7 @@ helm search repo hashicorp/consul
 
 helm pull hashicorp/consul
 tar -zxvf consul-*.tgz
-
+# server_rejoin_age_max: 168h0m0s, 默认值为 168 小时（即 7 天）。当一个节点离线超过这个时间后，Consul 会认为该节点的数据可能已经极度过时。为了防止该节点重新加入集群时导致“脑裂”或陈旧数据覆盖，Consul 会强制拒绝它启动。本地单机开发时推荐设置0(不过期)或更长的,例如"8760h"（8760小时等于1年）：
 cat > consul-values.yaml <<EOF
 # Source Config 1: https://developer.hashicorp.com/consul/tutorials/get-started-kubernetes/kubernetes-gs-deploy?variants=consul-deploy%3Aself-managed
 # Source Config 2: https://developer.hashicorp.com/consul/docs/k8s/helm
@@ -54,6 +54,10 @@ ui:
 
 server:
   enable: true
+  extraConfig: |
+      {
+        "server_rejoin_age_max": "8760h"
+      }
   affinity: "" # 允许每个节点上运行更多的Pod
   storage: '3Gi' # 定义用于配置服务器的 StatefulSet 存储的磁盘大小
   storageClass: "openebs-lvmpv" # 使用Kubernetes集群的默认 StorageClass 用于服务器的 StatefulSet 存储的 StorageClass。如果要自动创建存储，则必须能够动态预配它。例如，要使用 local（ https://kubernetes.io/docs/concepts/storage/storage-classes/#local） 存储类，需要手动创建 PersistentVolumeClaims。值 null 将使用 Kubernetes 集群的默认 StorageClass。如果默认 StorageClass 不存在，则需要创建一个。请参阅服务器性能要求文档的读/写调整部分，了解有关选择高性能存储类的注意事项
@@ -93,3 +97,8 @@ helm upgrade --install consul ./consul \
   --create-namespace \
   -n consul \
   -f consul-values.yaml
+
+# QA:
+## 错误: 2026-07-23T03:09:08.823Z [ERROR] agent: Error starting agent: error="refusing to rejoin cluster because server has been offline for more than the configured server_rejoin_age_max (168h0m0s) - consider wiping your data dir"
+## 解决:kubectl edit configmap consul-server-config -n consul
+## 在打开的编辑器中，你会看到一段 JSON 格式的配置文件（通常在 extra-from-values.json 或 config.json 字段下）。在 JSON 的顶层对象中加入 "server_rejoin_age_max": "8760h"。

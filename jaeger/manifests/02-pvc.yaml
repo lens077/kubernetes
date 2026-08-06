@@ -1,0 +1,25 @@
+# badger 的持久化卷。
+#
+# 容量 5Gi 的依据:迁移前 ES 里 7 天的 span 索引合计约 17MB。badger 的
+# value log 单文件上限约 1GB,留出压缩前的冗余,5Gi 有两个数量级的余量。
+#
+# ⚠️ openebs-lvmpv 是节点本地卷(local.csi.openebs.io)+ WaitForFirstConsumer,
+# PVC 一旦绑定,jaeger 就被钉在那个节点上;该节点故障时 Pod 无法漂移。
+# 这是用 ES(无状态 jaeger)换持久化本地存储所付出的代价。
+# 集群只有 3 节点且 trace 属于可丢数据,判断为可接受。
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: jaeger-badger
+  namespace: observability
+  labels:
+    app.kubernetes.io/name: jaeger
+    app.kubernetes.io/instance: jaeger
+    app.kubernetes.io/component: all-in-one
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: openebs-lvmpv
+  resources:
+    requests:
+      storage: 5Gi

@@ -5,84 +5,96 @@ set -o posix errexit -o pipefail
 mkdir -p /home/kubernetes/argocd
 cd /home/kubernetes/argocd
 
+# 获取初始化的密码
+argocd admin initial-password -n argocd
+
 # CLI登录
 # $lb_ip:port: ip与端口
 # --insecure: 忽略TLS验证
 # --grpc-web
 #lb_ip=$(kubectl get service example-argocd-server -o=jsonpath='{.status.loadBalancer.ingress[0].ip}' -n $ns)
 
-# 获取初始化的密码
-argocd admin initial-password -n argocd
-
-lb_ip="argocd.example.com:31258"
+lb_ip="argocd-server.app.com"
 argocd login \
 $lb_ip \
 --username admin \
---password <password> \
+--password "${ARGOCD_PASSWORD:?Set ARGOCD_PASSWORD before running this script}" \
 --insecure
+
+# 遗忘密码的解决方案:
+# 1. 删除 argocd-secret 中的密码相关字段，这会触发系统生成新的随机密码。
+# 2. 密码修改需要重启才能被服务加载。
+# 3. 获取新生成的密码
+#kubectl -n argocd patch secret argocd-secret --type=json -p='[{"op": "remove", "path": "/data/admin.password"}, {"op": "remove", "path": "/data/admin.passwordMtime"}]'
+#kubectl -n argocd rollout restart deployment argocd-server
+#argocd admin initial-password -n argocd
+
+# 列出用户
+argocd account list
 
 # 修改密码
 argocd account update-password
 
-# 注册集群以将应用程序部署到该集群(可选, 推荐)
+# 1. 注册集群以将应用程序部署到该集群(可选, 推荐)
 # 将 ServiceAccount （argocd-manager） 安装到该 kubectl 上下文的 kube-system 命名空间中，
 # 并将服务帐户绑定到管理员级别的 ClusterRole。Argo CD 使用此服务帐户令牌来执行其管理任务（即部署/监控）。
 CLUSTER=$(kubectl config get-contexts -o name)
 echo "$CLUSTER"
 argocd cluster add "$CLUSTER"
 
-# 添加helm repo
+# 2. 添加helm repo
 # https://argo-cd.readthedocs.io/en/stable/user-guide/commands/argocd_repo_add/
-argocd repo add harbor.apikv.com:5443 \
+## Helm仓库
+OCI_URL=harbor.apikv.com:5443
+argocd repo add $OCI_URL \
   --name oci-helm-registry \
-  --username rebot@github \
-  --password 6hDa7T0gPa6Rf4pkSbdZP4x9kjSC0POI \
+  --username <username> \
+  --password <password> \
   --type helm \
-  --enable-oci \
-  --insecure-skip-server-verification
+  --enable-oci
 
-argocd repo add harbor.apikv.com:5443/sumery \
-  --name oci-helm-registry \
-  --username rebot@github \
-  --password 6hDa7T0gPa6Rf4pkSbdZP4x9kjSC0POI \
-  --type helm \
-  --enable-oci \
-  --insecure-skip-server-verification
+# 3. 创建项目
+# -s 可以指定某个命名空间的所有 chart,也可以指定单一的chart
+PROJECT=ecommerce
+NAME_SPACE=ecommerce
+argocd proj create $PROJECT \
+ -s $OCI_URL/$PROJECT_PATH \
+ --upsert
 
-# 创建应用
-# https://argo-cd.readthedocs.io/en/stable/user-guide/commands/argocd_app_create/
-ARGOCD_APP_NAME="connect-example-frontend"
-PROJECT_PATH="sumery"
-CHART_NAME="frontend"
-argocd app create ${ARGOCD_APP_NAME} \
-  --repo harbor.apikv.com:5443/${PROJECT_PATH} \
-  --helm-chart ${CHART_NAME} \
-  --revision 1.4.9 \
-  --dest-server https://kubernetes.default.svc \
-  --dest-namespace connect-example \
-  --sync-policy automated \
-  --self-heal \
-  --helm-set frontend.image.tag=1.4.9 \
-  --helm-pass-credentials \
+# https://gitlab.com/sumery/ecommerce.git
+argocd proj create ecommerce \
+  -s https://gitlab.com/sumery/ecommerce.git \
+  -d https://kubernetes.default.svc,ecommerce \
+  -d https://kubernetes.default.svc,argocd \
   --upsert
 
-ARGOCD_APP_NAME="connect-example-backend"
+# 查看项目的详细信息
+argocd proj get $PROJECT
+
+# 4. 添加集群与命名空间
+# argocd proj add-destination <PROJECT> <CLUSTER> <NAMESPACE>
+# argocd proj remove-destination <PROJECT> <CLUSTER> <NAMESPACE>
+argocd proj add-destination $PROJECT https://kubernetes.default.svc $NAME_SPACE
+argocd proj get $PROJECT
+
+# 5. 部署应用
+ARGOCD_APP_NAME="ecommerce-backend"
 PROJECT_PATH="sumery"
-CHART_NAME="backend"
+CHART_NAME="ecommerce-helm"
+VERSION="0.1.0"
 argocd app create ${ARGOCD_APP_NAME} \
-  --repo harbor.apikv.com:5443/${PROJECT_PATH} \
+  --project $PROJECT \
+  --repo $OCI_URL/${PROJECT_PATH} \
   --helm-chart ${CHART_NAME} \
-  --revision 1.4.9 \
+  --revision ${VERSION} \
   --dest-server https://kubernetes.default.svc \
-  --dest-namespace connect-example \
+  --dest-namespace $NAME_SPACE \
   --sync-policy automated \
   --self-heal \
-  --helm-set backend.image.tag=1.4.9 \
+  --helm-set backend.image.tag=${VERSION} \
   --helm-pass-credentials \
-  --upsert
-
-# 创建项目
-argocd proj create frontend
+  --upsert \
+  --validate
 
 # 删除
 # argocd proj delete frontend
@@ -97,12 +109,15 @@ argocd proj add-source frontend https://gitlab.com/lookeke/full-stack-engineerin
 # 排除项目
 # argocd proj add-source <PROJECT> !<REPO>
 
-# 添加集群与命名空间
-# argocd proj add-destination <PROJECT> <CLUSTER>,<NAMESPACE>
-# argocd proj remove-destination <PROJECT> <CLUSTER>,<NAMESPACE>
-argocd proj add-destination frontend https://192.168.2.105:6443 frontend
-
 # 创建仓库秘钥
+## 方式1 HTTPS + Token:
+argocd repo add https://github.com/your-org/your-monorepo.git \
+  --username your-github-username \
+  --password ghp_xxxxxxxxxxxx
+## 方式2 私钥方式:
+argocd repo add git@gitlab.com:your-org/your-monorepo.git \
+  --ssh-private-key-path ~/.ssh/id_ed25519
+## 方式3 声明式:
 cat > gitlab-secret.yml <<EOF
 apiVersion: v1
 kind: Secret
@@ -116,24 +131,13 @@ stringData:
   project: my-project1
   name: argocd-example-apps
   url: https://github.com/argoproj/argocd-example-apps.git
-  username: ****
-  password: ****
+  username: your-github-username
+  password: ghp_xxxxxxxxxxxx
 EOF
+kubectl apply -f gitlab-secret.yml -n argocd
 
-# 创建APP
-argocd app create frontend \
-  --project frontend \
-  --repo https://gitlab.com/lookeke/full-stack-engineering.git \
-  --path frontend/ci \
-  --dest-server https://kubernetes.default.svc \
-  --dest-namespace frontend \
-  --validate
-
-# 删除
+# 删除应用
 #argocd app delete guestbook
-
-# 列出用户
-argocd account list
 
 # 获取特定用户信息
 argocd account get --account <username>
@@ -170,4 +174,3 @@ argocd admin settings rbac validate --namespace argocd
 # 测试策略
 # https://argo-cd.readthedocs.io/en/stable/operator-manual/rbac/#testing-a-policy
 argocd admin settings rbac can role:org-admin get applications --policy-file argocd-rbac-cm.yaml
-

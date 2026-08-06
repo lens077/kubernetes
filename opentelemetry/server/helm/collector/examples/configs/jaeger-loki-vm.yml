@@ -162,7 +162,8 @@ spec:
         override: false
 
     exporters:
-      # 把 trace 发送给 Jaeger 的 OTLP 端口
+      # 把 trace 发送给 Jaeger 的 OTLP 端口。
+
       otlp_grpc/jaeger:
         endpoint: jaeger.observability.svc:4317   # Jaeger 的 Service 名和端口
         tls:

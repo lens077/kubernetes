@@ -1,14 +1,21 @@
+# 与集群中实际运行的 kibana-https-route 对齐(2026-08-06 校正)。
+#
+# 原文件是一份过时副本,三处与线上不符:资源名叫 kibana-route(线上是
+# kibana-https-route,直接 apply 会新建一条重复路由而不是更新)、parentRefs
+# 缺 namespace 与 sectionName(不写 namespace 时默认同命名空间,而
+# cilium-gateway 在 default,永远挂不上)、多了一个未生效的 kb.app.com。
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
-  name: kibana-route
+  name: kibana-https-route
   namespace: elastic-stack
 spec:
   parentRefs:
     - name: cilium-gateway
+      namespace: default
+      sectionName: http
   hostnames:
     - "kibana.app.com"
-    - "kb.app.com"
   rules:
     - matches:
         - path:

@@ -10,8 +10,8 @@ set -o posix errexit -o pipefail
 # 校验域名归属的两种方式分别是 HTTP-01 和 DNS-01，校验原理详情可参见 Let's Encrypt 的运作方式。
 # DNS-01 校验支持泛域名， 但是是不同 DNS 提供商的配置方式不同，DNS 提供商过多而 cert-manager 的 Issuer 不能全部支持。部分可以通过部署实现 cert-manager 的 Webhook 服务来扩展 Issuer 进行支持。例如阿里 DNS 就是通过 Webhook 的方式进行支持。
 
-export CLOUDFLARE_EMAIL="xiconz@qq.com"
-export CLOUDFLARE_TOKEN="JetH3-LDZZwk2mJ0kiPpE_FRCclEzkcot3gX4swd"
+export CLOUDFLARE_EMAIL=""
+export CLOUDFLARE_TOKEN=""
 
 # 1. cloudflare 添加 DNS 记录. 映射到对应的服务器
 # 2. 前往个人资料 -> API 令牌， 使用编辑区域 DNS 模版， 创建一个 token。

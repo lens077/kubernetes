@@ -1,0 +1,128 @@
+# 由原 Helm chart(jaeger-4.11.0)渲染结果逐字复刻而来,只有四处差异:
+#   1. 去掉 Helm 专属的 labels/annotations(managed-by、helm.sh/chart、meta.helm.sh)
+#   2. 增加 badger PVC 的挂载(/badger)
+#   3. ConfigMap 名从 user-config 改为 jaeger-config
+#      —— 原名不带 release 前缀,在共享 namespace 里是命名冲突隐患;
+#         且 helm uninstall 会删掉 user-config,换名可避免时序竞争。
+#   4. 补上 containerPort 14250 / 14268。原 chart 的列表漏了这两个,但 jaeger
+#      的 jaeger receiver 确实在监听,Service 也一直在转发。containerPorts 纯属
+#      声明性质,补齐不改变连通性,只是让 kubectl describe 反映真实情况。
+#
+# 三个 selector label 必须与原来完全一致,否则 Service 选不中 Pod:
+#   app.kubernetes.io/{name,instance,component}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jaeger
+  namespace: observability
+  labels:
+    app.kubernetes.io/name: jaeger
+    app.kubernetes.io/instance: jaeger
+    app.kubernetes.io/component: all-in-one
+    app.kubernetes.io/version: 2.19.0
+    prometheus.io/port: "8888"
+    prometheus.io/scrape: "true"
+spec:
+  replicas: 1
+  revisionHistoryLimit: 10
+  # RWO 卷必须用 Recreate:RollingUpdate 时新旧 Pod 会同时要求挂载同一个 PVC,
+  # 导致新 Pod 永远 Pending。原 chart 默认也是 Recreate,此处行为一致。
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: jaeger
+      app.kubernetes.io/instance: jaeger
+      app.kubernetes.io/component: all-in-one
+  template:
+    metadata:
+      annotations:
+        prometheus.io/port: "8888"
+        prometheus.io/scrape: "true"
+      labels:
+        app.kubernetes.io/name: jaeger
+        app.kubernetes.io/instance: jaeger
+        app.kubernetes.io/component: all-in-one
+    spec:
+      serviceAccountName: jaeger
+      # fsGroup 10001 让非 root 的 jaeger 进程可以写 PVC
+      securityContext:
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+      containers:
+        - name: jaeger
+          image: jaegertracing/jaeger:2.19.0
+          imagePullPolicy: IfNotPresent
+          args:
+            - --config
+            - /etc/jaeger/user-config.yaml
+          ports:
+            - containerPort: 5775
+              protocol: UDP
+            - containerPort: 6831
+              protocol: UDP
+            - containerPort: 6832
+              protocol: UDP
+            - containerPort: 5778
+              protocol: TCP
+            - containerPort: 16686
+              protocol: TCP
+            - containerPort: 16685
+              protocol: TCP
+            - containerPort: 9411
+              protocol: TCP
+            - containerPort: 14250
+              protocol: TCP
+            - containerPort: 14268
+              protocol: TCP
+            - containerPort: 4317
+              protocol: TCP
+            - containerPort: 4318
+              protocol: TCP
+            - containerPort: 13133
+              protocol: TCP
+            - containerPort: 8888
+              protocol: TCP
+            - containerPort: 8889
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /status
+              port: 13133
+              scheme: HTTP
+            initialDelaySeconds: 5
+            periodSeconds: 15
+            timeoutSeconds: 1
+            failureThreshold: 5
+            successThreshold: 1
+          readinessProbe:
+            httpGet:
+              path: /status
+              port: 13133
+              scheme: HTTP
+            initialDelaySeconds: 1
+            periodSeconds: 10
+            timeoutSeconds: 1
+            failureThreshold: 3
+            successThreshold: 1
+          resources:
+            limits:
+              cpu: "1"
+              memory: 2Gi
+            requests:
+              cpu: 500m
+              memory: 512Mi
+          volumeMounts:
+            - name: config
+              mountPath: /etc/jaeger/user-config.yaml
+              subPath: user-config.yaml
+            - name: badger-data
+              mountPath: /badger
+      volumes:
+        - name: config
+          configMap:
+            name: jaeger-config
+        - name: badger-data
+          persistentVolumeClaim:
+            claimName: jaeger-badger
