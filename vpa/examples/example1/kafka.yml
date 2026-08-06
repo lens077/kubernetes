@@ -1,5 +1,17 @@
 # Strimzi 算是一个庞大的 JVM 系 Operator，控制着你的 Kafka 集群。
 # 为了不让它在运行时因为资源抖动而误判 Kafka 状态，采用 Initial 模式。
+#
+# ── 2026-08-06 minAllowed 复查结论：保持不动 ─────────────────────────────────
+# 这两个是全集群少数几个 minAllowed **低于**真实用量的对象，不构成注水：
+#   strimzi-cluster-operator    minAllowed 256Mi，实测 286Mi
+#   my-cluster-entity-operator  minAllowed 128Mi，实测整 Pod 406Mi
+#     （两个容器：topic-operator 推荐 248Mi、user-operator 推荐 272Mi）
+# 它们的推荐值是真测出来的（uncappedTarget 等于 target），不是地板值，留着当兜底。
+#
+# 遗留缺口：Kafka broker 本身（my-cluster-dual-role，实测 618Mi）没有被纳管。
+# 它是 Strimzi 用 StrimziPodSet 管的，不是 Deployment/StatefulSet，VPA 的
+# targetRef 接不上；要调只能改 Kafka CR 里的 resources。
+# ─────────────────────────────────────────────────────────────────────────────
 
 apiVersion: autoscaling.k8s.io/v1
 kind: VerticalPodAutoscaler

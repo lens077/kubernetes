@@ -1,5 +1,16 @@
 # 作为集群的安全基础设施，它们平时开销极小且固定。
 # 用 Initial 模式在启动时强制将其裁剪到最低，后续运行不作任何干扰。
+#
+# ── 2026-08-06 minAllowed 复查结论：保持 64Mi 不动 ───────────────────────────
+# 实测三个组件的常驻内存：controller 23Mi / cainjector 40Mi / webhook 54Mi。
+# 64Mi 只比最高的 webhook 高 10Mi，属于合理兜底而不是注水，不下调。
+# 尤其 webhook 是准入链路上的组件，它被 OOM 会导致整个集群建不了带证书注解的
+# 资源，这里宁可多给 10Mi。
+#
+# 另注：Initial 模式**不受** vpa-updater --min-replicas 影响。它由
+# admission-controller 在建 Pod 时注入，不走 updater，所以这三个是集群里少数
+# 一直真正在生效的 VPA。
+# ─────────────────────────────────────────────────────────────────────────────
 
 apiVersion: autoscaling.k8s.io/v1
 kind: VerticalPodAutoscaler

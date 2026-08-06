@@ -1,5 +1,15 @@
 # Dragonfly 作为有状态的高性能缓存，
 # 一般允许 VPA 乱动
+#
+# ── 2026-08-06 复查 ─────────────────────────────────────────────────────────
+# 这个对象没有 resourcePolicy，所以推荐值完全由 recommender 的全局地板决定。
+# 实测：requests 512Mi，真实用量 13Mi —— 差了 40 倍，是 node3 上（内存 requests
+# 已占 99%）第三大的空占来源。
+# 但**不要**指望 VPA 来收：本对象是 updateMode "Off"，而且缓存类组件的内存是
+# 「给多少用多少」，按当前 RSS 收紧 requests 只会在缓存热起来之后打脸。
+# 正确做法是去 dragonfly 的 helm values 里根据 maxmemory 配置反推 requests。
+# 这里保留 Off，只当观测口。
+# ─────────────────────────────────────────────────────────────────────────────
 apiVersion: autoscaling.k8s.io/v1
 kind: VerticalPodAutoscaler
 metadata:

@@ -1,28 +1,11 @@
-# 观测与可视化组件 (Grafana, Jaeger, Kibana, Kafka-UI)
+# 观测与可视化组件 (Jaeger, Kafka-UI)
 # 这些Web UI 或数据收集端，只有当你打开浏览器看监控、或者有流量时才需要资源。
+#
+# 注意：jaeger-vpa 曾经在 example1/jaeger.yml 里被重复定义过一份（updateMode 是
+# Recreate、minAllowed 100m/256Mi），和这里的定义不一致。集群里实际生效的是本文件
+# 这一份。2026-08-06 已删掉 example1/jaeger.yml —— 同名 VPA 出现在两个文件里，
+# 接进 ArgoCD 之后会来回抖动，谁最后 apply 谁赢。
 
-apiVersion: autoscaling.k8s.io/v1
-kind: VerticalPodAutoscaler
-metadata:
-  name: grafana-vpa
-  namespace: observability
-spec:
-  targetRef:
-    apiVersion: apps/v1
-    kind: Deployment
-    name: grafana
-  updatePolicy:
-    updateMode: "InPlace"
-  resourcePolicy:
-    containerPolicies:
-      - containerName: '*'
-        minAllowed:
-          cpu: "30m"
-          memory: "128Mi"
-        maxAllowed:
-          cpu: "300m"
-          memory: "512Mi"
----
 apiVersion: autoscaling.k8s.io/v1
 kind: VerticalPodAutoscaler
 metadata:
@@ -39,8 +22,8 @@ spec:
     containerPolicies:
       - containerName: '*'
         minAllowed:
-          cpu: "50m"
-          memory: "128Mi"
+          cpu: "10m"
+          memory: "32Mi"  # 实测在 14Mi~33Mi 之间浮动，原来的 128Mi 是 4~9 倍注水
         maxAllowed:
           cpu: "400m"
           memory: "512Mi"
@@ -60,6 +43,9 @@ spec:
   resourcePolicy:
     containerPolicies:
       - containerName: '*'
+        # 这里的 minAllowed 保持不动：kafka-ui 是 JVM，实测常驻 327Mi，
+        # recommender 给出的 uncappedTarget 也是 392Mi —— 是真测出来的，不是地板值。
+        # 128Mi 低于真实用量，不构成注水，留着当兜底。
         minAllowed:
           cpu: "30m"
           memory: "128Mi"

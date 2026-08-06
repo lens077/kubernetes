@@ -1,0 +1,195 @@
+# 适用对象：无状态微服务，适合通过 VPA 自动调整资源，避免浪费。
+# 命名空间：ecommerce
+#
+# ⚠️ 2026-08-06：本文件**不参与部署**，已从 ArgoCD Application 的 include 列表里排除
+#    （见 vpa/argocd-application.yml）。
+#
+#    原因：ecommerce 命名空间目前是空的，这里定义的 8 个 Deployment
+#    （address/cart/inventory/merchant/order/payment/search/user）全集群都不存在。
+#    这 8 个 VPA 在集群里挂了 44 天，状态是
+#        Cannot read targetRef. Reason: Deployment ecommerce/xxx does not exist
+#    危险的地方在于其中 6 个的 `kubectl get vpa` 仍然显示 PROVIDED=True —— 那是
+#    44 天前的 checkpoint 残留，永远不会再更新，看起来却像是健康的。
+#    只有 address 和 payment 显示 False，因为它们从来没有过 Pod。
+#    已于 2026-08-06 从集群删除（kubectl -n ecommerce delete vpa --all）。
+#
+#    等 ecommerce 服务真正部署回来之后，把本文件加回 include 列表即可。
+#    加回来之前请先复查 minAllowed —— 这里的 128Mi 是拍脑袋写的，没有实测依据，
+#    而全集群复查下来这种拍脑袋值普遍是真实用量的 4~25 倍。
+
+---
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: address-vpa
+  namespace: ecommerce
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: address           # 假设 Deployment 名称为 address
+  updatePolicy:
+    updateMode: "InPlace"   # 原地调整，无需重启 Pod
+  resourcePolicy:
+    containerPolicies:
+      - containerName: "*"
+        minAllowed:
+          cpu: "50m"
+          memory: "128Mi"
+        maxAllowed:
+          cpu: "200m"
+          memory: "512Mi"
+---
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: cart-vpa
+  namespace: ecommerce
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: cart
+  updatePolicy:
+    updateMode: "InPlace"
+  resourcePolicy:
+    containerPolicies:
+      - containerName: "*"
+        minAllowed:
+          cpu: "50m"
+          memory: "128Mi"
+        maxAllowed:
+          cpu: "200m"
+          memory: "512Mi"
+---
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: inventory-vpa
+  namespace: ecommerce
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: inventory
+  updatePolicy:
+    updateMode: "InPlace"
+  resourcePolicy:
+    containerPolicies:
+      - containerName: "*"
+        minAllowed:
+          cpu: "50m"
+          memory: "128Mi"
+        maxAllowed:
+          cpu: "200m"
+          memory: "512Mi"
+---
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: merchant-vpa
+  namespace: ecommerce
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: merchant
+  updatePolicy:
+    updateMode: "InPlace"
+  resourcePolicy:
+    containerPolicies:
+      - containerName: "*"
+        minAllowed:
+          cpu: "50m"
+          memory: "128Mi"
+        maxAllowed:
+          cpu: "200m"
+          memory: "512Mi"
+---
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: order-vpa
+  namespace: ecommerce
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: order
+  updatePolicy:
+    updateMode: "InPlace"
+  resourcePolicy:
+    containerPolicies:
+      - containerName: "*"
+        minAllowed:
+          cpu: "50m"
+          memory: "128Mi"
+        maxAllowed:
+          cpu: "200m"
+          memory: "512Mi"
+---
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: payment-vpa
+  namespace: ecommerce
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: payment
+  updatePolicy:
+    updateMode: "InPlace"
+  resourcePolicy:
+    containerPolicies:
+      - containerName: "*"
+        minAllowed:
+          cpu: "50m"
+          memory: "128Mi"
+        maxAllowed:
+          cpu: "200m"
+          memory: "512Mi"
+---
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: search-vpa
+  namespace: ecommerce
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: search
+  updatePolicy:
+    updateMode: "InPlace"
+  resourcePolicy:
+    containerPolicies:
+      - containerName: "*"
+        minAllowed:
+          cpu: "50m"
+          memory: "128Mi"
+        maxAllowed:
+          cpu: "300m"         # search 服务可能涉及索引，略高
+          memory: "768Mi"     # 留些余量
+---
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: user-vpa
+  namespace: ecommerce
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: user
+  updatePolicy:
+    updateMode: "InPlace"
+  resourcePolicy:
+    containerPolicies:
+      - containerName: "*"
+        minAllowed:
+          cpu: "50m"
+          memory: "128Mi"
+        maxAllowed:
+          cpu: "200m"
+          memory: "512Mi"

@@ -1,13 +1,23 @@
+# ── 2026-08-06：这个文件原来名不副实 ─────────────────────────────────────────
+# 原先只有一个叫 otel-collector-vpa 的对象，targetRef 却指向 Deployment
+# my-opentelemetry-operator —— 那是 **Operator**（实测 2m/24Mi），不是采集器。
+# 真正的采集器是 DaemonSet observability/otel-collector（2 个 Pod，实测 81Mi/40Mi），
+# 从装上到现在一直没被任何 VPA 纳管。
+#
+# 「名字叫 X」不等于「管的就是 X」。这里拆成两个对象，各自叫回自己的名字。
+# ─────────────────────────────────────────────────────────────────────────────
+
+# 1) OpenTelemetry Operator 本体。
+#    minAllowed 从 100m/256Mi 降到 10m/32Mi：实测只有 2m/24Mi，256Mi 是 10 倍注水。
 apiVersion: autoscaling.k8s.io/v1
 kind: VerticalPodAutoscaler
 metadata:
-  name: otel-collector-vpa
+  name: otel-operator-vpa
   namespace: observability
 spec:
   targetRef:
     apiVersion: apps/v1
     kind: Deployment
-    # 请用 kubectl get deploy -n observability 获取实际名称
     name: my-opentelemetry-operator
   updatePolicy:
     updateMode: InPlaceOrRecreate
@@ -15,8 +25,41 @@ spec:
     containerPolicies:
       - containerName: "*"
         minAllowed:
-          cpu: "100m"
-          memory: 256Mi
+          cpu: "10m"
+          memory: 32Mi
         maxAllowed:
           cpu: "1"
           memory: 1Gi
+---
+# 2) 真正的采集器（DaemonSet）。先 Off 观察一周。
+#
+#    为什么先 Off：两个 Pod 的内存差了一倍（81Mi vs 40Mi），说明负载和节点上的
+#    工作负载数量强相关。DaemonSet 每节点一个 Pod，VPA 只能给出**一个**统一推荐值，
+#    对负载不均的 DaemonSet 天然不合适 —— 按高的给会浪费，按低的给会 OOM。
+#    先看一周 upperBound 到底摸到哪，再决定是放开还是干脆手写 requests。
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: otel-collector-vpa
+  namespace: observability
+spec:
+  # 同样要指 CR 而不是 DaemonSet。指 DaemonSet 时 VPA 拒绝：
+  #   "The target apps/v1.DaemonSet/otel-collector has a parent controller but it
+  #    should point to a topmost well-known or scalable controller"
+  # 这个 DaemonSet 的 ownerReference 是 opentelemetry.io/v1beta1
+  # OpenTelemetryCollector/otel，且该 CRD 带 scale 子资源，VPA 能直接认。
+  targetRef:
+    apiVersion: opentelemetry.io/v1beta1
+    kind: OpenTelemetryCollector
+    name: otel
+  updatePolicy:
+    updateMode: "Off"
+  resourcePolicy:
+    containerPolicies:
+      - containerName: "*"
+        minAllowed:
+          cpu: "10m"
+          memory: 32Mi
+        maxAllowed:
+          cpu: "500m"
+          memory: 256Mi

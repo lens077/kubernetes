@@ -1,3 +1,13 @@
+# ── 2026-08-06 minAllowed 复查结论：保持不动，理由如下 ──────────────────────
+# recommender 给出的 uncappedTarget 只有 25m/250Mi（那还是旧地板值），而这里的
+# minAllowed 是 500m/1Gi，表面上看是 4 倍「注水」。但这一条是**有意的**：
+#   1. 本对象是 updateMode: "Off"，只出推荐不改实配，写高不会真的占用资源；
+#   2. PostgreSQL 的内存需求由 shared_buffers / work_mem / 连接数决定，不是由
+#      空载 RSS 决定。照着空载值调 requests，一上真实负载就会被 OOMKill；
+#   3. 这个 StatefulSet 的实配 requests 目前只有 128Mi —— 真正该做的是把它调**高**
+#      到接近这里的推荐值，而不是把推荐值调低去迁就现状。
+# 换句话说这里的 minAllowed 不是地板，是「一旦你决定放开，至少要给这么多」的提示。
+# ─────────────────────────────────────────────────────────────────────────────
 apiVersion: autoscaling.k8s.io/v1
 kind: VerticalPodAutoscaler
 metadata:

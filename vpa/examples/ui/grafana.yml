@@ -1,0 +1,35 @@
+# Grafana —— 先只出推荐，不改实配。
+#
+# 2026-08-06 之前这个文件躺在仓库里从来没被 apply 过（install.sh 只 apply 了
+# loki.yml，其余全靠手工），所以 grafana 一直没被 VPA 纳管。现在纳管，但先用
+# updateMode: "Off" 观察一周，确认推荐值稳定之后再考虑放开成 InPlace。
+#
+# 为什么不直接 InPlace：grafana 这个 Deployment 有两个容器，
+#   grafana            —— 无 requests，limits 500m/512Mi
+#   grafana-sc-alerts  —— 无 requests 无 limits
+# 整个 Pod 实测 374Mi。在没有 requests 的情况下贸然让 VPA 写值，等于第一次就把
+# 一个从未被约束过的组件塞进 cgroup，出问题不好回滚。先看一周数据。
+#
+# 查看推荐：kubectl -n observability describe vpa grafana-vpa
+
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: grafana-vpa
+  namespace: observability
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: grafana
+  updatePolicy:
+    updateMode: "Off"
+  resourcePolicy:
+    containerPolicies:
+      - containerName: '*'
+        minAllowed:
+          cpu: "10m"
+          memory: "32Mi"
+        maxAllowed:
+          cpu: "300m"
+          memory: "512Mi"

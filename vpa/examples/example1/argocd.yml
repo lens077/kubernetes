@@ -3,6 +3,18 @@
 #
 #ArgoCD 核心组件 (代码仓库与服务网关)
 #ArgoCD 在 Git 轮询和 UI 刷新时会突发消耗资源。
+#
+# ── 2026-08-06 minAllowed 复查 ───────────────────────────────────────────────
+# 原来这里的 minAllowed 是 64Mi~128Mi，但实测各组件常驻内存只有 5Mi~27Mi：
+#   argocd-server 27Mi / repo-server 22Mi / applicationset 21Mi
+#   dex 18Mi / notifications 16Mi / redis 5Mi        (kubectl top pod -n argocd)
+# minAllowed 高于真实用量时它不是「保护」而是「注水」—— VPA 被迫推荐一个谁也
+# 没要过的数字。这里统一下调到实测值的 1.5~2 倍。
+#
+# 注意：光改这里不生效。recommender 有个全局地板
+# --pod-recommendation-min-memory-mb（默认 250）会盖过所有低于它的推荐值，
+# 已在 install.sh 里一并降到 32。两处要一起改。
+# ─────────────────────────────────────────────────────────────────────────────
 apiVersion: autoscaling.k8s.io/v1
 kind: VerticalPodAutoscaler
 metadata:
@@ -19,8 +31,8 @@ spec:
     containerPolicies:
       - containerName: "*"
         minAllowed:
-          cpu: "50m"
-          memory: "100Mi" # 降至 100Mi 启动，省下内存给业务
+          cpu: "10m"
+          memory: "48Mi" # 实测 27Mi，留一倍余量给 UI 并发刷新
         maxAllowed:
           cpu: "300m"
           memory: "400Mi" # 400Mi 足够应对多用户同时访问 UI
@@ -41,8 +53,8 @@ spec:
     containerPolicies:
       - containerName: "*"
         minAllowed:
-          cpu: "50m"
-          memory: "128Mi"
+          cpu: "10m"
+          memory: "48Mi" # 实测 22Mi，但渲染大清单时会瞬时冲高，留一倍
         maxAllowed:
           cpu: "500m"     # 拒绝 1C，严控在 0.5C
           memory: "600Mi" # 拒绝 2Gi 吞噬弹夹！600Mi 足够内网全栈清单解析
@@ -63,8 +75,8 @@ spec:
     containerPolicies:
       - containerName: "*"
         minAllowed:
-          cpu: "30m"
-          memory: "128Mi"
+          cpu: "10m"
+          memory: "32Mi" # 实测 21Mi
         maxAllowed:
           cpu: "300m"
           memory: "256Mi" # 裁剪至 256Mi，内网单集群不需要 512Mi
@@ -85,8 +97,8 @@ spec:
     containerPolicies:
       - containerName: "*"
         minAllowed:
-          cpu: "30m"
-          memory: "64Mi"
+          cpu: "10m"
+          memory: "32Mi" # 实测 18Mi
         maxAllowed:
           cpu: "200m"
           memory: "128Mi" # 仅负责内网 OIDC 登录，128Mi 顶天了
@@ -107,8 +119,8 @@ spec:
     containerPolicies:
       - containerName: "*"
         minAllowed:
-          cpu: "20m"
-          memory: "64Mi"
+          cpu: "10m"
+          memory: "32Mi" # 实测 16Mi
         maxAllowed:
           cpu: "200m"
           memory: "128Mi" # 仅负责通知推送，极限压榨其上限
@@ -129,8 +141,8 @@ spec:
     containerPolicies:
       - containerName: "*"
         minAllowed:
-          cpu: "50m"
-          memory: "128Mi"
+          cpu: "10m"
+          memory: "32Mi" # 实测 5Mi —— 原来的 128Mi 是 25 倍注水
         maxAllowed:
           cpu: "400m"
           memory: "512Mi" # 拒绝 1Gi。作为 Argo 的状态缓存，512Mi 绰绰有余

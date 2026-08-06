@@ -1,0 +1,90 @@
+# 把 vpa/ 目录接进 ArgoCD 托管。
+#
+# 为什么要做这件事：集群里跑着 6 个 argocd 组件，但 `kubectl -n argocd get applications`
+# 返回 0 条 —— ArgoCD 装了却一个 Application 都没有，这个目录全靠手工 kubectl apply。
+# 结果就是仓库和集群已经对不上了（2026-08-06 实测）：
+#   examples/example1/minio.yml    躺在仓库里，集群里没有 minio-vpa
+#   examples/ui/grafana.yml        躺在仓库里，集群里没有 grafana-vpa
+#   examples/example1/jaeger.yml   和 examples/ui/ui.yml 各定义了一份 jaeger-vpa，
+#                                  两份的 updateMode 和 minAllowed 都不一样
+#   examples/operator.yml          里的 strimzi-operator-vpa 和 kafka.yml 里的
+#                                  strimzi-cluster-operator-vpa 是同一个目标、两个名字
+# install.sh 里只有 `kubectl apply -f examples/example1/loki.yml` 一行，其余全是
+# 手工敲的，敲过什么没有记录。
+#
+# ⚠️ 现在还不能直接 apply 这个文件，原因见文件末尾的「启用步骤」。
+#
+# ── include 列表说明 ─────────────────────────────────────────────────────────
+# 用显式 include 而不是整目录递归，因为 examples/ 下混着三类东西：真实部署清单、
+# 教学样例、以及目标已经不存在的历史清单。整目录同步会把后两类也推上集群。
+#
+# 刻意排除：
+#   example1/ecommerce.yml       ecommerce 命名空间是空的，里面 8 个 Deployment
+#                                （address/cart/order/payment/…）全集群都不存在。
+#                                这 8 个 VPA 在集群里挂了 44 天，已于 2026-08-06 删除。
+#                                **如果不排除，ArgoCD 会立刻把它们再建回来。**
+#                                等 ecommerce 服务部署回来后再加进 include 列表。
+#   example1/ecommerce-comm.yml  模板样例（shopping-cart-vpa），注释里写着
+#                                「每个微服务改一下名字」，不是真实对象。
+#   operator.yml                 讲解 Initial 模式用的样例，且和 certManager.yml、
+#                                kafka.yml 里的对象重名/同目标，一起同步会打架。
+#
+# 注意：include 列表必须和 install.sh 第 7 步的 apply 清单保持一致，
+# 否则手工 apply 和 ArgoCD 会互相覆盖。改一处要改两处。
+# ─────────────────────────────────────────────────────────────────────────────
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: vpa
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/lens077/cloud-native-deploy.git
+    targetRevision: main
+    path: vpa/examples
+    directory:
+      recurse: true
+      include: '{example1/argocd.yml,example1/certManager.yml,example1/kafka.yml,example1/postgres.yml,example1/dragonfly.yml,example1/openTelemetry-collector.yml,example1/minio.yml,example1/elastic-stack.yml,example1/seata.yml,example1/postgres-kafka-es-streaming-pipeline.yml,example1/loki.yml,example1/loki-gateway.yml,ui/ui.yml,ui/grafana.yml}'
+  destination:
+    server: https://kubernetes.default.svc
+    # VPA 对象各自带 namespace 字段，这里的 namespace 只是 Application 的默认落点
+    namespace: kube-system
+  syncPolicy:
+    # 先不开 automated。理由：VPA 对象里的 minAllowed 一旦写错，automated 会在你
+    # 反应过来之前就把全集群的 requests 推过去。先手工点几轮 Sync，确认 diff 干净、
+    # 推荐值稳定之后，再把下面 automated 那段注释放开。
+    #
+    # automated:
+    #   prune: true
+    #   selfHeal: true
+    syncOptions:
+      - CreateNamespace=false
+      # VPA 的 status.recommendation 由 recommender 持续写入，会让 ArgoCD 一直
+      # 显示 OutOfSync。RespectIgnoreDifferences 配合下面的 ignoreDifferences 使用。
+      - RespectIgnoreDifferences=true
+  ignoreDifferences:
+    - group: autoscaling.k8s.io
+      kind: VerticalPodAutoscaler
+      jsonPointers:
+        - /status
+#
+# ── 启用步骤（现在还差一步，所以本文件尚未 apply）────────────────────────────
+#
+# 本文件 targetRevision 指向 main，但 2026-08-06 的这批改动还在
+# feat/otel-metrics-k8s-attributes 分支上，没有合进 main。
+# 此时如果直接 apply，ArgoCD 会拿 main 上的**旧**内容来同步，把刚做完的调整
+# 全部冲掉（尤其会把 8 个 ecommerce 孤儿 VPA 重新建回来 —— 旧 main 上
+# ecommerce.yml 还是空文件，但 jaeger 会退回重复定义的状态）。
+#
+# 正确顺序：
+#   1) git add vpa/ && git commit
+#   2) 合进 main 并 push
+#   3) kubectl apply -f vpa/argocd-application.yml
+#   4) argocd app diff vpa      # 确认 diff 为空，说明集群现状和仓库一致
+#   5) 观察一周后再考虑放开 syncPolicy.automated
+#
+# 如果想在合并前就验证，把 targetRevision 临时改成
+# feat/otel-metrics-k8s-attributes，第 4 步 diff 应当为空。
