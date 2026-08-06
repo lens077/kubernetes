@@ -5,6 +5,30 @@ metadata:
   namespace: observability
 spec:
   mode: daemonset # DaemonSet 模式才能采集每台虚拟机的指标
+
+  # 把节点名注入进来,供下面的 resourcedetection/env 使用。
+  #
+  # 为什么必须有:host_metrics 采的是「这台节点」的数据,但 DaemonSet 的每个 Pod
+  # 都在推同名同标签的序列。没有节点身份时,3 个节点写进 VM 的 system_* 序列
+  # 完全重合,后写的覆盖先写的 —— 看板上的数字既不是任何一台节点的真实值,
+  # 也不是三台的平均,而是随机某一台的采样。(实测 2026-08:VM 的全部标签里
+  # 找不到任何 host/node 维度,而 system_filesystem_usage_bytes 确实在出数。)
+  #
+  # 注意这个问题 k8s_attributes 解决不了。那个处理器靠连接来源 IP 去关联 Pod,
+  # 而 host_metrics 是 collector 自产的、没有来源连接,数据会原样放行。
+  #
+  # 也不用 resourcedetection 的 system 探测器:DaemonSet 容器里 os.Hostname()
+  # 拿到的是 Pod 名(otel-collector-7947l),Pod 一重建就换,等于每次重启都
+  # 产生一批新序列。spec.nodeName 才是稳定的。
+  env:
+    - name: K8S_NODE_NAME
+      valueFrom:
+        fieldRef:
+          fieldPath: spec.nodeName
+    # k8s 支持在同一个 env 列表里引用前面已定义的变量
+    - name: OTEL_RESOURCE_ATTRIBUTES
+      value: "k8s.node.name=$(K8S_NODE_NAME)"
+
   config:
     receivers:
       otlp:
@@ -20,14 +44,72 @@ spec:
         collection_interval: 10s # 本地环境 10s 即可，降低 CPU 消耗
         scrapers:
           cpu:
+            metrics:
+              # 默认只开 system.cpu.time(累计秒数)。utilization 是采集器直接
+              # 算好的百分比,看板拿来即用,不必在 PromQL 里对 8 个 state 做 rate
+              # 再求和 —— 后者在采集有断点时会给出假峰值。
+              system.cpu.utilization:
+                enabled: true
           load:
           memory:
+            metrics:
+              system.memory.utilization:
+                enabled: true
+
+          # ⚠️ disk 与 network 必须做设备白名单,否则基数会失控。
+          #
+          # network:Cilium 给每个 Pod 建一张 lxc* veth,实测单节点 25 张以上,
+          # 且 Pod 一重建就换名字。不过滤的话 system_network_* 会随 Pod 生命周期
+          # 无限长出新序列(旧的还不会自己消失)。这里只留物理网卡。
+          #
+          # disk:openebs-lvmpv 会为每个 PV 建一个 dm-N 设备,同理。
           disk:
+            include:
+              devices: ["^(sd|nvme|vd)[a-z0-9]+$"]
+              match_type: regexp
           network:
+            include:
+              interfaces: ["^(en|eth)[a-z0-9]+$"]
+              match_type: regexp
+
           filesystem:
+            # 从 strict 改成 regexp:原来的 strict 列表只挡住 /dev、/proc、/sys
+            # 三个字面量,挡不住 /var/lib/kubelet/pods/<uid>/volumes/... ——
+            # 那是每个带 PVC 的 Pod 一个挂载点。实测 11 个挂载点里 8 个是它,
+            # Pod 数量涨它就涨,而这些 bind mount 底下还是同一块盘,重复统计。
             exclude_mount_points:
-              mount_points: ["/dev", "/proc", "/sys"]
+              mount_points:
+                - /dev.*
+                - /proc.*
+                - /sys.*
+                - /run.*
+                - /var/lib/kubelet/.*
+                - /var/lib/docker/.*
+              match_type: regexp
+            exclude_fs_types:
+              fs_types:
+                - autofs
+                - binfmt_misc
+                - cgroup2
+                - configfs
+                - debugfs
+                - devpts
+                - devtmpfs
+                - fusectl
+                - hugetlbfs
+                - mqueue
+                - overlay
+                - proc
+                - pstore
+                - ramfs
+                - securityfs
+                - selinuxfs
+                - squashfs
+                - sysfs
+                - tmpfs
+                - tracefs
               match_type: strict
+
     processors:
       # 批处理器
       batch:
@@ -45,6 +127,9 @@ spec:
         limit_mib: 1000
         # 如果内存瞬间飙升超过 limit_mib + spike_limit_mib（即 设定的值,单位 MiB），会采取更激进的保护措施
         spike_limit_mib: 200
+
+      # trace 与 log 用:这两者按 pod 维度看是天经地义的,一条 trace / 一行日志
+      # 本来就属于某个具体 Pod,加标签不产生「序列」。
       k8s_attributes:
         extract:
           metadata:
@@ -52,6 +137,29 @@ spec:
             - k8s.namespace.name
             - k8s.node.name
         passthrough: false
+
+      # metrics 专用:刻意不取 k8s.pod.name。
+      #
+      # 指标和日志在这件事上不同。Pod 名带 ReplicaSet 哈希和随机后缀,每次发版
+      # 全变 —— 给指标挂上它,意味着每发一次版,全部应用序列整体作废重开一套。
+      # 当前 rpc_server_* 五个直方图就有 4076 条序列(le 桶乘出来的),一次发版
+      # 直接翻倍,而旧序列在保留期内不会消失。
+      #
+      # 「哪个实例在抖」这个诉求用 node + namespace 已能定位到机器,再往下钻应该
+      # 去 trace 和日志(它们有完整 pod 名),而不是把指标的基数赌进去。
+      k8s_attributes/metrics:
+        extract:
+          metadata:
+            - k8s.namespace.name
+            - k8s.node.name
+        passthrough: false
+
+      # 只给 host_metrics 用,见下面独立的 metrics/host 管道。
+      # override: false —— 数据自己带了 k8s.node.name 时以数据为准。
+      resourcedetection/env:
+        detectors: [env]
+        timeout: 2s
+        override: false
 
     exporters:
       # 把 trace 发送给 Jaeger 的 OTLP 端口
@@ -80,15 +188,21 @@ spec:
           receivers: [ otlp ]
           processors: [ memory_limiter, k8s_attributes, batch ]
           exporters: [ otlp_grpc/jaeger ]
+
+        # 应用经 OTLP 推上来的指标。
         metrics:
-          receivers: [ otlp,host_metrics ]
-          # k8s_attributes 原来只挂在 traces/logs 上,metrics 漏了 —— 结果进
-          # VictoriaMetrics 的指标没有 k8s.pod.name / namespace / node,
-          # 「哪个 pod 在抖」这类问题只能靠 service.instance.id 猜。
-          # host_metrics 是 collector 自产的、没有连接来源,processor 关联不上会
-          # 原样放行,不影响它;真正补上标签的是应用经 OTLP 上报的那部分。
-          processors: [ memory_limiter, k8s_attributes, batch ]
+          receivers: [ otlp ]
+          processors: [ memory_limiter, k8s_attributes/metrics, batch ]
           exporters: [ otlp_http/victoriametrics ]
+
+        # 主机指标单独一条管道 —— 只有它需要 resourcedetection 补节点身份,
+        # 也只有它不该经过 k8s_attributes(自产数据,无来源连接,关联不上)。
+        # 拆开而不是在一条管道里堆处理器,是为了把各自的影响范围框死。
+        metrics/host:
+          receivers: [ host_metrics ]
+          processors: [ memory_limiter, resourcedetection/env, batch ]
+          exporters: [ otlp_http/victoriametrics ]
+
         logs:
           receivers: [ otlp ]
           processors: [ memory_limiter, k8s_attributes, batch ]
