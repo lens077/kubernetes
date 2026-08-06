@@ -140,6 +140,38 @@ spec:
           cpu: "200m"
           memory: "128Mi" # 仅负责通知推送，极限压榨其上限
 ---
+# argocd-application-controller —— 2026-08-06 补上。
+#
+# 此前 argocd 七个组件里只有六个被纳管，唯独漏了这一个，而它恰恰是最核心的那个
+# （负责所有 Application 的 diff 与 sync）。它是 StatefulSet 不是 Deployment，
+# 大概是当初照着 Deployment 列表抄的时候漏掉了。实测 3m/30Mi，此前无任何
+# requests，属于 BestEffort —— 节点内存吃紧时是内核 OOM killer 的第一顺位。
+#
+# maxAllowed 给到 512Mi：它要在内存里维护全部 Application 的期望状态与实况差异，
+# 是 argocd 里最吃内存的组件，Application 数量上来之后会明显增长（当前集群
+# 是 0 个 Application，所以现在这个 30Mi 没有参考价值，别照着它定上限）。
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: argocd-application-controller-vpa
+  namespace: argocd
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: StatefulSet
+    name: argocd-application-controller
+  updatePolicy:
+    updateMode: "InPlaceOrRecreate"
+  resourcePolicy:
+    containerPolicies:
+      - containerName: "*"
+        minAllowed:
+          cpu: "10m"
+          memory: "48Mi"
+        maxAllowed:
+          cpu: "500m"
+          memory: "512Mi"
+---
 apiVersion: autoscaling.k8s.io/v1
 kind: VerticalPodAutoscaler
 metadata:

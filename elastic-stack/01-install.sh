@@ -58,3 +58,28 @@ helm upgrade --install es-kb-quickstart \
 
 # 获取默认密码, 账号默认为elastic
 kubectl get secret elasticsearch-es-elastic-user -o go-template='{{.data.elastic | base64decode}}' -n elastic-stack
+
+# ── 2026-08-06：给 Kibana 限定内存 ───────────────────────────────────────────
+#
+# eck-stack 默认不给 Kibana 设 resources，ECK 于是按自己的默认值给了 2Gi
+# requests/limits，而实测常驻只有 929Mi —— 1.1Gi 是纯空占。
+#
+# 这在别的集群可能无所谓，但本集群 node3 的内存 requests 一度占到 99%，
+# 而 node1 是 control-plane 带 NoSchedule 污点（那 6GB 空闲用不上），
+# 实际可用的只有 node2 和 node3 两个节点。Kibana 这 2Gi 又恰好压在 node3 上，
+# 把 Kafka broker（PV 是 openebs-lvmpv 硬亲和 node3，换不了节点）挤得没有
+# requests 可用，broker 只能以 BestEffort 运行并被 OOMKill 了 41 次。
+#
+# 下调到 1408Mi（VPA 实测推荐 target 1114Mi、lowerBound 1038Mi，留约 25% 余量）。
+# Kibana 无 PVC，改完重建时调度器会自动把它挪到 node2，node3 因此腾出 2Gi。
+#
+# 查看依据：kubectl -n elastic-stack describe vpa kibana-vpa
+# （该 VPA 定义在 vpa/examples/example1/elastic-stack.yml，updateMode 是 "Off"，
+#   因为 ECK 会 reconcile 掉 VPA 的写入，只能由人改 CR。）
+kubectl -n elastic-stack patch kibana es-kb-quickstart-eck-kibana --type=merge -p '{
+  "spec": {"podTemplate": {"spec": {"containers": [{
+    "name": "kibana",
+    "resources": {"requests": {"cpu": "100m", "memory": "1408Mi"},
+                  "limits":   {"memory": "1408Mi"}}
+  }]}}}
+}'
