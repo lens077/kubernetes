@@ -82,7 +82,12 @@ spec:
           exporters: [ otlp_grpc/jaeger ]
         metrics:
           receivers: [ otlp,host_metrics ]
-          processors: [ memory_limiter, batch ]
+          # k8s_attributes 原来只挂在 traces/logs 上,metrics 漏了 —— 结果进
+          # VictoriaMetrics 的指标没有 k8s.pod.name / namespace / node,
+          # 「哪个 pod 在抖」这类问题只能靠 service.instance.id 猜。
+          # host_metrics 是 collector 自产的、没有连接来源,processor 关联不上会
+          # 原样放行,不影响它;真正补上标签的是应用经 OTLP 上报的那部分。
+          processors: [ memory_limiter, k8s_attributes, batch ]
           exporters: [ otlp_http/victoriametrics ]
         logs:
           receivers: [ otlp ]
