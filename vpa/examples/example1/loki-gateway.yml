@@ -1,3 +1,24 @@
+# loki-gateway（Loki 前面的 nginx 网关）。
+#
+# ── 2026-08-06 ───────────────────────────────────────────────────────────────
+# 原来是 updateMode: Recreate + minAllowed 100m/256Mi。两处都改了，理由如下。
+#
+# minAllowed 100m/256Mi → 10m/32Mi：
+#   这个 nginx 实测只用 **1m/11Mi**，recommender 给出的 uncappedTarget 是 11m/32Mi。
+#   256Mi 是真实用量的 23 倍 —— 而且它不是「写着好看」：这个 Deployment 原本
+#   **完全没有 requests**，2026-08-06 修好 vpa-updater --min-replicas 之后 VPA 第一次
+#   真正生效，直接按 minAllowed 给它写进了 100m/256Mi，凭空在 node2 上占掉 256Mi。
+#   当天 jaeger 省下的 465Mi 被这一笔吃掉一半多。
+#
+#   这正是 minAllowed 被当成「配额下限」用的典型后果：它不是保护，是注水。
+#   minAllowed 的正确用途是「低于这个值会出事」（参见同目录 loki.yml 的 512Mi、
+#   elastic-stack.yml 的 1Gi，那两个都有实测依据）。nginx 反向代理没有这种下限。
+#
+# Recreate → InPlaceOrRecreate：
+#   Recreate 每次调整都驱逐重建，对单副本网关等于一次断流。改成 InPlaceOrRecreate
+#   之后，Pod 已经是 Burstable（有 requests），缩容属于 Burstable→Burstable，
+#   不跨 QoS 等级，可以原地完成、不重启；只有在原地失败时才回退到重建。
+# ─────────────────────────────────────────────────────────────────────────────
 apiVersion: autoscaling.k8s.io/v1
 kind: VerticalPodAutoscaler
 metadata:
@@ -9,13 +30,13 @@ spec:
     kind: Deployment
     name: loki-gateway
   updatePolicy:
-    updateMode: Recreate
+    updateMode: InPlaceOrRecreate
   resourcePolicy:
     containerPolicies:
       - containerName: "*"
         minAllowed:
-          cpu: "100m"
-          memory: 256Mi
+          cpu: "10m"
+          memory: 32Mi
         maxAllowed:
           cpu: "1"
           memory: 2Gi

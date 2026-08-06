@@ -17,6 +17,51 @@ spec:
         #   add: ["SYS_ADMIN", "SETUID", "SETGID", "CHOWN"]
   version: 4.2.0
   replicas: 1
+
+  # ── 2026-08-06 补上 resources 和 jvmOptions —— 在此之前它被 OOMKill 了 489 次 ──
+  #
+  # 现象：my-connect-cluster-connect-0 自 2026-06-09 建起，到 8 月 6 日
+  # restartCount=489，lastState.terminated 一直是 OOMKilled / exitCode 137，
+  # KafkaConnect 的 status 长期停在
+  #   "Exceeded timeout of 300000ms while waiting for Pods ... to be ready"。
+  #
+  # 两个原因叠在一起：
+  #
+  # 1) spec.resources 整个缺失 → 容器没有任何 requests/limits → Pod 是 **BestEffort**。
+  #    节点内存吃紧时，BestEffort 是内核 OOM killer 的第一顺位。而它恰好被调度在
+  #    node3 上，那个节点的内存 requests 已经占到 96%。
+  #
+  # 2) 没有 jvmOptions → Strimzi 只注入了 `KAFKA_HEAP_OPTS=-Xms128M`，**没有 -Xmx**。
+  #    容器又没有 memory limit，于是 JVM 按「整个节点的内存」去推算默认最大堆
+  #    （约为节点内存的 1/4 ≈ 1.6G），堆就一路涨到把自己撑死。
+  #    这两条是互为因果的：不设 limit，JVM 就看不到边界；不设 requests，
+  #    越界之后又第一个被杀。
+  #
+  # 处理：
+  #   memory requests == limits == 1Gi，让它不再是 BestEffort，且只有真的超过 1Gi
+  #   才会被杀（用量低于 requests 的 Pod 在节点驱逐排序里排在最后）。
+  #   -Xmx 768m 给堆，余下约 256Mi 留给 metaspace、线程栈、direct buffer 和 code cache
+  #   —— Connect + Debezium 这类 JVM 的堆外开销通常在 200~300Mi。
+  #   cpu 只给 requests 不锁死 limits，避免空闲时被限流拖慢 rebalance。
+  #
+  # 注意：加上 1Gi requests 之后它**装不进 node3**（那里只剩约 360Mi），
+  # 会被重新调度到 node1 或 node2。Connect 的状态全部存在 Kafka 内部 topic 里
+  # （configStorageTopic/offsetStorageTopic/statusStorageTopic），也没有挂 PVC，
+  # 换节点无状态损失。
+  #
+  # 后续观察：同时加了一个 updateMode "Off" 的 VPA（见
+  # vpa/examples/example1/kafka-connect.yml），一周后拿它的推荐值回来校准这里的
+  # 1Gi / 768m，不要长期拍脑袋。
+  resources:
+    requests:
+      cpu: "100m"
+      memory: 1Gi
+    limits:
+      memory: 1Gi
+  jvmOptions:
+    -Xms: 256m
+    -Xmx: 768m
+
   # kafka bootstrap地址
   bootstrapServers: my-cluster-kafka-bootstrap:9092
   groupId: my-connect-cluster

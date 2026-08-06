@@ -1,0 +1,48 @@
+# Kafka Connect（Debezium）—— 只出推荐，不改实配。
+#
+# 背景：这个组件在 2026-06-09 到 08-06 之间被 OOMKill 了 489 次，原因是
+# spec.resources 缺失（BestEffort）+ 没有 -Xmx（JVM 按整节点内存推算堆上限）。
+# 已在 kafka/strimzi-kafka/connect/examples/debezium-postgres-connector-build.yml
+# 里补上 1Gi / -Xmx 768m，那组数字是按经验给的，需要用实测来校准 —— 这个 VPA 就是
+# 用来校准的。一周后：
+#     kubectl -n kafka describe vpa kafka-connect-vpa
+# 拿 target 和 upperBound 回去改 CR 里的 resources / jvmOptions。
+#
+# 为什么必须是 "Off"：
+#   这个 Pod 由 Strimzi 从 KafkaConnect CR 生成（StrimziPodSet）。VPA 去改
+#   Pod/PodSet 的 requests，Strimzi 下一轮 reconcile 会按 CR 改回来，两个控制器
+#   互相打架。真正的写入口只有 CR 的 spec.resources。
+#   而且 JVM 的堆上限由 -Xmx 决定、不由 cgroup 决定，光调 requests 不改 -Xmx
+#   对 OOM 没有任何帮助 —— 这正是它挂了 489 次的原因之一。
+#
+# targetRef 指向 KafkaConnect CR 而不是它生成的 StrimziPodSet：
+#   VPA 要求指向最顶层控制器，且该 CRD 必须带 scale 子资源。
+#   kafkaconnects.kafka.strimzi.io v1 带 scale
+#   （specReplicasPath .spec.replicas，labelSelectorPath .status.labelSelector），
+#   所以指得上去。对比 Kafka broker（my-cluster-dual-role）：那是 KafkaNodePool +
+#   StrimziPodSet，VPA 接不上，只能改 Kafka CR，见 kafka.yml 末尾的说明。
+
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: kafka-connect-vpa
+  namespace: kafka
+spec:
+  targetRef:
+    apiVersion: kafka.strimzi.io/v1
+    kind: KafkaConnect
+    name: my-connect-cluster
+  updatePolicy:
+    updateMode: "Off"
+  resourcePolicy:
+    containerPolicies:
+      - containerName: "*"
+        controlledResources: ["cpu", "memory"]
+        # minAllowed 取 512Mi：低于这个值 Connect + Debezium 的 JVM 装不下
+        # （-Xmx 768m 加堆外开销），给出更低的推荐没有意义。
+        minAllowed:
+          cpu: "50m"
+          memory: 512Mi
+        maxAllowed:
+          cpu: "2"
+          memory: 2Gi

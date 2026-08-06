@@ -14,6 +14,21 @@
 # 注意：光改这里不生效。recommender 有个全局地板
 # --pod-recommendation-min-memory-mb（默认 250）会盖过所有低于它的推荐值，
 # 已在 install.sh 里一并降到 32。两处要一起改。
+#
+# ── 2026-08-06 updateMode 从 InPlace 改成 InPlaceOrRecreate ──────────────────
+# 修好 vpa-updater --min-replicas 之后露出第二层阻塞：
+#   Pod QOS Class may not change as a result of resizing
+# applicationset-controller / dex-server / notifications-controller / redis
+# 这四个从来没配过 requests，属于 BestEffort。VPA 给它们加 requests 会让 QoS
+# 变成 Burstable，而原地 resize **不允许跨 QoS 等级**，纯 InPlace 没有退路就永久卡死。
+#
+# InPlaceOrRecreate 在原地失败时会自动降级成驱逐重建，重建后的 Pod 由
+# admission-controller 注入 requests，成为 Burstable，此后原地 resize 一直有效
+# —— 也就是只需付出一次重启。otel-operator 走的就是这条路，已验证。
+#
+# server 和 repo-server 本来就有 requests（已是 Burstable），原地 resize 对它们
+# 一直是成功的，改成 InPlaceOrRecreate 不会触发重建，只是让配置一致、
+# 将来万一被重建成 BestEffort 也能自愈。
 # ─────────────────────────────────────────────────────────────────────────────
 apiVersion: autoscaling.k8s.io/v1
 kind: VerticalPodAutoscaler
@@ -26,7 +41,7 @@ spec:
     kind: Deployment
     name: argocd-server
   updatePolicy:
-    updateMode: "InPlace" # 统一采用无感原地扩缩
+    updateMode: "InPlaceOrRecreate" # 统一采用无感原地扩缩
   resourcePolicy:
     containerPolicies:
       - containerName: "*"
@@ -48,7 +63,7 @@ spec:
     kind: Deployment
     name: argocd-repo-server
   updatePolicy:
-    updateMode: "InPlace"
+    updateMode: "InPlaceOrRecreate"
   resourcePolicy:
     containerPolicies:
       - containerName: "*"
@@ -70,7 +85,7 @@ spec:
     kind: Deployment
     name: argocd-applicationset-controller
   updatePolicy:
-    updateMode: "InPlace"
+    updateMode: "InPlaceOrRecreate"
   resourcePolicy:
     containerPolicies:
       - containerName: "*"
@@ -92,7 +107,7 @@ spec:
     kind: Deployment
     name: argocd-dex-server
   updatePolicy:
-    updateMode: "InPlace"
+    updateMode: "InPlaceOrRecreate"
   resourcePolicy:
     containerPolicies:
       - containerName: "*"
@@ -114,7 +129,7 @@ spec:
     kind: Deployment
     name: argocd-notifications-controller
   updatePolicy:
-    updateMode: "InPlace"
+    updateMode: "InPlaceOrRecreate"
   resourcePolicy:
     containerPolicies:
       - containerName: "*"
@@ -136,7 +151,7 @@ spec:
     kind: Deployment
     name: argocd-redis
   updatePolicy:
-    updateMode: "InPlace"
+    updateMode: "InPlaceOrRecreate"
   resourcePolicy:
     containerPolicies:
       - containerName: "*"
