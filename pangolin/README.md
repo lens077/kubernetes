@@ -59,7 +59,8 @@ kubectl get svc -n <gateway-ns> | grep gateway   # 形如 cilium-gateway-xxx 的
 
 | 症状 | 原因 | 处理 |
 |---|---|---|
-| 502(慢,数秒) | 隧道断/ClusterIP 不可达 | `kubectl logs -n pangolin deploy/newt`,查 site 在面板是否 online |
+| 502(**快**,<0.5s) | target 写错或后端没起 | target 必须是「Traefik 容器视角能到达的地址」——`localhost`/`127.0.0.1`/`0.0.0.0` 全错(都指向 Traefik 容器自己),**监听地址 ≠ 目的地址** |
+| 502(**慢**,数秒) | 隧道断/ClusterIP 不可达 | `kubectl logs -n pangolin deploy/newt`,查 site 在面板是否 online |
 | 404 + `server: envoy` | 路由没挂对 listener | 见上节,查 sectionName 与 target 端口 |
 | 面板改完没生效 | VPS 侧 Traefik 5s 轮询 | 等 6s 再验证 |
 | 证书告警 | 面板证书状态 pending 是 BYO 已知显示问题 | 以浏览器实际握手为准 |
