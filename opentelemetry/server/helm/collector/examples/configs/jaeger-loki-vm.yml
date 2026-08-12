@@ -110,6 +110,60 @@ spec:
                 - tracefs
               match_type: strict
 
+      # collector 自采:把 8888 的 otelcol_* 自身指标收进 VM。
+      # 此前这些指标只在每个 pod 的 :8888 上没人抓,「遥测有没有在半路丢」
+      # (exporter 失败数、queue 长度、内存限制器丢弃数)完全无法回答。
+      # 抓 127.0.0.1 而不是 0.0.0.0/服务发现:DaemonSet 的每个实例只抓自己,
+      # 天然 node-local,不会像集群级发现那样每个节点重复抓全量。
+      prometheus/internal:
+        config:
+          scrape_configs:
+            - job_name: otelcol
+              scrape_interval: 30s
+              static_configs:
+                - targets: ["127.0.0.1:8888"]
+              metric_relabel_configs:
+                # service_instance_id 是随机 uuid,pod 一重启就换一个,
+                # 留着会让序列随重启无限增殖;节点身份由 resourcedetection/env
+                # 注入的 k8s.node.name 承担(DaemonSet 每节点一实例,足够定位)。
+                - action: labeldrop
+                  regex: service_instance_id
+
+      # Strimzi Kafka / Kafka Connect 的 JMX exporter(9404,端口名 tcp-prometheus)。
+      # 前提:Kafka CR 与 KafkaConnect CR 已配 metricsConfig,见
+      #   kafka/strimzi-kafka/metrics/kafka-metrics-configmap.yml(broker)
+      #   ecommerce 仓 backend/infrastructure/kafka-connect/connect-metrics-configmap.yaml(connect)
+      # ⚠️ DaemonSet 模式下必须加 nodeName 过滤:kubernetes_sd 是集群级发现,
+      # 不过滤的话 3 个 collector 实例各抓一遍全部 Kafka pod,序列翻 3 倍
+      # (与 TODO.md 里 k8s_cluster receiver 要 leader election 是同一类问题)。
+      # RBAC 依赖 examples/rbac/rbac.yml 已有的 pods get/watch/list,无需新增。
+      prometheus/kafka:
+        config:
+          scrape_configs:
+            - job_name: kafka
+              scrape_interval: 30s
+              kubernetes_sd_configs:
+                - role: pod
+                  namespaces:
+                    names: [kafka]
+                  selectors:
+                    - role: pod
+                      field: spec.nodeName=${env:K8S_NODE_NAME}
+              relabel_configs:
+                # 只要 Strimzi 托管的 broker / connect,entity-operator 等没有 9404
+                - source_labels: [__meta_kubernetes_pod_label_strimzi_io_kind]
+                  action: keep
+                  regex: Kafka|KafkaConnect
+                - source_labels: [__meta_kubernetes_pod_container_port_name]
+                  action: keep
+                  regex: tcp-prometheus
+                - source_labels: [__meta_kubernetes_pod_label_strimzi_io_kind]
+                  target_label: strimzi_kind
+                # broker/connect 都是 StrimziPodSet 固定序号(my-cluster-dual-role-0),
+                # 不带 ReplicaSet 哈希,不存在发版换名的基数问题,保留 pod 维度。
+                - source_labels: [__meta_kubernetes_pod_name]
+                  target_label: pod
+
     processors:
       # 批处理器
       batch:
@@ -201,6 +255,15 @@ spec:
         # 拆开而不是在一条管道里堆处理器,是为了把各自的影响范围框死。
         metrics/host:
           receivers: [ host_metrics ]
+          processors: [ memory_limiter, resourcedetection/env, batch ]
+          exporters: [ otlp_http/victoriametrics ]
+
+        # 主动抓取的指标(collector 自采 + Kafka JMX)。与 metrics/host 同理:
+        # 抓取数据没有来源连接,k8s_attributes 关联不上,节点身份靠
+        # resourcedetection/env 注入 —— 且因为两个 receiver 都是 node-local
+        # (localhost / nodeName 过滤),这里补的 k8s.node.name 语义恰好正确。
+        metrics/scrape:
+          receivers: [ prometheus/internal, prometheus/kafka ]
           processors: [ memory_limiter, resourcedetection/env, batch ]
           exporters: [ otlp_http/victoriametrics ]
 

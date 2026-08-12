@@ -79,8 +79,30 @@ metadata:
   name: my-cluster
 spec:
   kafka:
-    version: 4.2.0
-    metadataVersion: 4.2-IV1
+    # ── 2026-08-06 升级 4.2.0 → 4.3.0，为对齐 Debezium 自带的 Kafka 依赖 ──────────
+    #
+    # 起因：Debezium 3.7.0.Alpha1 的插件包里自带 connect-api-4.3.0.jar 和
+    # kafka-clients-4.3.0.jar，而当时的 Connect 运行时是 4.2.0。版本错配导致
+    # 连接器配置校验时抛 NPE（详见 connect/examples/debezium-postgres-connector.yml）。
+    #
+    # 前置：Strimzi 算子必须先从 1.0.0 升到 1.1.0 —— 1.0.0 的 STRIMZI_KAFKA_IMAGES
+    # 最高只到 4.2.0，CR 里写 4.3.0 算子不认。1.1.0 支持 4.2.0/4.2.1/4.3.0，
+    # 并**移除了 4.1.x 支持**。升级步骤见同级 ../install.sh。
+    #
+    # metadataVersion 是**单向不可逆**的：一旦 finalize 到 4.3-IV0 就无法降回 4.2。
+    # 安全做法是先只改 version、把 metadataVersion 留在旧值（此时仍可回退），
+    # 观察稳定后再提升。本次因明确不需要保留数据，两步一起做了。
+    # 准确的取值不要猜，从 broker 自己查：
+    #   kubectl -n kafka exec my-cluster-dual-role-0 -- \
+    #     bin/kafka-features.sh --bootstrap-server localhost:9092 describe
+    # 输出里 metadata.version 的 SupportedMaxVersion 就是上限（当时为 4.3-IV0）。
+    #
+    # 升级方式：**只用 patch，不要整份 apply 本文件**（原因见文件顶部第 2 条）。
+    #   kubectl -n kafka patch kafka my-cluster --type=merge \
+    #     -p '{"spec":{"kafka":{"version":"4.3.0"}}}'
+    #   # 等 broker 滚完再单独提 metadataVersion
+    version: 4.3.0
+    metadataVersion: 4.3-IV0
     listeners:
       - name: plain
         port: 9092
@@ -98,6 +120,32 @@ spec:
       transaction.state.log.min.isr: 1
       default.replication.factor: 1
       min.insync.replicas: 1
+
+    # ── 2026-08-12 JMX Prometheus Exporter（broker 零指标问题的暴露端修复）──────
+    #
+    # 此前 broker/Connect 双双没有 metricsConfig，OOMKill 41 次只能靠
+    # kubectl describe 和手测 RSS 排障。开了之后 Strimzi 往 broker Pod 注入
+    # jmx exporter javaagent，容器暴露 9404（端口名 tcp-prometheus），
+    # 由 otel collector 的 prometheus/kafka receiver 按 strimzi.io/kind 标签抓走。
+    #
+    # 依赖顺序：必须先 apply ../metrics/kafka-metrics-configmap.yml，
+    # 否则 operator 找不到 ConfigMap，reconcile 卡住。
+    #
+    # 上线方式照旧**只用 patch**（原因见文件顶部第 2 条），会滚动重启 broker
+    # （单副本短暂不可用；CDC 尚无真实消费者，已确认可接受）：
+    #   kubectl -n kafka apply -f ../metrics/kafka-metrics-configmap.yml
+    #   kubectl -n kafka patch kafka my-cluster --type=merge -p '{
+    #     "spec":{"kafka":{"metricsConfig":{"type":"jmxPrometheusExporter",
+    #       "valueFrom":{"configMapKeyRef":{"name":"kafka-metrics","key":"kafka-metrics-config.yml"}}}}}}'
+    #
+    # javaagent 常驻开销约 50-100Mi 堆外内存 —— broker limit 是 1Gi、堆 768m，
+    # 余量本就只有 ~256Mi，patch 后要盯一眼 RSS，顶不住就把 limit 提到 1152Mi。
+    metricsConfig:
+      type: jmxPrometheusExporter
+      valueFrom:
+        configMapKeyRef:
+          name: kafka-metrics
+          key: kafka-metrics-config.yml
   entityOperator:
     topicOperator: {}
     userOperator: {}
