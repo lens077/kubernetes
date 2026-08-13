@@ -1,7 +1,7 @@
 services:
 
   minio:
-    image: pgsty/minio
+    image: pgsty/silo
     container_name: minio
     restart: on-failure:3
     pull_policy: always

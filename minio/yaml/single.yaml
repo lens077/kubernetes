@@ -38,11 +38,7 @@ spec:
     spec:
       containers:
         - name: minio
-          # https://www.cnblogs.com/java365/articles/18922432
-          # MinIO社区版在2025-05-24T17-08-30Z这个版本之后，移除了控制台大部分管理功能，想要完整minio，请安装旧版本。
-          # https://quay.io/repository/minio/minio?tab=tags&tag=latest 版本
-          #image: quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z
-          image: pgsty/minio
+          image: pgsty/silo
           command:
             - /bin/bash
             - -c
