@@ -1,8 +1,8 @@
 #!/bin/bash
 
-#CILIUM_CLI_VERSION=$(curl -s curl --connect-timeout 10 https://www.ghproxy.cn/https://github.com/https://raw.githubusercontent.com/cilium/cilium-cli/main/stable.txt)
-CILIUM_CLI_VERSION=$(curl -s curl --connect-timeout 10 https://raw.githubusercontent.com/cilium/cilium-cli/main/stable.txt)
-#CILIUM_CLI_VERSION=v0.16.22
+#CILIUM_CLI_VERSION=$(curl -s -connect-timeout 10 https://www.ghproxy.cn/https://github.com/https://raw.githubusercontent.com/cilium/cilium-cli/main/stable.txt)
+CILIUM_CLI_VERSION=$(curl -s https://raw.githubusercontent.com/cilium/cilium-cli/main/stable.txt)
+#CILIUM_CLI_VERSION=v0.19.4
 CLI_ARCH=""
 # 使用uname -m获取架构信息
 machine=$(uname -m)

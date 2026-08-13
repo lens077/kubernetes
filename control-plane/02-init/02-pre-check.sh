@@ -49,10 +49,10 @@ kubeadm config print init-defaults --component-configs \
 KubeProxyConfiguration,KubeletConfiguration > kubeadm-config.yaml
 
 # 预检
-apt install net-tools
-netstat -tuln | grep 6443
-netstat -tuln | grep 10259
-netstat -tuln | grep 10257
+#apt install net-tools
+#netstat -tuln | grep 6443
+#netstat -tuln | grep 10259
+#netstat -tuln | grep 10257
 
 lsof -i:6443 -t
 lsof -i:10259 -t

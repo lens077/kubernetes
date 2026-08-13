@@ -50,15 +50,20 @@ set_containerd_path() {
   # 配置文件默认在`/etc/containerd/config.toml` 这里仅修改两处配置
   # 替换为国内镜像, 国内服务器可以使用k8s.m.daocloud.io或者registry.cn-hangzhou.aliyuncs.com/google_containers/pause
   #  sed -i 's#sandbox = .*#sandbox = "registry.aliyuncs.com/google_containers/pause:3.10"#' "$CONTAINERD_CONFIG_FILE_PATH"
-  sed -i "s#sandbox = .*#sandbox = \"$sandbox_image_url\"#" "$CONTAINERD_CONFIG_FILE_PATH"
-  grep -nE "sandbox" "$CONTAINERD_CONFIG_FILE_PATH"
+  sudo sed -i 's|sandbox = '.*'|sandbox = '\'registry.aliyuncs.com/google_containers/pause:3.10.2\''|' "$CONTAINERD_CONFIG_FILE_PATH"
+  # 确认修改成功
+  sudo containerd config dump | grep sandbox
 
   # 当 systemd 是选定的初始化系统时, 应当选择SystemdCgroup = true, 否则不需要修改
   # 要在runc中使用 systemd的cgroup 驱动程序，请将 /etc/containerd/config.toml修改SystemdCgroup为true
   # 如果使用 cgroup v2，建议使用 systemd的cgroup 驱动程序
   # 参考: https://kubernetes.io/zh-cn/docs/setup/production-environment/container-runtimes/#containerd-systemd
   # 2.x版本以上已删除, 旧版本使用: sed -i 's#SystemdCgroup = false#SystemdCgroup = true#g' "$CONTAINERD_CONFIG_FILE_PATH"
-  sed -i "/ShimCgroup = ''/a \            SystemdCgroup = true" "$CONTAINERD_CONFIG_FILE_PATH"
+  #sed -i "/ShimCgroup = ''/a \            SystemdCgroup = true" "$CONTAINERD_CONFIG_FILE_PATH"
+  if grep -q "SystemdCgroup = false" "$CONTAINERD_CONFIG_FILE_PATH"; then
+      sed -i 's/SystemdCgroup = false/SystemdCgroup = true/' "$CONTAINERD_CONFIG_FILE_PATH"
+      echo "已将 SystemdCgroup 修改为 true"
+  fi
 
   # 下载containerd.service
   # 配置containerd的service单元文件

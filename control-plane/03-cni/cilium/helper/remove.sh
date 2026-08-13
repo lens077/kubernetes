@@ -41,6 +41,18 @@ rm -rf /etc/sysctl.d/00-k8s-arp.conf
 rm -rf /etc/sysctl.d/98-cilium.conf
 
 # 清理网卡
+
+# 删除健康检查接口
+ip link delete lxc_health
+
+# 删除 Cilium 内部主机接口对
+# 注意：删除其中一个，成对的另一个通常会自动消失
+ip link delete cilium_net
+ip link delete cilium_host
+
+# 卸载 cilium 挂载的 bpf 文件系统（如果存在）
+rm -rf /sys/fs/bpf/tc/globals/cilium_*
+
 sudo ip link list | grep lxc | awk '{print $2}' | cut -c 1-15 | xargs -I {} sudo ip link delete {}
 sudo ip link list | grep cilium_net@cilium_host | awk '{print $2}' | cut -c 1-10 | xargs -I {} sudo ip link delete {}
 sudo ip link list | grep cilium_host@cilium_net | awk '{print $2}' | cut -c 1-11 | xargs -I {} sudo ip link delete {}

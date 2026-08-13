@@ -10,7 +10,7 @@ bootstrapTokens:
 kind: InitConfiguration
 localAPIEndpoint:
   # 优先使用内网IP, 如果不知道,请注释该advertiseAddress参数,k8s会自动获取
-  advertiseAddress: 192.168.3.100
+  advertiseAddress: 192.168.3.105
   bindPort: 6443
 nodeRegistration:
   criSocket: unix:///var/run/containerd/containerd.sock
@@ -32,9 +32,9 @@ skipPhases:
 ---
 apiServer:
   certSANs:
-    - 192.168.3.100
-    - 192.168.3.101
-    - 192.168.3.102
+    - 192.168.3.105
+    - 192.168.3.106
+    - 192.168.3.107
     - node1
     - node2
     - node3
@@ -54,7 +54,7 @@ etcd:
     dataDir: /var/lib/etcd
 imageRepository: registry.aliyuncs.com/google_containers
 kind: ClusterConfiguration
-kubernetesVersion: 1.32.1
+kubernetesVersion: 1.36.1
 networking:
   dnsDomain: cluster.local
   # serviceSubnet: 192.168.0.0/16

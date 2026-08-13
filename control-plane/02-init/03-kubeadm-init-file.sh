@@ -28,3 +28,4 @@ fi
 # 重新生成token
 # kubeadm token create --print-join-command
 
+

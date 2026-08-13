@@ -10,7 +10,7 @@ unset url
 declare github_proxy=false
 declare github_proxy_url=""
 declare install=false
-declare version="1.2.4"
+declare version="1.4.2"
 declare url=""
 
 while [[ $# -gt 0 ]]; do

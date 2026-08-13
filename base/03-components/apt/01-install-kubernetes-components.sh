@@ -3,7 +3,7 @@
 set -e -o posix -o pipefail
 
 # 定义可用的版本列表
-kubernetes_versions=("v1.34" "v1.33" "v1.32" "v1.31" "v1.30" "v1.29")
+kubernetes_versions=("v1.36" "v1.35" "v1.34" "v1.33" "v1.32" "v1.31" "v1.30" "v1.29")
 current_selection=0  # 当前选中的索引
 
 echo "目前由于kubernetes官方变更了仓库的存储路径以及使用方式，旧版 kubernetes 源只更新到 1.28 部分版本，本人懒,不另写旧源的方法"
@@ -78,19 +78,24 @@ select_kubernetes_version() {
 add_kubernetes_apt() {
   # 如果 `/etc/apt/keyrings` 目录不存在，则应在 curl 命令之前创建它，请阅读下面的注释。
   # sudo mkdir -p -m 755 /etc/apt/keyrings
+  mkdir -pv /etc/apt/sources.list.d
   curl -fsSL https://pkgs.k8s.io/core:/stable:/"${kubernetes_versions[$current_selection]}"/deb/Release.key | sudo gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
   sudo chmod 644 /etc/apt/keyrings/kubernetes-apt-keyring.gpg # allow unprivileged APT programs to read this keyring
+
+  # 添加 apt 源列表
+  echo "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/${kubernetes_versions[$current_selection]}/deb/ /" | sudo tee /etc/apt/sources.list.d/kubernetes.list
+  sudo chmod 644 /etc/apt/sources.list.d/kubernetes.list
 }
 
 update_apt() {
   echo "更新apt索引"
   sudo apt-get update
-  sudo apt-get install -y kubelet kubeadm
+  sudo apt-get install -y kubelet kubeadm kubectl
 }
 
 lock_kubernetes_version() {
   echo "锁定版本，不随 apt upgrade 更新"
-  sudo apt-mark hold kubelet kubeadm
+  sudo apt-mark hold kubelet kubeadm kubectl
 }
 
 main() {

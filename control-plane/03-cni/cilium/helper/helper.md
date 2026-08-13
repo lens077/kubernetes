@@ -9,14 +9,17 @@ cilium upgrade cilium  \
 --reuse-values \
 --set sessionAffinity=true \
 
+# 检查状态
+kubectl -n kube-system exec ds/cilium -- cilium status | grep XDP
 
+kubectl get crds
+
+kubectl -n kube-system exec cilium-9wtcb -- cilium-dbg endpoint list
 kubectl -n kube-system rollout restart deployment/cilium-operator
 kubectl -n kube-system rollout restart ds/cilium
 
 # 卸载
 cilium uninstall
-
-
 
 查询
 
@@ -30,9 +33,12 @@ kubectl -n monitoring rollout restart deployment kube-state-metrics
 kubectl -n monitoring rollout restart deployment grafana
 kubectl -n monitoring rollout restart deployment blackbox-exporter
 kubectl -n monitoring rollout restart deployment prometheus-adapter
+
 kubectl -n kube-system exec ds/cilium -- cilium status
 kubectl -n kube-system exec ds/cilium -- cilium status | grep Masquerading
+
 kubectl -n kube-system exec po/cilium-8qfj7 -- cilium status
+
 kubectl get daemonsets -n kube-system
 kubectl get deployments -n kube-system
 
@@ -50,7 +56,7 @@ kubectl get configmap cilium-config -n kube-system -o yaml
 ```
 
 Cilium 信息
-kubectl -n kube-system exec pod/cilium-79qdl -- cilium status --verbose
+kubectl -n kube-system exec pod/cilium-79qdl -- cilium status
 kubectl -n kube-system exec pod/cilium-jbrds -- cilium status --verbose
 kubectl -n kube-system exec pod/cilium-r4pbz -- cilium status --verbose
 

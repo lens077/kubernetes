@@ -1,0 +1,6 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: cilium # 必须与你 Gateway 里的 gatewayClassName 一致
+spec:
+  controllerName: io.cilium/gateway-controller

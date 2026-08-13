@@ -26,8 +26,8 @@ verify () {
 
   if ! which crictl > /dev/null 2>&1; then
     crictl pull registry.k8s.io/prometheus-adapter/prometheus-adapter:v0.11.2
+
   fi
-  echo "crictl 未安装，跳过测试..."
 }
 
 main () {

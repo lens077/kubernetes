@@ -27,14 +27,15 @@ cat /boot/config-$(uname -r) | grep CONFIG_NET_SCH_FQ
 #helm install cilium cilium/cilium --version 1.18.2 \
 #  ...
 #  --set enableXTSocketFallback=false
-lsmod | grep xt_socket
-sudo modprobe xt_socket
-sysctl --system
-cat << EOF | sudo tee /etc/modules-load.d/k8s.conf
-overlay
-br_netfilter
-xt_socket
-EOF
+#lsmod | grep xt_socket
+#sudo modprobe xt_socket
+#sysctl --system
+#cat << EOF | sudo tee /etc/modules-load.d/k8s.conf
+#overlay
+#br_netfilter
+#nf_conntrack
+#xt_socket
+#EOF
 #如果报错 modprobe: FATAL: Module xt_socket not found，说明内核压根没编译这个模块，回退模式是唯一选择（或换内核）。
 
 # 为了正确启用 eBPF 功能，必须启用以下内核配置选项。分发内核通常就是这种情况
@@ -81,26 +82,26 @@ CONFIG_NET_SCH_FQ=m
 # 输入mount | grep /sys/fs/bpf如果用输出， 那么不需要设置
 # https://docs.cilium.io/en/v1.15.0-rc.0/operations/system_requirements/#admin-system-reqs
 # https://docs.cilium.io/en/v1.15.0-rc.0/network/kubernetes/configuration/#bpffs-systemd
-cat <<EOF | sudo tee /etc/systemd/system/sys-fs-bpf.mount
-[Unit]
-Description=Cilium BPF mounts
-Documentation=https://docs.cilium.io/
-DefaultDependencies=no
-Before=local-fs.target umount.target
-After=swap.target
-
-[Mount]
-What=bpffs
-Where=/sys/fs/bpf
-Type=bpf
-Options=rw,nosuid,nodev,noexec,relatime,mode=700
-
-[Install]
-WantedBy=multi-user.target
-EOF
-cat /etc/systemd/system/sys-fs-bpf.mount
-sysctl -p /etc/systemd/system/sys-fs-bpf.mount
-sysctl --system
+#cat <<EOF | sudo tee /etc/systemd/system/sys-fs-bpf.mount
+#[Unit]
+#Description=Cilium BPF mounts
+#Documentation=https://docs.cilium.io/
+#DefaultDependencies=no
+#Before=local-fs.target umount.target
+#After=swap.target
+#
+#[Mount]
+#What=bpffs
+#Where=/sys/fs/bpf
+#Type=bpf
+#Options=rw,nosuid,nodev,noexec,relatime,mode=700
+#
+#[Install]
+#WantedBy=multi-user.target
+#EOF
+#cat /etc/systemd/system/sys-fs-bpf.mount
+#sysctl -p /etc/systemd/system/sys-fs-bpf.mount
+#sysctl --system
 
 # 私有云使用类型PureLB的本地的LoadBalance时需要这些参数
 #cat > /etc/sysctl.d/96-cilium.conf <<EOF
@@ -191,6 +192,6 @@ sysctl --system
 #net.ipv4.neigh.default.gc_thresh3=8192
 #net.netfilter.nf_conntrack_tcp_timeout_close=3
 #EOF
-#
-#sysctl -p /etc/sysctl.d/97-kubernetes-cilium-sysctl.conf
-#sysctl --system
+
+sysctl -p /etc/sysctl.d/97-kubernetes-cilium-sysctl.conf
+sysctl --system
