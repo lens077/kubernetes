@@ -15,7 +15,16 @@ spec:
         # 也可以不给全量特权，而是单独赋予底层操作所需的 Capabilities：
         # capabilities:
         #   add: ["SYS_ADMIN", "SETUID", "SETGID", "CHOWN"]
-  version: 4.2.0
+  # ── 2026-08-06 升级 4.2.0 → 4.3.0，与 Debezium 插件自带的 jar 对齐 ────────────
+  #
+  # 必须和 examples/kafka-single-node.yml 里的 Kafka version 一起看：Debezium
+  # 3.7.0.Alpha1 的 tarball 里自带 connect-api-4.3.0.jar / kafka-clients-4.3.0.jar，
+  # 而 Connect 运行时当时是 4.2.0。**真正需要匹配的是 Connect 运行时，不是 broker**
+  # —— 类加载冲突发生在 Connect 的 ConfigDef 上，Kafka 客户端与 broker 之间本来
+  # 就是跨版本线兼容的。所以只升这一处也能解决问题，broker 是顺带一起升的。
+  #
+  # 改这里会触发**重新构建镜像**。构建的坑见文件末尾 build 段的注释。
+  version: 4.3.0
   replicas: 1
 
   # ── 2026-08-06 补上 resources 和 jvmOptions —— 在此之前它被 OOMKill 了 489 次 ──
@@ -73,16 +82,45 @@ spec:
     config.storage.replication.factor: 1
     offset.storage.replication.factor: 1
     status.storage.replication.factor: 1
+  # ── 2026-08-06 build 段与线上对齐；构建本身有两个坑，改动前必读 ───────────────
+  #
+  # 坑 1：`--storage-driver=vfs` 会把磁盘占用放大好几倍。Strimzi 生成的构建命令里
+  #   硬编码了 vfs，而 vfs **不做 copy-on-write，每一层都是上一层的完整副本**。
+  #   构建这个镜像实测吃掉约 7G 临时空间，且 build pod 的 `resources: {}` 意味着
+  #   ephemeral-storage request=0 → BestEffort → 在 kubelet 的驱逐排序里**排第一**。
+  #   结果就是它把节点磁盘写满、然后第一个被自己触发的驱逐干掉，在各节点之间
+  #   反复横跳。当时三个节点的 root 分区都只有 30G（驱逐阈值 nodefs<10% ≈ 3.2G），
+  #   扛不住。已把三节点 root 从 30G 在线扩到 60G（见 TODO.md 同日条目）。
+  #   若要根治，可考虑给 build 加 ephemeral-storage 的 requests/limits。
+  #
+  # 坑 2：**buildah 用自己的存储，不共享 containerd 的镜像缓存**。所以给节点配的
+  #   containerd registry mirror（certs.d）对构建**完全无效**，FROM 那一行仍然是
+  #   跨境直连 quay.io 拉基础镜像。若要给构建也加速，需要通过
+  #   `spec.template.buildPod.volumes` + `buildContainer.volumeMounts` 挂一份
+  #   自定义 /etc/containers/registries.conf 进去（Strimzi 1.1.0 的 CRD 支持这两个字段）。
+  #   目前**尚未做**。
   build:
     output:
       type: docker
       # 替换为你自己的私有镜像仓库地址，用于推送构建好的镜像
-      image: ccr.ccs.tencentyun.com/sumery/strimzi-connect-debezium:3.5.1
+      # 线上实际用的是 :latest（此前文件写 :3.5.1，与集群不符，已校正）
+      image: ccr.ccs.tencentyun.com/sumery/strimzi-connect-debezium:latest
       pushSecret: tcr-registry-secret
     plugins:
       - name: debezium-postgres-connector
         artifacts:
           - type: tgz
             # 从https://debezium.io/releases 获取版本和链接
+            #
+            # 版本选择注意：Debezium 各版本自带的 Kafka jar 版本不同，必须和上面的
+            # spec.version（Connect 运行时）对齐，否则连接器配置校验会抛 NPE。
+            # 2026-08-06 实测各版本自带的 connect-api：
+            #   3.5.1.Final → 4.1.1     3.5.2.Final → 4.1.2
+            #   3.6.0.Final / 3.6.1.Final / 3.7.0.Alpha1 → 4.3.0
+            # 查法：下载 tarball 后 `tar tzf ... | grep connect-api`。
+            #
+            # 当前用 3.7.0.Alpha1 配 Connect 4.3.0。注意这是 **Alpha 版**，
+            # 若这条 CDC 链路要承载重要数据，建议换成 3.6.1.Final（同样是 4.3.0）。
 #            url: https://repo1.maven.org/maven2/io/debezium/debezium-connector-postgres/3.5.1.Final/debezium-connector-postgres-3.5.1.Final-plugin.tar.gz
-            url: https://repo1.maven.org/maven2/io/debezium/debezium-connector-postgres/3.6.0.Beta1/debezium-connector-postgres-3.6.0.Beta1-plugin.tar.gz
+#            url: https://repo1.maven.org/maven2/io/debezium/debezium-connector-postgres/3.6.0.Beta1/debezium-connector-postgres-3.6.0.Beta1-plugin.tar.gz
+            url: https://repo1.maven.org/maven2/io/debezium/debezium-connector-postgres/3.7.0.Alpha1/debezium-connector-postgres-3.7.0.Alpha1-plugin.tar.gz

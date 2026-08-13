@@ -27,7 +27,18 @@ DO $$
 -- 3. 数据库级与全局所有 Schema 自动化精准赋权（已重构升级）
 -- =========================================================================
 
--- 3.1 赋予数据库级核心权限 (Debezium 自动创建 publication 和逻辑复制槽所需的必要权限)
+-- 3.1 赋予数据库级核心权限
+--
+-- ⚠️ 2026-08-06 更正：这里**不足以**让 Debezium 自动创建 publication。
+--    CREATE ON DATABASE 只能建「针对特定表」的 publication（且需拥有那些表），
+--    而 Debezium 在 table.include.list 为全表通配时发出的是
+--    `CREATE PUBLICATION ... FOR ALL TABLES` —— 这条语句在 PostgreSQL 里
+--    **硬性要求 SUPERUSER**，NOSUPERUSER 的 debezium_user 必然失败：
+--        ERROR: must be superuser to create FOR ALL TABLES publication
+--
+--    不要为此给 debezium_user 加 SUPERUSER（那会破坏本文件第 2 节的最小特权原则）。
+--    正确做法是由超级用户预先建好 publication，见下面第 5 节。
+--    逻辑复制槽则不受影响 —— REPLICATION 属性就足够 Debezium 自行建槽。
 GRANT CONNECT, CREATE ON DATABASE ecommerce TO debezium_user;
 
 -- 3.2 治理系统 public Schema 权限
@@ -110,3 +121,69 @@ FROM pg_auth_members am
          JOIN pg_roles m ON am.member = m.oid
          JOIN pg_roles g ON am.roleid = g.oid
 WHERE m.rolname = 'debezium_user';
+
+-- =========================================================================
+-- 5. pgoutput 的 publication 与复制槽治理（2026-08-06 新增）
+-- =========================================================================
+-- 本节必须用 **超级用户**（如 postgres）执行，不是 debezium_user。
+-- 与之配套的连接器配置见 debezium-postgres-connector.yml。
+
+-- 5.1 清理残留的旧复制槽
+--
+-- 复制槽在创建时就与输出插件**永久绑定，无法修改**。若历史上用过 wal2json，
+-- 那个槽不能复用，必须删掉重建。（本集群 2026-08-06 就残留了一个
+-- plugin=wal2json、active=false 的 debezium_slot。）
+--
+-- 废弃的槽绝非无害：只要槽存在，PostgreSQL 就**必须**保留它尚未确认消费的所有
+-- WAL，哪怕没有任何客户端连接。本集群 max_slot_wal_keep_size=-1（无上限），
+-- 意味着 WAL 会一直堆积到磁盘写满、数据库停止写入为止。
+--
+-- 先查看现状（重点看 plugin 是否匹配、active 是否为 f、滞留了多少 WAL）：
+SELECT slot_name,
+       plugin,
+       active,
+       wal_status,
+       pg_size_pretty(pg_wal_lsn_diff(pg_current_wal_lsn(), restart_lsn)) AS retained_wal
+FROM pg_replication_slots;
+
+-- 确认某个槽确实废弃（active = f 且插件已不再使用）后再删。
+-- 注意：active = t 的槽删不掉，需先停掉对应的连接器。
+-- SELECT pg_drop_replication_slot('debezium_slot');
+
+-- 5.2 由超级用户预建 publication
+--
+-- 名称需与连接器的 publication.name 一致（Debezium 默认值是 dbz_publication）。
+-- 建好之后连接器要配 publication.autocreate.mode: disabled，否则它仍会尝试自建。
+CREATE PUBLICATION dbz_publication FOR ALL TABLES;
+
+-- 5.3 验证
+--
+-- 预期：puballtables = t，且覆盖表数与库中用户表数一致。
+SELECT pubname, puballtables, pg_get_userbyid(pubowner) AS owner,
+       pubinsert, pubupdate, pubdelete
+FROM pg_publication;
+
+SELECT count(*) AS published_tables
+FROM pg_publication_tables
+WHERE pubname = 'dbz_publication';
+
+-- 5.4 replica identity 自查（pgoutput 特有的坑）
+--
+-- pgoutput 下，**没有主键且 replica identity 为 nothing 的表，UPDATE/DELETE 会直接报错**
+-- （wal2json 没有这个约束）。预期返回 0 行；若有行，需为这些表设置
+--   ALTER TABLE <t> REPLICA IDENTITY FULL;   -- 或建唯一索引后用 USING INDEX
+SELECT n.nspname AS schema_name, c.relname AS table_name,
+       c.relreplident AS replica_identity
+FROM pg_class c
+         JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE c.relkind = 'r'
+  AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+  AND c.relreplident = 'n';
+
+-- 5.5 连接器启动后确认槽已被接管
+--
+-- 预期：plugin = pgoutput、active = t、active_pid 非空、retained_wal 很小且不增长。
+-- 若 retained_wal 持续上涨，说明消费侧停了，需尽快处理，否则会撑爆磁盘。
+SELECT slot_name, plugin, active, active_pid,
+       pg_size_pretty(pg_wal_lsn_diff(pg_current_wal_lsn(), restart_lsn)) AS retained_wal
+FROM pg_replication_slots;
