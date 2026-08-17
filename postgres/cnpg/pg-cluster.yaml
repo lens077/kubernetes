@@ -1,0 +1,31 @@
+# CNPG 数据库实例(单实例起步; 多节点后把 instances 改 2/3 即获得自动故障转移)
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: pg-main
+  namespace: postgresql
+spec:
+  instances: 1
+  storage:
+    size: 10Gi
+    storageClass: openebs-lvm          # 按集群实际 StorageClass 调整
+  postgresql:
+    parameters:
+      shared_buffers: 512MB
+      max_connections: "200"
+      random_page_cost: "1.1"          # SSD/NVMe
+      effective_io_concurrency: "200"
+      # CDC(Debezium)需要逻辑复制时取消注释:
+      # wal_level: logical
+  # WAL 归档到 MinIO(需要先建 bucket 与凭据 secret, 用时取消注释):
+  # backup:
+  #   barmanObjectStore:
+  #     destinationPath: s3://pg-backup/
+  #     endpointURL: http://minio-service.minio.svc:9000
+  #     s3Credentials:
+  #       accessKeyId:
+  #         name: minio-creds
+  #         key: ACCESS_KEY_ID
+  #       secretAccessKey:
+  #         name: minio-creds
+  #         key: ACCESS_SECRET_KEY

@@ -8,5 +8,5 @@ spec:
   commonName: my-global-root-ca
   secretName: global-root-ca-secret # 它的私钥和证书会存到这里
   issuerRef:
-    name: global-ca-issuer
+    name: selfsigned      # 由独立的引导 issuer 签发根证书(见 01 的修正说明)
     kind: ClusterIssuer

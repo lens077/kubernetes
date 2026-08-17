@@ -4,6 +4,7 @@ set -o posix errexit -o pipefail
 
 # https://docs.cilium.io/en/v1.16/operations/system_requirements/#admin-system-reqs
 
+
 # 为了正确启用 eBPF 功能，必须启用以下内核配置选项。Distribution Kernel 通常就是这种情况。当选项可以构建为模块或静态链接时，任何选择都是有效的。
 CONFIG_BPF=y
 CONFIG_BPF_SYSCALL=y
@@ -30,16 +31,24 @@ CONFIG_NETFILTER_XT_MATCH_SOCKET=m
 
 # IPsec 要求
 # IPsec 透明加密功能需要许多内核配置选项，其中大多数选项用于启用实际加密。请注意，所需的特定选项取决于算法。以下列表对应于 GCM-128-AES 的要求。
+sudo modprobe ipcomp xfrm4_tunnel tunnel4
+lsmod | grep -E 'esp|ipcomp|tunnel'
+cat > /etc/modules-load.d/cilium-ipsec.conf <<EOF
+esp4
+ipcomp
+xfrm4_tunnel
+tunnel4
+EOF
+cat /etc/modules-load.d/cilium-ipsec.conf
 
+#如果需要 IPv6 的 IPsec，再加：
+#sudo modprobe esp6 ipcomp6 xfrm6_tunnel tunnel6
 CONFIG_XFRM=y
 CONFIG_XFRM_OFFLOAD=y
 CONFIG_XFRM_STATISTICS=y
 CONFIG_XFRM_ALGO=m
 CONFIG_XFRM_USER=m
-CONFIG_INET{,6}_ESP=m
-CONFIG_INET{,6}_IPCOMP=m
-CONFIG_INET{,6}_XFRM_TUNNEL=m
-CONFIG_INET{,6}_TUNNEL=m
+
 CONFIG_INET_XFRM_MODE_TUNNEL=m
 CONFIG_CRYPTO_AEAD=m
 CONFIG_CRYPTO_AEAD2=m
@@ -49,6 +58,15 @@ CONFIG_CRYPTO_CBC=m
 CONFIG_CRYPTO_HMAC=m
 CONFIG_CRYPTO_SHA256=m
 CONFIG_CRYPTO_AES=m
+
+# 检查
+#CONFIG_INET{,6}_ESP=m
+#CONFIG_INET{,6}_IPCOMP=m
+#CONFIG_INET{,6}_XFRM_TUNNEL=m
+#CONFIG_INET{,6}_TUNNEL=m 是否存在（为m或者y）
+grep CONFIG_XFRM /boot/config-$(uname -r)
+grep -E 'CONFIG_INET6?_(ESP|IPCOMP|XFRM_TUNNEL|TUNNEL)=' /boot/config-$(uname -r)
+grep -E 'CONFIG_CRYPTO_(AEAD|GCM|SEQIV|CBC|HMAC|SHA256|AES)=' /boot/config-$(uname -r)
 
 #带宽管理器需要以下内核配置选项来更改数据包调度算法。
 CONFIG_NET_SCH_FQ=m
