@@ -62,12 +62,12 @@ tenant:
   #
   #    name: myminio-env-configuration
   #    accessKey: minio
-  #    secretKey: minio123
+  #    secretKey: <REDACTED-20260817>
   #
   configSecret:
     name: myminio-env-configuration
     accessKey: minio
-    secretKey: minio123
+    secretKey: <REDACTED-20260817>
     #existingSecret: true
 
   ###
@@ -483,4 +483,4 @@ ingress:
 #    stringData:
 #      config.env: |-
 #        export MINIO_ROOT_USER='minio'
-#        export MINIO_ROOT_PASSWORD='minio123'
+#        export MINIO_ROOT_PASSWORD='<REDACTED-20260817>'
