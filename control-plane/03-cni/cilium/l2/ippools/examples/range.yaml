@@ -1,9 +1,0 @@
-# https://docs.cilium.io/en/stable/network/lb-ipam/#lb-ipam-pools
-kind: CiliumLoadBalancerIPPool
-metadata:
-  name: "lb-pool"
-spec:
-  # 指定从哪个IP开始和结束
-  blocks:
-    - start: "192.168.3.103"
-      stop: "192.168.3.250"
