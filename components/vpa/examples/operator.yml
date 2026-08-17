@@ -1,0 +1,46 @@
+# 适用对象：后台 Operator 管理器、安全证书组件（cert-manager、strimzi-operator 等）。
+# 优势：这些组件平时资源开销固定，用 Initial 可以让他们在刚调度启动时被 VPA 自动算命压缩到一个极低的标准线，但在后续运行中绝不干扰它们。
+# 使用 Initial 模式（仅启动时裁剪）
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: cert-manager-vpa
+  namespace: cert-manager
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: cert-manager
+  updatePolicy:
+    updateMode: "Initial"
+  resourcePolicy:
+    containerPolicies:
+      - containerName: '*'
+        minAllowed:
+          cpu: "20m"
+          memory: "64Mi"
+        maxAllowed:
+          cpu: "200m"
+          memory: "256Mi"
+---
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: strimzi-operator-vpa
+  namespace: kafka
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: strimzi-cluster-operator
+  updatePolicy:
+    updateMode: "Initial"
+  resourcePolicy:
+    containerPolicies:
+      - containerName: '*'
+        minAllowed:
+          cpu: "50m"
+          memory: "200Mi"
+        maxAllowed:
+          cpu: "400m"
+          memory: "512Mi"

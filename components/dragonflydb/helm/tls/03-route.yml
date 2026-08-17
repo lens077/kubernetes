@@ -1,0 +1,15 @@
+apiVersion: gateway.networking.k8s.io/v1alpha2
+kind: TLSRoute
+metadata:
+  name: dragonfly-route
+  namespace: dragonfly
+spec:
+  parentRefs:
+    - name: dragonfly-gateway
+      sectionName: https # 对应 Gateway 的监听器名称
+  hostnames:
+    - "dragonfly.app.com"
+  rules:
+    - backendRefs:
+        - name: dragonfly
+          port: 6379

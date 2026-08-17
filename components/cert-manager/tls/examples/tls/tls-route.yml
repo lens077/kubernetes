@@ -1,0 +1,32 @@
+apiVersion: gateway.networking.k8s.io/v1alpha2
+kind: TLSRoute
+metadata:
+  name: pg-dev-route
+  namespace: example
+spec:
+  parentRefs:
+    - name: example-tls-passthrough-gw
+      sectionName: example-tls-listener
+  hostnames:
+    - "example-dev.app.com"             # SNI 域名
+  rules:
+    - backendRefs:
+        - name: example  # 转发到测试库的 Service
+          namespace: example      # 核心细节：指明后端服务在 example 命名空间
+          port: 5432
+#apiVersion: gateway.networking.k8s.io/v1alpha2
+#kind: TLSRoute
+#metadata:
+#  name: pg-prod-route
+#  namespace: example
+#spec:
+#  parentRefs:
+#    - name: example-tls-passthrough-gw
+#      sectionName: example-tls-listener
+#  hostnames:
+#    - "example-prod.app.com"             # SNI 域名
+#  rules:
+#    - backendRefs:
+#        - name: example  # 转发到生成环境的 Service
+#          namespace: example      # 核心细节：指明后端服务在 example 命名空间
+#          port: 5432

@@ -1,0 +1,88 @@
+# 端口、名称、appProtocol、selector 与原 Helm 渲染结果逐字一致 ——
+# otel-collector(jaeger.observability.svc:4317)、jaeger-ui-route(16686)、
+# jaeger-http-route(4318)都靠这些不变量工作。
+#
+# 唯一变化:ClusterIP 会重新分配(原为 10.100.15.3)。
+# 这里刻意不写死旧 IP —— 万一该 IP 在重建瞬间被占用,apply 会直接失败并卡在
+# 迁移中途,代价远大于换个 IP。所有消费方都走 DNS 或 backendRef 名称引用,
+# 感知不到 IP 变化。
+apiVersion: v1
+kind: Service
+metadata:
+  name: jaeger
+  namespace: observability
+  labels:
+    app.kubernetes.io/name: jaeger
+    app.kubernetes.io/instance: jaeger
+    app.kubernetes.io/component: all-in-one
+    app.kubernetes.io/version: 2.19.0
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: jaeger
+    app.kubernetes.io/instance: jaeger
+    app.kubernetes.io/component: all-in-one
+  ports:
+    - name: zk-compact-trft
+      port: 5775
+      protocol: UDP
+      targetPort: 5775
+    - name: config-rest
+      port: 5778
+      protocol: TCP
+      targetPort: 5778
+    - name: jg-compact-trft
+      port: 6831
+      protocol: UDP
+      targetPort: 6831
+    - name: jg-binary-trft
+      port: 6832
+      protocol: UDP
+      targetPort: 6832
+    - name: http-zipkin
+      port: 9411
+      protocol: TCP
+      targetPort: 9411
+      appProtocol: http
+    - name: grpc-http
+      port: 14250
+      protocol: TCP
+      targetPort: 14250
+      appProtocol: grpc
+    - name: c-tchan-trft
+      port: 14267
+      protocol: TCP
+      targetPort: 14267
+    - name: http-c-binary-trft
+      port: 14268
+      protocol: TCP
+      targetPort: 14268
+      appProtocol: http
+    - name: otlp-grpc
+      port: 4317
+      protocol: TCP
+      targetPort: 4317
+      appProtocol: grpc
+    - name: otlp-http
+      port: 4318
+      protocol: TCP
+      targetPort: 4318
+      appProtocol: http
+    - name: http-query
+      port: 16686
+      protocol: TCP
+      targetPort: 16686
+    - name: grpc-query
+      port: 16685
+      protocol: TCP
+      targetPort: 16685
+    - name: internal-metrics
+      port: 8888
+      protocol: TCP
+      targetPort: 8888
+      appProtocol: http
+    - name: span-metrics
+      port: 8889
+      protocol: TCP
+      targetPort: 8889
+      appProtocol: http

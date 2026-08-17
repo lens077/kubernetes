@@ -1,0 +1,25 @@
+# grafana-httproute.yaml
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: grafana-route
+  namespace: observability
+spec:
+  parentRefs:
+    - name: cilium-gateway # 绑定到上面创建的 Gateway
+      sectionName: http
+      namespace: default
+  hostnames:
+    - "grafana.app.com" # <-- 替换成你希望访问 Grafana 的域名
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: grafana # Grafana Service 的名称
+          port: 80      # 路由到 Grafana Service 的端口
+
+# kubectl get gateway -n observability
+# kubectl get httproute -n observability
+# http://grafana.app.com:15580

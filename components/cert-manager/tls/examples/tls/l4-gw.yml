@@ -1,0 +1,19 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: example-tls-passthrough-gw
+  namespace: example
+spec:
+  gatewayClassName: cilium
+  addresses:
+    - type: IPAddress
+      value: 192.168.3.111 # 分配一个独立的独立 IP
+  listeners:
+    - name: example-tls-listener
+      port: 5432          # 外部客户端连接的统一端口
+      protocol: TLS       # 核心：使用纯 L4 TLS 协议
+      tls:
+        mode: Passthrough # 核心：穿透模式，网关不终结 TLS
+      allowedRoutes:
+        namespaces:
+          from: Same       # 允许跨命名空间的 TLSRoute 绑定

@@ -1,0 +1,20 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: elasticsearch-route
+  namespace: elastic-stack
+spec:
+  parentRefs:
+    - name: cilium-gateway
+      namespace: default
+      sectionName: http
+  hostnames:
+    - "es.app.com"
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: elasticsearch-es-http
+          port: 9200

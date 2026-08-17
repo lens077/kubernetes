@@ -1,0 +1,18 @@
+# grafana-gateway.yaml
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: observability-web-gateway
+  namespace: observability # 保持与 Service 相同的命名空间
+spec:
+  addresses:
+    - type: IPAddress
+      value: 192.168.3.110
+  gatewayClassName: cilium
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 3000 # 监听标准的 HTTP 端口
+      # allowedRoutes:
+      #   namespaces:
+      #     from: Same

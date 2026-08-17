@@ -1,0 +1,26 @@
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: global-default-tls-cert
+  namespace: default
+spec:
+  # 最终生成的 Secret 名字，必须与你 Gateway 里的 certificateRefs.name 严格一致！
+  secretName: global-default-tls
+  duration: 2160h # 90天
+  renewBefore: 360h # 提前15天自动续期
+  subject:
+    organizations:
+      - sumery-mesh-org
+  commonName: app.com                  # 主域名
+  isCA: false
+  privateKey:
+    algorithm: ECDSA                   # 现代化高轻量加密，比 RSA 更适合内网/网关
+    size: 256
+  usages:
+    - server auth                      # 声明这是给服务器（网关）做认证用的
+  dnsNames:
+    - "app.com"                        # 根域名
+    - "*.app.com"                      # 泛域名,这一行直接包揽了 kibana.app.com、kb.app.com、orders.app.com 等一切后代
+  issuerRef:
+    name: global-ca-issuer             # 指向上一节创建的集群级 CA 颁发者
+    kind: ClusterIssuer

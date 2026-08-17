@@ -1,0 +1,25 @@
+services:
+
+  connect-go:
+#    image: ccr.ccs.tencentyun.com/kratos/gateway:v2.0.0
+    image: ccr.ccs.tencentyun.com/sumery/server:test1
+#    platform: linux/amd64
+    build:
+      context: .
+      target: final
+    environment:
+      HTTP_ADDR: 0.0.0.0:4001
+      RUN_MODE: prod
+    ports:
+      - "0.0.0.0:4001:4001"
+    container_name: connect-go
+    restart: on-failure:3
+#    environment:
+#      - DISCOVERY_DSN=consul://apikv.com:8500
+#      - DISCOVERY_CONFIG_PATH=ecommerce/gateway/config.yaml
+#    volumes:
+#      # 仅挂载本地配置文件（开发环境）
+#      - ./dynamic-config:/app/dynamic-config
+#    command: [ "/app/gateway" ]
+#    networks:
+#      - ecommerce

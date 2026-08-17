@@ -1,0 +1,17 @@
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: openebs-lvmpv
+parameters:
+  storage: "lvm"
+  #volgroup: "${VG_NAME}"  # 指定卷组
+  volgroup: "lvmvg"  # 指定卷组
+  thinProvision: "no" # 如果你的物理存储空间充裕，希望获得最佳性能且避免 thin pool 带来的额外运维复杂性
+provisioner: local.csi.openebs.io
+# 【关键优化】: WaitForFirstConsumer
+# 延迟绑定。让 K8s 先调度 Pod，确定 Pod 在哪个节点后，再在该节点创建 LVM 卷。
+# 彻底避免多节点集群下 Pod 与存储错开在不同节点的尴尬。
+volumeBindingMode: WaitForFirstConsumer
+# 允许后期直接对 PVC 进行编辑扩容
+allowVolumeExpansion: true
+

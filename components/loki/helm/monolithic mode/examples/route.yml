@@ -1,0 +1,22 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: loki-route
+  namespace: loki
+spec:
+  parentRefs:
+    - name: loki-gateway
+      sectionName: https
+  hostnames:
+  - "loki.app.com"
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: loki
+          port: 3100
+      # 超时配置，防止大批量日志推送时被网关断开
+      timeouts:
+        request: 60s

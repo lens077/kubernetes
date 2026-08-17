@@ -1,0 +1,8 @@
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: consul-internal-issuer
+  namespace: consul
+spec:
+  ca:
+    secretName: consul-root-ca-secret # 引用上面生成的 Secret

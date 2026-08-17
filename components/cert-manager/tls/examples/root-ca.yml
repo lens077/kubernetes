@@ -1,0 +1,15 @@
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: consul-root-ca
+  namespace: consul
+spec:
+  isCA: true # 声明它是 CA
+  commonName: consul-internal-root-ca
+  secretName: consul-root-ca-secret
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  issuerRef:
+    name: global-ca-issuer
+    kind: ClusterIssuer

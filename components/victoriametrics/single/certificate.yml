@@ -1,0 +1,18 @@
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: vm-metrics-gateway-tls
+  namespace: victoriametrics
+spec:
+  # 证书存储在哪个 Secret
+  secretName: vm-metrics-gateway-tls-secret
+  # 证书的颁发者是谁
+  issuerRef:
+    name: global-ca-issuer
+    # ClusterIssuer是集群级别的颁发者， 在全部命名空间生效
+    # Issuer是命名空间的颁发者名，应用在哪个命名空间就在哪个命名空间生效，确保该命名空间存在该Issuer颁发者
+    kind: ClusterIssuer
+  commonName: vm-metrics.app.com
+  # 给哪个域名颁发证书
+  dnsNames:
+    - "vm-metrics.app.com"

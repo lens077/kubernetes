@@ -1,0 +1,24 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: jaeger-query-http-route
+  namespace: observability # 路由所在的命名空间，与 Jaeger Service 相同
+spec:
+  # 将此路由绑定到 Jaeger Query Gateway
+  parentRefs:
+    - name: cilium-gateway # 替换为您实际的 Gateway 名称
+      sectionName: web-gw
+  hostnames:
+    - "jaeger.app.com" # 替换为你的域名
+    - "192.168.3.100" # gateway IP
+
+  # 定义路由规则
+  rules:
+    - matches:
+        # 需要匹配的路径
+        - path:
+            type: PathPrefix
+            value: /
+    - backendRefs:
+        - name: jaeger-query # 指向后端 Service 的名称
+          port: 16686       # 指向 Service 的 http-query 端口

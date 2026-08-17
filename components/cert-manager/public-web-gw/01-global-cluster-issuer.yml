@@ -1,0 +1,11 @@
+# 引导用自签 issuer, 独立命名。
+# 修正说明(2026-08-16): 原先本文件与 03 同名(global-ca-issuer)——分步 apply 且等到
+# 根证书签出后再执行 03 才能成立; 一次性 apply 时 03 立即覆盖本定义, 而根证书
+# (02)还没签出, global-root-ca-secret 不存在 → 证书等 issuer、issuer 等证书, 死锁。
+# 拆成独立的 selfsigned 引导 issuer 后, 01-03 可一次 apply, cert-manager 自行收敛。
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: selfsigned
+spec:
+  selfSigned: {}

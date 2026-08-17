@@ -1,0 +1,12 @@
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: global-root-ca
+  namespace: cert-manager # 放在管理空间
+spec:
+  isCA: true
+  commonName: my-global-root-ca
+  secretName: global-root-ca-secret # 它的私钥和证书会存到这里
+  issuerRef:
+    name: selfsigned      # 由独立的引导 issuer 签发根证书(见 01 的修正说明)
+    kind: ClusterIssuer

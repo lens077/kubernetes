@@ -1,0 +1,19 @@
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: openebs-lvmpv-postgres
+  annotations:
+    openebs.io/cas-type: local
+    cas.openebs.io/config: |
+      - name: StorageType
+        value: hostpath
+      - name: BasePath
+        value: /var/openebs/pg-data
+# 指定 OpenEBS Local PV Provisioner
+provisioner: openebs.io/local
+# 当 PVC 被删除时，PV 也会被删除
+reclaimPolicy: Delete
+# PV 只在第一个 Pod 使用它时才会被绑定，这有助于 Pod 调度到正确的节点
+volumeBindingMode: WaitForFirstConsumer
+# 允许卷扩展
+allowVolumeExpansion: true

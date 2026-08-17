@@ -1,0 +1,151 @@
+# ⚠️ 本文件不能直接 kubectl apply，有两个坑（2026-08-06 实测）：
+#
+# 1. metadata 里没有 namespace。集群里的实际对象在 `kafka` 命名空间，而直接
+#    `kubectl apply -f` 会按当前 context 落到 `default`，**新建出第二套 Kafka 集群**
+#    而不是修改现有的。要加 `-n kafka`。
+#
+# 2. 下面 Kafka CR 里的 listeners 写的是 `type: loadbalancer`，但线上实际是
+#    `type: internal`（文件已经和集群漂移了，谁改的没有记录）。整份 apply 会把
+#    监听器类型从 internal 改成 loadbalancer，触发 Service 重建，所有 Kafka 客户端
+#    连接地址随之变化。
+#
+#    所以 2026-08-06 给 broker 加 resources/jvmOptions 时，是用
+#      kubectl -n kafka patch kafkanodepool dual-role --type=merge -p '...'
+#    只改 KafkaNodePool，没有整份 apply。
+#
+#    这个漂移没有修——要修得先确认 internal 和 loadbalancer 哪个是想要的。
+#    在确认之前，请始终用 `kubectl -n kafka diff -f` 先看清楚再动手。
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaNodePool
+metadata:
+  name: dual-role
+  labels:
+    strimzi.io/cluster: my-cluster
+spec:
+  replicas: 1
+  roles:
+    - controller
+    - broker
+
+  # ── 2026-08-06 补上 resources 和 jvmOptions —— 此前被 OOMKill 了 41 次 ──────
+  #
+  # 和 KafkaConnect 是同一个毛病（见 connect/examples/debezium-postgres-connector-build.yml）：
+  #   1) spec.resources 缺失 → 容器无 requests/limits → Pod 是 BestEffort，
+  #      节点内存吃紧时被内核第一个杀；
+  #   2) 无 jvmOptions → Strimzi 只注入 `KAFKA_HEAP_OPTS=-Xms128M`，**没有 -Xmx**。
+  #      容器又没有 memory limit，JVM 于是按整个节点的内存推算默认最大堆
+  #      （约为节点内存的 1/4 ≈ 1.6G），一路涨到把自己撑死。
+  #
+  # 这个 broker 挂掉的连锁后果比它自己严重：Strimzi 在滚动更新 KafkaConnect 前
+  # 要先确认现有 Pod ready，broker 一直重启导致 operator 连不上
+  # my-cluster-kafka-bootstrap:9091，KafkaConnect 的 reconcile 永远卡在
+  # "Reconciliation is in progress"，observedGeneration 停在 1 —— 也就是说
+  # **Connect 那边的修复改了也推不下去**，必须先修这里。
+  #
+  # 容量约束（重要，改数值前必读）：
+  #   这个 Pod 的 PV 是 openebs-lvmpv，带 `openebs.io/nodename In [node3]` 的
+  #   硬亲和，**换不了节点**（和 loki-0 一样，见 vpa/examples/example1/loki.yml）。
+  #   而 node3 的内存 requests 一度占到 96%，只剩约 125Mi —— 当时根本塞不下
+  #   1Gi requests。是先把 kibana（2Gi requests / 实测 929Mi、无 PVC 可迁移）
+  #   right-size 到 1408Mi 并挤到 node2，腾出 2Gi 之后，这里才放得下。
+  #   node1 是 control-plane 且带 NoSchedule 污点，那 6GB 空闲用不上，别算进去。
+  #
+  # 取值：实测 RSS 516Mi。-Xmx 768m 给堆，容器 1Gi，余约 256Mi 给堆外
+  # （metaspace、线程栈、direct buffer、page cache 之外的 JVM 开销）。
+  # 单节点 KRaft（controller+broker 合一）在这个负载下够用；真要加副本或加吞吐
+  # 时，先看 vpa/examples/example1/kafka.yml 里 VPA 给出的 upperBound 再调。
+  resources:
+    requests:
+      cpu: "200m"
+      memory: 1Gi
+    limits:
+      memory: 1Gi
+  jvmOptions:
+    -Xms: 512m
+    -Xmx: 768m
+
+  storage:
+    type: jbod
+    volumes:
+      - id: 0
+        type: persistent-claim
+        size: 10Gi
+        kraftMetadata: shared
+---
+
+apiVersion: kafka.strimzi.io/v1
+kind: Kafka
+metadata:
+  name: my-cluster
+spec:
+  kafka:
+    # ── 2026-08-06 升级 4.2.0 → 4.3.0，为对齐 Debezium 自带的 Kafka 依赖 ──────────
+    #
+    # 起因：Debezium 3.7.0.Alpha1 的插件包里自带 connect-api-4.3.0.jar 和
+    # kafka-clients-4.3.0.jar，而当时的 Connect 运行时是 4.2.0。版本错配导致
+    # 连接器配置校验时抛 NPE（详见 connect/examples/debezium-postgres-connector.yml）。
+    #
+    # 前置：Strimzi 算子必须先从 1.0.0 升到 1.1.0 —— 1.0.0 的 STRIMZI_KAFKA_IMAGES
+    # 最高只到 4.2.0，CR 里写 4.3.0 算子不认。1.1.0 支持 4.2.0/4.2.1/4.3.0，
+    # 并**移除了 4.1.x 支持**。升级步骤见同级 ../install.sh。
+    #
+    # metadataVersion 是**单向不可逆**的：一旦 finalize 到 4.3-IV0 就无法降回 4.2。
+    # 安全做法是先只改 version、把 metadataVersion 留在旧值（此时仍可回退），
+    # 观察稳定后再提升。本次因明确不需要保留数据，两步一起做了。
+    # 准确的取值不要猜，从 broker 自己查：
+    #   kubectl -n kafka exec my-cluster-dual-role-0 -- \
+    #     bin/kafka-features.sh --bootstrap-server localhost:9092 describe
+    # 输出里 metadata.version 的 SupportedMaxVersion 就是上限（当时为 4.3-IV0）。
+    #
+    # 升级方式：**只用 patch，不要整份 apply 本文件**（原因见文件顶部第 2 条）。
+    #   kubectl -n kafka patch kafka my-cluster --type=merge \
+    #     -p '{"spec":{"kafka":{"version":"4.3.0"}}}'
+    #   # 等 broker 滚完再单独提 metadataVersion
+    version: 4.3.0
+    metadataVersion: 4.3-IV0
+    listeners:
+      - name: plain
+        port: 9092
+        # 是否对外暴露端口, https://strimzi.io/docs/operators/latest/deploying#configuration-points-listeners-str
+        # 可选: loadbalancer/nodeport/ingress
+        type: loadbalancer
+        tls: false
+      - name: tls
+        port: 9093
+        type: loadbalancer
+        tls: true
+    config:
+      offsets.topic.replication.factor: 1
+      transaction.state.log.replication.factor: 1
+      transaction.state.log.min.isr: 1
+      default.replication.factor: 1
+      min.insync.replicas: 1
+
+    # ── 2026-08-12 JMX Prometheus Exporter（broker 零指标问题的暴露端修复）──────
+    #
+    # 此前 broker/Connect 双双没有 metricsConfig，OOMKill 41 次只能靠
+    # kubectl describe 和手测 RSS 排障。开了之后 Strimzi 往 broker Pod 注入
+    # jmx exporter javaagent，容器暴露 9404（端口名 tcp-prometheus），
+    # 由 otel collector 的 prometheus/kafka receiver 按 strimzi.io/kind 标签抓走。
+    #
+    # 依赖顺序：必须先 apply ../metrics/kafka-metrics-configmap.yml，
+    # 否则 operator 找不到 ConfigMap，reconcile 卡住。
+    #
+    # 上线方式照旧**只用 patch**（原因见文件顶部第 2 条），会滚动重启 broker
+    # （单副本短暂不可用；CDC 尚无真实消费者，已确认可接受）：
+    #   kubectl -n kafka apply -f ../metrics/kafka-metrics-configmap.yml
+    #   kubectl -n kafka patch kafka my-cluster --type=merge -p '{
+    #     "spec":{"kafka":{"metricsConfig":{"type":"jmxPrometheusExporter",
+    #       "valueFrom":{"configMapKeyRef":{"name":"kafka-metrics","key":"kafka-metrics-config.yml"}}}}}}'
+    #
+    # javaagent 常驻开销约 50-100Mi 堆外内存 —— broker limit 是 1Gi、堆 768m，
+    # 余量本就只有 ~256Mi，patch 后要盯一眼 RSS，顶不住就把 limit 提到 1152Mi。
+    metricsConfig:
+      type: jmxPrometheusExporter
+      valueFrom:
+        configMapKeyRef:
+          name: kafka-metrics
+          key: kafka-metrics-config.yml
+  entityOperator:
+    topicOperator: {}
+    userOperator: {}

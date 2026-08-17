@@ -1,0 +1,19 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: loki-gateway
+  namespace: loki
+spec:
+  gatewayClassName: cilium
+  listeners:
+    - name: https
+      port: 443
+      protocol: HTTPS
+      hostname: "loki.app.com"
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - name: loki-gateway-tls-secret
+      allowedRoutes:
+        namespaces:
+          from: All

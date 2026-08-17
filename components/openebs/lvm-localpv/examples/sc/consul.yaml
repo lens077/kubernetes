@@ -1,0 +1,14 @@
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: openebs-lvm-consul
+  # 必须使用 OpenEBS LVM CSI 驱动
+provisioner: local.csi.openebs.io
+parameters:
+  # volumeGroup: <您的LVM卷组名称>
+  # 替换为您的节点上用于 OpenEBS LVM 的实际卷组名称。
+  # 假设您的卷组名为 'openebs-vg'
+  volumeGroup: openebs-vg
+reclaimPolicy: Retain # 建议使用 Retain，防止 PVC 误删导致数据丢失，需要手动清理 PV
+allowVolumeExpansion: true
+volumeBindingMode: WaitForFirstConsumer # 延迟绑定，确保 PV 在 Pod 调度到节点后再创建，这是 Local PV 的标准做法。

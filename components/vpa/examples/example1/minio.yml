@@ -1,0 +1,32 @@
+# MinIO —— 先只出推荐，观察一周再放开。
+#
+# 2026-08-06：这个文件在仓库里躺了很久但从来没被 apply 过（install.sh 只 apply
+# 了 loki.yml，其余全靠手工），集群里一直没有 minio-vpa。现在纳管。
+#
+# 改成 Off 而不是原来写的 InPlace：minio 容器目前既没有 requests 也没有 limits
+# （实测 1m/124Mi）。对一个从未被约束过的存储组件，第一步应该是先看数据，
+# 而不是直接让 VPA 往 cgroup 里写值。一周后再决定。
+#
+# minAllowed 的 cpu 从 50m 降到 10m：实测只有 1m，50m 是 50 倍注水。
+# 内存 128Mi 略高于实测 124Mi，作为兜底保留。
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: minio-vpa
+  namespace: minio
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: minio
+  updatePolicy:
+    updateMode: "Off"
+  resourcePolicy:
+    containerPolicies:
+      - containerName: "*"
+        minAllowed:
+          cpu: "10m"
+          memory: "128Mi"
+        maxAllowed:
+          cpu: "400m"
+          memory: "512Mi"

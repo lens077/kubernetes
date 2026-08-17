@@ -1,0 +1,241 @@
+config:
+  # =============================================================================
+  # Fluent Bit 电商项目 OpenTelemetry 最佳实践配置
+  # 版本要求: Fluent Bit >= 3.0
+  # 用途: 采集 Kubernetes 容器日志、节点指标，并以 OTLP 格式发送至 OpenTelemetry Collector
+  # =============================================================================
+
+  # -----------------------------------------------------------------------------
+  # 1. 服务 (Service) - 全局设置
+  # -----------------------------------------------------------------------------
+  service:
+    # 日志级别：生产环境建议 info，调试时可设为 debug
+    log_level: info
+    # 数据刷新间隔（秒），影响数据发送的及时性
+    flush: 5
+    # 后台任务线程数：可根据 Pod 的 CPU 核心数调整
+    scheduler.cap: 2
+    # 存储检查点：用于记录文件采集进度，防止数据丢失
+    storage.path: /var/log/flb-storage/
+    # 指标端点：用于暴露 Fluent Bit 自身的健康状态和性能指标
+    http_server: on
+    http_listen: 0.0.0.0
+    http_port: 2020
+
+  # -----------------------------------------------------------------------------
+  # 2. 输入 (Inputs) - 数据采集源
+  # -----------------------------------------------------------------------------
+  inputs:
+    # 2.1 采集 Kubernetes 容器日志
+    # 使用 tail 插件监控节点上的容器日志文件
+    - name: tail
+      # 容器日志路径，通常由 Kubernetes 自动管理
+      path: /var/log/containers/*.log
+      # 排除特定命名空间的日志（例如系统级）
+      exclude_path: /var/log/containers/kube-system_*.log,/var/log/containers/cert-manager_*.log,/var/log/containers/ingress-nginx_*.log
+      # 多行日志解析器（如 Java 堆栈跟踪）
+      multiline.parser: docker, cri
+      # 跳过超长行（如恶意请求或大对象序列化）
+      skip_long_lines: on
+      # 跳过空行
+      skip_empty_lines: on
+      # 刷新间隔
+      refresh_interval: 10
+      # 为日志打上特定标签
+      tag: kube.*
+      # 内存缓冲区限制（防止节点日志量激增时 OOM）
+      mem_buf_limit: 50MB
+      # 新文件从尾部开始读取（避免重复采集）
+      read_from_head: false
+      # 存储检查点
+      storage.type: filesystem
+
+    # 2.2 采集系统指标（Node Exporter）
+    # 提供 CPU、内存、磁盘、网络等节点级指标
+    - name: node_exporter_metrics
+      tag: node_metrics
+      scrape_interval: 30
+
+  # -----------------------------------------------------------------------------
+  # 3. 过滤器 (Filters) - 数据处理与增强
+  # -----------------------------------------------------------------------------
+  filters:
+    # 3.1 Kubernetes 元数据富化（核心）
+    - name: kubernetes
+      match: kube.*
+      # 合并日志记录（处理多行日志）
+      merge_log: on
+      # 保留原始日志
+      keep_log: on
+      # 自动添加 Kubernetes 标签作为属性
+      labels: on
+      annotations: on
+      # 使用 kubelet 获取 Pod 元数据
+      kube_url: https://kubernetes.default.svc:443
+      kube_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+      kube_ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+      # 缓存 TTL（减少对 API Server 的压力）
+      kube_meta_cache_ttl: 600
+      # 将 namespace、pod、container 等信息提升为顶级属性
+      use_kubelet: on
+
+    # 3.2 日志记录修改（Lua 脚本 - 可选）
+    # 用于电商敏感信息脱敏或添加业务字段
+    - name: lua
+      match: kube.*
+      call: sanitize_log
+      code: |
+        function sanitize_log(tag, timestamp, record)
+            -- 示例：脱敏 email 字段
+            if record["email"] ~= nil then
+                record["email"] = string.gsub(record["email"], "(.+)@", "***@")
+            end
+            -- 示例：脱敏手机号
+            if record["phone"] ~= nil then
+                record["phone"] = string.gsub(record["phone"], "(%d{3})%d{4}(%d{4})", "%1****%2")
+            end
+            -- 添加统一的业务线标签
+            record["business_line"] = "ecommerce"
+            return 2, timestamp, record
+        end
+
+    # 3.3 修改器 (Modifier) - 重命名或删除字段
+    # 将 K8s 字段映射为 OpenTelemetry 语义约定中的标准属性
+    - name: modify
+      match: kube.*
+      # 重命名字段以符合 OpenTelemetry 语义约定
+      rename: kubernetes_namespace_name k8s.namespace.name
+      rename: kubernetes_pod_name k8s.pod.name
+      rename: kubernetes_container_name k8s.container.name
+      rename: kubernetes_host k8s.node.name
+      # 删除冗余或不需要的字段（减少数据量）
+      remove: kubernetes_docker_id
+      remove: kubernetes_pod_id
+      remove: stream
+      # 将日志级别标准化（例如将 "WARN" 映射为 "WARNING"）
+      condition: key_equals log_level WARN
+      set: log_level WARNING
+
+    # 3.4 预期插件 (Expect) - 数据质量守门人
+    # 只允许包含 message 或 log 字段的记录通过，避免空日志
+    - name: expect
+      match: kube.*
+      action: warn
+      rules:
+        - key_exists: message
+          action: keep
+        - key_exists: log
+          action: keep
+        - key_exists: msg
+          action: keep
+        # 默认丢弃无有效日志体的记录
+        - action: drop
+
+    # 3.5 限流 (Throttle) - 防止日志风暴
+    # 限制相同消息在单位时间内的发送次数
+    - name: throttle
+      match: kube.*
+      # 基于日志内容进行限流
+      rate: 100
+      window: 60
+      interval: 1m
+      # 限流时打印警告
+      print_status: true
+
+  # -----------------------------------------------------------------------------
+  # 4. 输出 (Outputs) - 数据发送至 OpenTelemetry Collector
+  # -----------------------------------------------------------------------------
+  outputs:
+    # 4.1 日志输出（OTLP HTTP）
+    - name: opentelemetry
+      match: kube.*
+      # Collector 的 OTLP HTTP 端点
+      host: otel-collector.observability.svc.cluster.local
+      port: 4318
+      # 日志专用 URI
+      logs_uri: /v1/logs
+      # 启用 Gzip 压缩（Fluent Bit 3.0+ 推荐）
+      compress: gzip
+      # 启用 HTTP/2（提升性能）
+      http2: on
+      # 日志体字段映射
+      logs_body_key: $message
+      logs_trace_id_message_key: trace_id
+      logs_span_id_message_key: span_id
+      logs_severity_text_message_key: log_level
+      logs_severity_number_message_key: severity_number
+      # 添加业务标签
+      add_label:
+        - app fluent-bit
+        - env production
+        - region cn-east
+      # 网络与重试设置
+      net.connect_timeout: 10s
+      net.io_timeout: 30s
+      retry_limit: 3
+      # 响应日志（调试时开启）
+      log_response_payload: false
+      # 输出工作线程数
+      workers: 2
+      # TLS 配置（内网可关闭，生产建议开启）
+      tls: off
+      tls.verify: off
+      # 批量发送大小
+      batch_size: 1000
+
+    # 4.2 指标输出（OTLP HTTP）
+    - name: opentelemetry
+      match: node_metrics
+      host: otel-collector.observability.svc.cluster.local
+      port: 4318
+      metrics_uri: /v1/metrics
+      compress: gzip
+      http2: on
+      add_label:
+        - app fluent-bit
+        - env production
+        - source node_exporter
+      net.connect_timeout: 10s
+      net.io_timeout: 30s
+      retry_limit: 3
+      log_response_payload: false
+      workers: 1
+      tls: on
+      tls.verify: off
+      batch_size: 1000
+
+  # -----------------------------------------------------------------------------
+  # 5. 自定义解析器 (Parsers) - 结构化日志解析
+  # -----------------------------------------------------------------------------
+  parsers:
+    # 5.1 通用 JSON 日志解析器
+    - name: json
+      format: json
+      time_key: timestamp
+      time_format: "%Y-%m-%dT%H:%M:%S.%L%z"
+      time_keep: on
+
+    # 5.2 Docker 日志解析器
+    - name: docker
+      format: json
+      time_key: time
+      time_format: "%Y-%m-%dT%H:%M:%S.%L%z"
+      time_keep: on
+
+    # 5.3 CRI 日志解析器
+    - name: cri
+      format: regex
+      regex: ^(?<time>[^ ]+) (?<stream>stdout|stderr) (?<logtag>[^ ]*) (?<message>.*)$
+      time_key: time
+      time_format: "%Y-%m-%dT%H:%M:%S.%L%z"
+      time_keep: on
+
+    # 5.4 自定义业务日志解析器（根据电商应用日志格式调整）
+    - name: ecommerce_log
+      format: regex
+      regex: ^\[(?<time>[^\]]+)\] \[(?<level>[^\]]+)\] \[(?<module>[^\]]+)\] (?<message>.*)$
+      time_key: time
+      time_format: "%Y-%m-%d %H:%M:%S"
+      time_keep: on
+  elasticsearch:
+    enabled: false

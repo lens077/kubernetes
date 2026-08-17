@@ -1,0 +1,43 @@
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaConnect
+metadata:
+  name: my-connect-cluster
+  namespace: kafka
+  annotations:
+    # 关键注解：启用 KafkaConnector CRD 来管理连接器
+    strimzi.io/use-connector-resources: "true"
+spec:
+  version: 4.2.0
+  replicas: 1
+  bootstrapServers: my-cluster-kafka-bootstrap:9093
+  # ... (TLS、存储Topic等配置)
+  tls:
+    trustedCertificates:
+      - secretName: my-cluster-cluster-ca-cert
+        pattern: "*.crt"
+  groupId: my-connect-cluster
+  configStorageTopic: my-connect-cluster-configs
+  statusStorageTopic: my-connect-cluster-status
+  offsetStorageTopic: my-connect-cluster-offsets
+  config:
+    # 将内部主题的复制因子设为与 kafka broker 数量一致
+    config.storage.replication.factor: 1
+    offset.storage.replication.factor: 1
+    status.storage.replication.factor: 1
+    # 其他可能需要的配置（例如，如果集群启用了 TLS，下面这些可以不用显式写）
+    # security.protocol: SSL
+    # ssl.truststore.type: PEM
+    # ssl.truststore.location: ...
+  build:
+    output:
+      type: docker
+      # 替换为你自己的私有镜像仓库地址，用于推送构建好的镜像
+      image: ccr.ccs.tencentyun.com/sumery/strimzi-connect-debezium:latest
+      pushSecret: tcr-registry-secret
+    plugins:
+      - name: debezium-postgres-connector
+        artifacts:
+          - type: tgz
+            url: https://repo1.maven.org/maven2/io/debezium/debezium-connector-postgres/3.5.0.Final/debezium-connector-postgres-3.5.0.Final-plugin.tar.gz
+            #sha512sum: 962a12151bdf9a5a30627eebac739955a4fd95a08d373b86bdcea2b4d0c27dd6e1edd5cb548045e115e33a9e69b1b2a352bee24df035a0447cb820077af00c03
+

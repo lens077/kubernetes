@@ -1,0 +1,94 @@
+apiVersion: opentelemetry.io/v1beta1
+kind: OpenTelemetryCollector
+metadata:
+  name: contrib
+  namespace: observability
+spec:
+  replicas: 1           # 设置副本数量为1
+  image: otel/opentelemetry-collector-contrib:latest
+  config: # 定义 Collector 配置
+    receivers: # 接收器，用于接收遥测数据（如 trace、metrics、logs）
+      otlp: # 配置 OTLP（OpenTelemetry Protocol）接收器
+        protocols: # 启用哪些协议来接收数据
+          grpc:
+            endpoint: 0.0.0.0:4317 # 启用 gRPC 协议
+          http:
+            endpoint: 0.0.0.0:4318 # 启用 HTTP 协议
+
+    # https://github.com/open-telemetry/opentelemetry-collector/blob/main/processor/batchprocessor/README.md
+    processors: # 处理器，用于处理收集到的数据
+      batch: # 批处理器，用于将数据分批发送，提高效率
+        send_batch_size: 1000
+        timeout: 5s
+      memory_limiter:
+        check_interval: 1s
+        limit_mib: 1000
+        spike_limit_mib: 200
+
+    exporters: # 导出器，用于将处理后的数据发送到后端系统
+      # 用于 VictoriaMetrics 的导出器 (指标)
+      otlphttp/victoriametrics:
+        compression: gzip
+        encoding: proto
+        # Setting below will work for sending data to VictoriaMetrics single-node version.
+        # Cluster version of VictoriaMetrics will require a different URL - https://docs.victoriametrics.com/victoriametrics/cluster-victoriametrics/#url-format
+        endpoint: http://vm-single-victoria-metrics-single-server.observability.svc:8428/opentelemetry
+        tls:
+          insecure: true
+
+      # 用于 HTTP的Loki 的导出器 (日志)
+      otlphttp/logs:
+        #endpoint: http://loki:3100/otlp
+        #endpoint: http://loki-gateway.observability/otlp
+        endpoint: http://loki.observability.svc.cluster.local:3100/otlp
+        tls:
+          # 是否使用不安全的连接, 即HTTP明文传输
+          insecure: true
+          # TLS证书:
+          #cert_file: cert.pem
+          #key_file: cert-key.pem
+
+      # 用于 Jaeger 的RPC导出器 (追踪)
+      otlp:
+        endpoint: http://jaeger-collector.observability.svc:4317
+        tls:
+          # 是否使用不安全的连接, 即HTTP明文传输
+          insecure: true
+          # TLS证书:
+          #cert_file: cert.pem
+          #key_file: cert-key.pem
+      otlphttp:
+        endpoint: http://jaeger-collector.observability.svc:4318
+        tls:
+          # 是否使用不安全的连接, 即HTTP明文传输
+          insecure: true
+          # TLS证书:
+          #cert_file: cert.pem
+          #key_file: cert-key.pem
+
+    #      kafka:
+    #        protocol_version: 2.0.0
+    #        brokers:
+    #          - my-cluster-kafka-brokers.kafka.svc:9092  # Kafka 的地址
+    #        topic: otel-logs
+    #        encoding: otlp_json  # 日志通常用 json
+
+    service:
+      pipelines:
+        # 指标数据管道
+        metrics:
+          receivers: [ otlp ]
+          processors: [ memory_limiter, batch ]
+          exporters: [ otlphttp/victoriametrics ]
+
+        # 追踪数据管道
+        traces:
+          receivers: [ otlp ]
+          processors: [ memory_limiter, batch ]
+          exporters: [ otlp,otlphttp ]
+
+        # 日志数据管道
+        logs:
+          receivers: [ otlp ]
+          processors: [ memory_limiter, batch ]
+          exporters: [ otlphttp/logs ]

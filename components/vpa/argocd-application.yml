@@ -1,0 +1,110 @@
+# 把 vpa/ 目录接进 ArgoCD 托管。
+#
+# 为什么要做这件事：集群里跑着 6 个 argocd 组件，但 `kubectl -n argocd get applications`
+# 返回 0 条 —— ArgoCD 装了却一个 Application 都没有，这个目录全靠手工 kubectl apply。
+# 结果就是仓库和集群已经对不上了（2026-08-06 实测）：
+#   examples/example1/minio.yml    躺在仓库里，集群里没有 minio-vpa
+#   examples/ui/grafana.yml        躺在仓库里，集群里没有 grafana-vpa
+#   examples/example1/jaeger.yml   和 examples/ui/ui.yml 各定义了一份 jaeger-vpa，
+#                                  两份的 updateMode 和 minAllowed 都不一样
+#   examples/operator.yml          里的 strimzi-operator-vpa 和 kafka.yml 里的
+#                                  strimzi-cluster-operator-vpa 是同一个目标、两个名字
+# install.sh 里只有 `kubectl apply -f examples/example1/loki.yml` 一行，其余全是
+# 手工敲的，敲过什么没有记录。
+#
+# 2026-08-06：已合并到 main、已 push、已 apply，Application 正常解析到 705538e。
+#
+# ── 部署到本集群时必须调大 repo-server 超时，否则永远 Unknown ────────────────
+# 集群到 github.com 的出口很慢：仓库虽然只有 8.9M，但在 repo-server 里做一次
+# `git clone --depth 1 --filter=blob:none` 实测要 **41 秒**，首次 GenerateManifest
+# 耗时 90 秒。而 application-controller 调用 repo-server 的默认超时是 60 秒，
+# 于是稳定报：
+#   ComparisonError: failed to generate manifest ... code = DeadlineExceeded
+#
+# 坑在于环境变量名：application-controller 读的是**带前缀**的那个
+#   ARGOCD_APPLICATION_CONTROLLER_REPO_SERVER_TIMEOUT_SECONDS
+# 设成不带前缀的 ARGOCD_REPO_SERVER_TIMEOUT_SECONDS 会被静默忽略（照样超时）。
+#
+#   kubectl -n argocd set env deployment/argocd-repo-server ARGOCD_EXEC_TIMEOUT=300s
+#   kubectl -n argocd set env statefulset/argocd-application-controller \
+#     ARGOCD_APPLICATION_CONTROLLER_REPO_SERVER_TIMEOUT_SECONDS=300
+#
+# 首次拉取后 manifest 会进缓存，后续比对很快；超时主要是给冷启动和 hard refresh 用的。
+#
+# ── include 列表说明 ─────────────────────────────────────────────────────────
+# 用显式 include 而不是整目录递归，因为 examples/ 下混着三类东西：真实部署清单、
+# 教学样例、以及目标已经不存在的历史清单。整目录同步会把后两类也推上集群。
+#
+# 刻意排除：
+#   example1/ecommerce.yml       ecommerce 命名空间是空的，里面 8 个 Deployment
+#                                （address/cart/order/payment/…）全集群都不存在。
+#                                这 8 个 VPA 在集群里挂了 44 天，已于 2026-08-06 删除。
+#                                **如果不排除，ArgoCD 会立刻把它们再建回来。**
+#                                等 ecommerce 服务部署回来后再加进 include 列表。
+#   example1/ecommerce-comm.yml  模板样例（shopping-cart-vpa），注释里写着
+#                                「每个微服务改一下名字」，不是真实对象。
+#   operator.yml                 讲解 Initial 模式用的样例，且和 certManager.yml、
+#                                kafka.yml 里的对象重名/同目标，一起同步会打架。
+#
+# 注意：include 列表必须和 install.sh 第 7 步的 apply 清单保持一致，
+# 否则手工 apply 和 ArgoCD 会互相覆盖。改一处要改两处。
+# ─────────────────────────────────────────────────────────────────────────────
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: vpa
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/lens077/cloud-native-deploy.git
+    targetRevision: main
+    path: vpa/examples
+    directory:
+      recurse: true
+      include: '{example1/argocd.yml,example1/certManager.yml,example1/kafka.yml,example1/kafka-connect.yml,example1/postgres.yml,example1/dragonfly.yml,example1/openTelemetry-collector.yml,example1/minio.yml,example1/elastic-stack.yml,example1/seata.yml,example1/postgres-kafka-es-streaming-pipeline.yml,example1/loki.yml,example1/loki-gateway.yml,ui/ui.yml,ui/grafana.yml}'
+  destination:
+    server: https://kubernetes.default.svc
+    # VPA 对象各自带 namespace 字段，这里的 namespace 只是 Application 的默认落点
+    namespace: kube-system
+  syncPolicy:
+    # 先不开 automated。理由：VPA 对象里的 minAllowed 一旦写错，automated 会在你
+    # 反应过来之前就把全集群的 requests 推过去。先手工点几轮 Sync，确认 diff 干净、
+    # 推荐值稳定之后，再把下面 automated 那段注释放开。
+    #
+    # automated:
+    #   prune: true
+    #   selfHeal: true
+    syncOptions:
+      - CreateNamespace=false
+      # VPA 的 status.recommendation 由 recommender 持续写入，会让 ArgoCD 一直
+      # 显示 OutOfSync。RespectIgnoreDifferences 配合下面的 ignoreDifferences 使用。
+      - RespectIgnoreDifferences=true
+  ignoreDifferences:
+    - group: autoscaling.k8s.io
+      kind: VerticalPodAutoscaler
+      jsonPointers:
+        - /status
+#
+# ── 启用记录（2026-08-06 已完成 1~4）────────────────────────────────────────
+#
+#   1) git commit（只提交 vpa/，注意 git commit 默认提交整个索引，
+#      仓库里常有别的已暂存改动，用 `git commit --only <paths>`）
+#   2) 快进合并到 main 并 push
+#      注意：本仓库的 remote **就叫 main**，于是 `main` 既是分支名又是远端名，
+#      `git rev-parse main` 会报 "refname 'main' is ambiguous"。
+#      对比时要写全 refs/heads/main 和 refs/remotes/main/main。
+#      工作区常有大量未提交改动，用 `git fetch . <branch>:main` 快进本地 main，
+#      比 checkout + merge 安全（完全不动工作区）。
+#   3) kubectl apply -f vpa/argocd-application.yml
+#   4) 确认集群现状与仓库一致 —— 实测 spec 零漂移：
+#        for f in <include 列表里的每个文件>; do kubectl diff -f "$f"; done
+#      Application 显示 OutOfSync 是正常的：那 26 个对象都是先前用 kubectl 建的，
+#      身上没有 ArgoCD 的 tracking label（argocd.argoproj.io/instance），
+#      首次 Sync 只会补这个 label，不会改动任何 spec。
+#
+#   5) 待办：观察一周后再考虑放开 syncPolicy.automated。
+#      放开之前务必确认 include 列表和 install.sh 第 7 步的 apply 清单一致，
+#      否则两边会互相覆盖。

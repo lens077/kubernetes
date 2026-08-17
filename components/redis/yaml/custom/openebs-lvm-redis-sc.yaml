@@ -1,0 +1,13 @@
+# redis-sc.yaml
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: openebs-lvm-redis
+  namespace: redis
+provisioner: local.csi.openebs.io
+parameters:
+  storage: "lvm"
+  volgroup: "lvmvg"  # 确保这里的名称与您在节点上创建的卷组名称一致
+reclaimPolicy: Delete
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: true

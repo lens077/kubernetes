@@ -1,0 +1,45 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis
+  namespace: redis
+spec:
+  serviceName: "redis-service"
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      containers:
+        - name: redis
+          image: redis:latest
+          command: ["redis-server"]
+          args: ["/usr/local/etc/redis/redis.conf"] # 指定配置文件路径
+          ports:
+            - containerPort: 6379
+              name: redis-port
+          volumeMounts:
+            - name: redis-data
+              mountPath: /data
+            - name: redis-config-volume
+              mountPath: /usr/local/etc/redis # 挂载配置文件所在的目录
+      volumes:
+        - name: redis-config-volume
+          configMap:
+            name: redis-config # 引用 ConfigMap
+        - name: redis-data
+          persistentVolumeClaim:
+            claimName: redis-data
+  volumeClaimTemplates:
+    - metadata:
+        name: redis-data
+      spec:
+        accessModes: [ "ReadWriteOnce" ]
+        storageClassName: openebs-lvm-redis
+        resources:
+          requests:
+            storage: 2Gi

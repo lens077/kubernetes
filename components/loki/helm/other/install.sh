@@ -1,0 +1,126 @@
+helm repo add grafana https://grafana.github.io/helm-charts
+helm repo update
+helm pull grafana/loki
+tar -zxvf loki-*.tgz
+
+cat > new-vaues.yml <<EOF
+loki:
+  # 是否是使用多租户
+  auth_enabled: false
+
+  commonConfig:
+    replication_factor: 1
+  schemaConfig:
+    configs:
+      - from: "2024-04-01"
+        store: tsdb
+        object_store: s3
+        schema: v13
+        index:
+          prefix: loki_index_
+          period: 24h
+  # storage_config:
+  #   aws:
+  #     region: <AWS region your bucket is in, for example, >
+  #     bucketnames: <Your AWS bucket for chunk, for exaxmple,  >
+  #     s3forcepathstyle: false
+  pattern_ingester:
+    enabled: true
+  limits_config:
+    allow_structured_metadata: true
+    volume_enabled: true
+    #retention_period: 672h # 28 days retention
+    retention_period: 168h # 28 days retention
+
+  storage:
+    type: s3
+    bucketNames:
+      chunks: chunks
+      ruler: ruler
+      admin: admin
+    s3:
+      # s3 URL can be used to specify the endpoint, access key, secret key, and bucket name this works well for S3 compatible storages or are hosting Loki on-premises and want to use S3 as the storage backend. Either use the s3 URL or the individual fields below (AWS endpoint, region, secret).
+      #s3: s3://z4mYKNhTeNMMuidn5G9A:2035Jq2GH2m781XxOBMILhj1n1u2aArJULySIUSj@minio-service.minio.svc:9000/loki
+      # AWS endpoint URL
+      endpoint: minio-service.minio.svc:9000
+      # AWS region where the S3 bucket is located
+      # region: <your-region>
+      # AWS secret access key
+      secretAccessKey: 2035Jq2GH2m781XxOBMILhj1n1u2aArJULySIUSj
+      # AWS access key ID
+      accessKeyId: z4mYKNhTeNMMuidn5G9A
+      # AWS signature version (e.g., v2 or v4)
+      # signatureVersion: <your-signature-version>
+      # 强制S3的路径样式 Forces the path style for S3 (true/false)
+      s3ForcePathStyle: true
+      # 如果是HTTP，那么设置为true。Allows insecure (HTTP) connections (true/false)
+      insecure: true
+      # HTTP configuration settings
+      http_config: {}
+
+# Disable minio storage
+minio:
+  enabled: false
+
+deploymentMode: SingleBinary
+
+singleBinary:
+  replicas: 1
+  persistence:
+    storageClass: openebs-lvmpv
+    accessModes:
+      - ReadWriteOnce
+    size: 10Gi
+  resources:
+    limits:
+      cpu: "500m"
+      memory: "500Mi"
+# 默认请求CPU: 500m, Memory: 9830Mi
+chunksCache:
+  resources:
+    limits:
+      cpu: "500m"
+      memory: "500Mi"
+# Zero out replica counts of other deployment modes
+backend:
+  replicas: 0
+  resources:
+    limits:
+      cpu: "500m"
+      memory: "500Mi"
+read:
+  replicas: 0
+write:
+  replicas: 0
+
+ingester:
+  replicas: 0
+querier:
+  replicas: 0
+queryFrontend:
+  replicas: 0
+queryScheduler:
+  replicas: 0
+distributor:
+  replicas: 0
+compactor:
+  replicas: 0
+indexGateway:
+  replicas: 0
+bloomGateway:
+  replicas: 0
+
+memcachedExporter:
+  # -- Whether memcached metrics should be exported
+  enabled: true
+  resources:
+    limits:
+      cpu: "500m"
+      memory: "500Mi"
+EOF
+
+helm upgrade --install \
+loki ./loki \
+--create-namespace \
+-n loki \
+--values new-vaues.yml

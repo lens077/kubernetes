@@ -1,0 +1,35 @@
+# Seata Server —— 只出推荐，先不改实配。
+#
+# 2026-08-06 纳管。它在此之前完全没有资源约束：
+#     seata-server 容器既没有 requests 也没有 limits，实测 6m/417Mi。
+# 没有 requests 意味着调度器认为它「不占内存」，但它实际是集群里第 8 大的内存
+# 消费者 —— 这种 Pod 是节点内存超卖时第一批被 OOMKill 的对象（BestEffort QoS）。
+#
+# 先用 Off 观察一周：Seata 是 JVM，堆的伸缩由 -Xmx 决定而不是由 cgroup 决定，
+# 直接让 VPA 写一个基于 RSS 的 requests 进去，很可能低于 JVM 实际会长到的水位。
+# 一周后拿 upperBound 对照 JVM 参数再决定。
+#
+# 查看推荐：kubectl -n seata describe vpa seata-server-vpa
+
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: seata-server-vpa
+  namespace: seata
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: seata-server
+  updatePolicy:
+    updateMode: "Off"
+  resourcePolicy:
+    containerPolicies:
+      - containerName: "seata-server"
+        controlledResources: ["cpu", "memory"]
+        minAllowed:
+          cpu: "10m"
+          memory: 256Mi
+        maxAllowed:
+          cpu: "1"
+          memory: 1Gi

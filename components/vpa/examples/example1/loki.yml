@@ -1,0 +1,41 @@
+# Loki(SingleBinary StatefulSet)的 VPA —— 只出推荐,不改实配。
+#
+# 为什么需要它:2026-08-06 之前 loki-0 的内存上限是 512Mi,而它空载就占 344Mi,
+# 于是在 55 天里被 OOMKill 了 25 次(exit 137)。这件事没有任何自动化在看 ——
+# 本目录原先只有 loki-gateway.yml,盯的是那个 nginx 网关(实际只用 1m/11Mi),
+# 真正会 OOM 的 StatefulSet 反而没被纳管。
+#
+# 为什么必须是 updateMode: "Off":
+#   node3 的内存 requests 已经占到 99%(6290Mi/6442Mi)。VPA 一旦真去调高
+#   requests,这个 Pod 会直接调度不上去 —— 而它还换不了节点,PV 是
+#   openebs-lvmpv、带 openebs.io/nodename In [node3] 的硬亲和,换节点等于迁数据。
+#   所以这里只让它算推荐值,人看过 node3 余量之后再手工改 helm values。
+#   查看推荐:kubectl -n loki describe vpa loki-vpa
+#
+# minAllowed 取 512Mi:低于这个值 Loki 空载都装不下(实测 344Mi 且会随
+# chunk cache / TSDB index 上浮),给出更低的推荐没有意义。
+# maxAllowed 取 2Gi:超过这个数就不该再靠加内存解决,而要去看查询护栏
+# (limits_config 里的 tsdb_max_query_parallelism 等,见 values 注释)或拆成
+# 读写分离部署。
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: loki-vpa
+  namespace: loki
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: StatefulSet
+    name: loki
+  updatePolicy:
+    updateMode: "Off"
+  resourcePolicy:
+    containerPolicies:
+      - containerName: "loki"
+        controlledResources: ["cpu", "memory"]
+        minAllowed:
+          cpu: "50m"
+          memory: 512Mi
+        maxAllowed:
+          cpu: "1"
+          memory: 2Gi

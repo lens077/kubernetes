@@ -1,0 +1,22 @@
+# httproute.yaml
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: HTTPRoute
+metadata:
+  name: test-loki-logger-route
+  namespace: default
+spec:
+  parentRefs:
+    - name: cilium-gateway
+      sectionName: web-gw
+      namespace: default # 如果 gateway 在其他 namespace，需指定
+  hostnames:
+    - "test-loki.app.com"
+    - "192.168.3.100"
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: test-loki-logger
+          port: 8080

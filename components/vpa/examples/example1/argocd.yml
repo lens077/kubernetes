@@ -1,0 +1,195 @@
+# 适用对象：无状态、有流量时资源飙升、平时发呆的 UI 界面、网关、链路追踪和核心控制器。
+#优势：利用 K8s 原地动态调整 cgroup，绝不重启 Pod，非常适合你用来压榨这 21GB 的内网资源。
+#
+#ArgoCD 核心组件 (代码仓库与服务网关)
+#ArgoCD 在 Git 轮询和 UI 刷新时会突发消耗资源。
+#
+# ── 2026-08-06 minAllowed 复查 ───────────────────────────────────────────────
+# 原来这里的 minAllowed 是 64Mi~128Mi，但实测各组件常驻内存只有 5Mi~27Mi：
+#   argocd-server 27Mi / repo-server 22Mi / applicationset 21Mi
+#   dex 18Mi / notifications 16Mi / redis 5Mi        (kubectl top pod -n argocd)
+# minAllowed 高于真实用量时它不是「保护」而是「注水」—— VPA 被迫推荐一个谁也
+# 没要过的数字。这里统一下调到实测值的 1.5~2 倍。
+#
+# 注意：光改这里不生效。recommender 有个全局地板
+# --pod-recommendation-min-memory-mb（默认 250）会盖过所有低于它的推荐值，
+# 已在 install.sh 里一并降到 32。两处要一起改。
+#
+# ── 2026-08-06 updateMode 从 InPlace 改成 InPlaceOrRecreate ──────────────────
+# 修好 vpa-updater --min-replicas 之后露出第二层阻塞：
+#   Pod QOS Class may not change as a result of resizing
+# applicationset-controller / dex-server / notifications-controller / redis
+# 这四个从来没配过 requests，属于 BestEffort。VPA 给它们加 requests 会让 QoS
+# 变成 Burstable，而原地 resize **不允许跨 QoS 等级**，纯 InPlace 没有退路就永久卡死。
+#
+# InPlaceOrRecreate 在原地失败时会自动降级成驱逐重建，重建后的 Pod 由
+# admission-controller 注入 requests，成为 Burstable，此后原地 resize 一直有效
+# —— 也就是只需付出一次重启。otel-operator 走的就是这条路，已验证。
+#
+# server 和 repo-server 本来就有 requests（已是 Burstable），原地 resize 对它们
+# 一直是成功的，改成 InPlaceOrRecreate 不会触发重建，只是让配置一致、
+# 将来万一被重建成 BestEffort 也能自愈。
+# ─────────────────────────────────────────────────────────────────────────────
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: argocd-server-vpa
+  namespace: argocd
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: argocd-server
+  updatePolicy:
+    updateMode: "InPlaceOrRecreate" # 统一采用无感原地扩缩
+  resourcePolicy:
+    containerPolicies:
+      - containerName: "*"
+        minAllowed:
+          cpu: "10m"
+          memory: "48Mi" # 实测 27Mi，留一倍余量给 UI 并发刷新
+        maxAllowed:
+          cpu: "300m"
+          memory: "400Mi" # 400Mi 足够应对多用户同时访问 UI
+---
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: argocd-repo-server-vpa
+  namespace: argocd
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: argocd-repo-server
+  updatePolicy:
+    updateMode: "InPlaceOrRecreate"
+  resourcePolicy:
+    containerPolicies:
+      - containerName: "*"
+        minAllowed:
+          cpu: "10m"
+          memory: "48Mi" # 实测 22Mi，但渲染大清单时会瞬时冲高，留一倍
+        maxAllowed:
+          cpu: "500m"     # 拒绝 1C，严控在 0.5C
+          memory: "600Mi" # 拒绝 2Gi 吞噬弹夹！600Mi 足够内网全栈清单解析
+---
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: argocd-applicationset-controller-vpa
+  namespace: argocd
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: argocd-applicationset-controller
+  updatePolicy:
+    updateMode: "InPlaceOrRecreate"
+  resourcePolicy:
+    containerPolicies:
+      - containerName: "*"
+        minAllowed:
+          cpu: "10m"
+          memory: "32Mi" # 实测 21Mi
+        maxAllowed:
+          cpu: "300m"
+          memory: "256Mi" # 裁剪至 256Mi，内网单集群不需要 512Mi
+---
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: argocd-dex-server-vpa
+  namespace: argocd
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: argocd-dex-server
+  updatePolicy:
+    updateMode: "InPlaceOrRecreate"
+  resourcePolicy:
+    containerPolicies:
+      - containerName: "*"
+        minAllowed:
+          cpu: "10m"
+          memory: "32Mi" # 实测 18Mi
+        maxAllowed:
+          cpu: "200m"
+          memory: "128Mi" # 仅负责内网 OIDC 登录，128Mi 顶天了
+---
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: argocd-notifications-controller-vpa
+  namespace: argocd
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: argocd-notifications-controller
+  updatePolicy:
+    updateMode: "InPlaceOrRecreate"
+  resourcePolicy:
+    containerPolicies:
+      - containerName: "*"
+        minAllowed:
+          cpu: "10m"
+          memory: "32Mi" # 实测 16Mi
+        maxAllowed:
+          cpu: "200m"
+          memory: "128Mi" # 仅负责通知推送，极限压榨其上限
+---
+# argocd-application-controller —— 2026-08-06 补上。
+#
+# 此前 argocd 七个组件里只有六个被纳管，唯独漏了这一个，而它恰恰是最核心的那个
+# （负责所有 Application 的 diff 与 sync）。它是 StatefulSet 不是 Deployment，
+# 大概是当初照着 Deployment 列表抄的时候漏掉了。实测 3m/30Mi，此前无任何
+# requests，属于 BestEffort —— 节点内存吃紧时是内核 OOM killer 的第一顺位。
+#
+# maxAllowed 给到 512Mi：它要在内存里维护全部 Application 的期望状态与实况差异，
+# 是 argocd 里最吃内存的组件，Application 数量上来之后会明显增长（当前集群
+# 是 0 个 Application，所以现在这个 30Mi 没有参考价值，别照着它定上限）。
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: argocd-application-controller-vpa
+  namespace: argocd
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: StatefulSet
+    name: argocd-application-controller
+  updatePolicy:
+    updateMode: "InPlaceOrRecreate"
+  resourcePolicy:
+    containerPolicies:
+      - containerName: "*"
+        minAllowed:
+          cpu: "10m"
+          memory: "48Mi"
+        maxAllowed:
+          cpu: "500m"
+          memory: "512Mi"
+---
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: argocd-redis-vpa
+  namespace: argocd
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: argocd-redis
+  updatePolicy:
+    updateMode: "InPlaceOrRecreate"
+  resourcePolicy:
+    containerPolicies:
+      - containerName: "*"
+        minAllowed:
+          cpu: "10m"
+          memory: "32Mi" # 实测 5Mi —— 原来的 128Mi 是 25 倍注水
+        maxAllowed:
+          cpu: "400m"
+          memory: "512Mi" # 拒绝 1Gi。作为 Argo 的状态缓存，512Mi 绰绰有余

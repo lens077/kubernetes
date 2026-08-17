@@ -1,0 +1,26 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: casdoor-gateway
+  namespace: casdoor
+spec:
+  # Cilium Gateway 支持 Gateway API 规范提供的地址 。spec.addresses 字段用于指定网关的 IP 地址。
+  #该功能仅支持 IPAddress 类型的地址，并适用于 LB-IPAM。有关详细信息，请参阅 LoadBalancer IP 地址管理 （LB IPAM）。
+  #addresses:
+  # - type: IPAddress
+  #   value: 192.168.3.105
+  gatewayClassName: cilium
+  listeners:
+    #    - allowedRoutes:
+    #        namespaces:
+    #          from: Same
+    - name: https
+      # 开启特权端口参数才能使用1023以下的端口
+      port: 443
+      protocol: HTTPS
+      tls:
+        certificateRefs:
+          - name: casdoor-gateway-tls-secret
+      allowedRoutes:
+        namespaces:
+          from: All

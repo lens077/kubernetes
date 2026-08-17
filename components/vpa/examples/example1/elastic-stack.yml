@@ -1,0 +1,79 @@
+# Elasticsearch / Kibana —— 只出推荐，绝不改实配。
+#
+# 为什么需要它：node3 的内存 requests 已经占到 99%（6290Mi/6442Mi），而实际用量
+# 只有 70%（4441Mi）。差额最大的一块就在这里：
+#     kibana         requests 2Gi  实测 925Mi   → 约 1.1Gi 是空占
+#     elasticsearch  requests 2Gi  实测 1684Mi  → 基本合理
+# 两者都是 node3 上的大户，且在 2026-08-06 之前**完全没有被 VPA 纳管** ——
+# 这和 loki 那次是同一个毛病：纳管了小的（loki-gateway 只用 1m/11Mi），
+# 真正吃内存的反而没人看。
+#
+# 为什么必须是 updateMode: "Off"：
+#   这两个对象是 ECK Operator（elastic-operator）生成并持续 reconcile 的。
+#   VPA 去改 StatefulSet/Deployment 的 requests，ECK 下一轮就会改回来，
+#   两个控制器互相打架，最后表现为 Pod 反复重建。要真正调整，得改
+#   Elasticsearch/Kibana 这两个 CR 里的 podTemplate，而不是改它们生成的工作负载。
+#   所以这里只让 VPA 算数，人看过之后去改 CR。
+#
+# 查看推荐：
+#   kubectl -n elastic-stack describe vpa kibana-vpa
+#   kubectl -n elastic-stack describe vpa elasticsearch-vpa
+
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: kibana-vpa
+  namespace: elastic-stack
+spec:
+  # targetRef 必须指向 Kibana CR，不能指向它生成的 Deployment。
+  # 指向 Deployment 时 VPA 会拒绝：
+  #   "The target apps/v1.Deployment/es-kb-quickstart-eck-kibana-kb has a parent
+  #    controller but it should point to a topmost well-known or scalable controller"
+  # VPA 要求 targetRef 指向最顶层的控制器；这个 Deployment 的 ownerReference 是
+  # kibana.k8s.elastic.co/v1 Kibana。而 Kibana CRD 带 scale 子资源
+  # （specReplicasPath .spec.count），所以 VPA 能直接认它。
+  #
+  # 对比：下面的 elasticsearch 反而要指 StatefulSet —— 因为 Elasticsearch CRD
+  # **没有** scale 子资源，VPA 往上走不动，StatefulSet 就是它眼里的顶层。
+  # 同一个 operator 下两个对象写法不同，原因就在这个 scale 子资源上。
+  targetRef:
+    apiVersion: kibana.k8s.elastic.co/v1
+    kind: Kibana
+    name: es-kb-quickstart-eck-kibana
+  updatePolicy:
+    updateMode: "Off"
+  resourcePolicy:
+    containerPolicies:
+      - containerName: "kibana"
+        controlledResources: ["cpu", "memory"]
+        minAllowed:
+          cpu: "10m"
+          memory: 256Mi
+        maxAllowed:
+          cpu: "1"
+          memory: 2Gi
+---
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: elasticsearch-vpa
+  namespace: elastic-stack
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: StatefulSet
+    name: elasticsearch-es-default
+  updatePolicy:
+    updateMode: "Off"
+  resourcePolicy:
+    containerPolicies:
+      - containerName: "elasticsearch"
+        controlledResources: ["cpu", "memory"]
+        # minAllowed 取 1Gi 是有意为之，不是注水：ES 的 JVM heap 由 -Xms/-Xmx 固定，
+        # 低于 heap + 堆外内存的推荐值没有意义，照着调只会 OOM。
+        minAllowed:
+          cpu: "50m"
+          memory: 1Gi
+        maxAllowed:
+          cpu: "2"
+          memory: 4Gi

@@ -1,0 +1,83 @@
+replicaCount: 1
+
+image:
+  # -- Container Image Registry to pull the image from
+  repository: docker.dragonflydb.io/dragonflydb/dragonfly
+service:
+  # -- Service type to provision. Can be NodePort, ClusterIP or LoadBalancer
+  type: LoadBalancer
+  port: 6379
+serviceMonitor:
+  # -- If true, a ServiceMonitor CRD is created for a prometheus operator
+  enabled: false
+  # -- namespace in which to deploy the ServiceMonitor CR. defaults to the application namespace
+  namespace: ""
+  # -- additional labels to apply to the metrics
+  labels: {}
+  # -- additional annotations to apply to the metrics
+  annotations: {}
+  # -- scrape interval
+  interval: 10s
+  # -- scrape timeout
+  scrapeTimeout: 10s
+resources:
+  # -- The requested resources for the containers
+  requests: {}
+  #   cpu: 100m
+  #   memory: 128Mi
+  # -- The resource limits for the containers
+  limits:
+    cpu: 100m
+    memory: 512Mi
+
+# If enabled will set DFLY_PASSOWRD environment variable with the specified existing secret value
+# Note that if enabled and the secret does not exist pods will not start
+passwordFromSecret:
+  # 如果不需要密码, 把enable: true改成enable: false
+  enable: true
+  existingSecret:
+    name: "dragonfly-password-secret"
+    key: "password"
+
+tls:
+  # -- enable TLS
+  enabled: true
+  # -- use cert-manager to automatically create the certificate
+  createCerts: true
+  # -- duration or ttl of the validity of the created certificate
+  # -- 证书的有效期
+  duration: 87600h0m0s
+  # -- 证书的续期时间
+  renewBefore: 360h # 15天
+  issuer:
+    # -- cert-manager issuer kind. Usually Issuer or ClusterIssuer
+    kind: ClusterIssuer
+    # -- name of the referenced issuer
+    name: global-ca-issuer
+  # -- use TLS certificates from existing secret
+  existing_secret: ""
+  # -- TLS certificate
+  cert: ""
+  # cert: |
+  #   -----BEGIN CERTIFICATE-----
+  #   MIIDazCCAlOgAwIBAgIUfV3ygaaVW3+yzK5Dq6Aw6TsZ494wDQYJKoZIhvcNAQEL
+  #   ...
+  #   BQAwRTELMAkGA1UEBhMCQVUxEzARBgNVBAgMClNvbWUtU3RhdGUxITAfBgNVBAoM
+  #   zJAL4hNw4Tr6E52fqdmX
+  #   -----END CERTIFICATE-----
+  # -- TLS private key
+  #key: ""
+  # key: |
+  #   -----BEGIN RSA PRIVATE KEY-----
+  #   MIIEpAIBAAKCAQEAxeD5iQGQpCUlksFvjzzAxPTw6DMJd3MpifV+HoBY4LiTyDer
+  #   ...
+  #   HLunol88AeTOcKfD6hBYGvcRfu5NV29jJxZCOBfbFQXjnNlnrhRCag==
+  #   -----END RSA PRIVATE KEY-----
+
+storage:
+  # -- If /data should persist. This will provision a StatefulSet instead.
+  enabled: false
+  # -- Global StorageClass for Persistent Volume(s)
+  storageClassName: ""
+  # -- Volume size to request for the PVC
+  requests: 128Mi

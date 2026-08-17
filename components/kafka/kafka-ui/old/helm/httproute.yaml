@@ -1,0 +1,41 @@
+# kafka-ui-gateway.yaml
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: kafka-ui-web-gateway
+  namespace: kafka # 保持与 Service 相同的命名空间
+spec:
+  # >>> 请替换成你集群中实际安装的 Gateway Controller Class 名称 <<<
+  gatewayClassName: cilium
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 80 # 监听标准的 HTTP 端口
+      # allowedRoutes:
+      #   namespaces:
+      #     from: Same
+---
+# kafka-ui-httproute.yaml
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: kafka-ui-route
+  namespace: kafka
+spec:
+  parentRefs:
+    - name: kafka-ui-web-gateway # 绑定到上面创建的 Gateway
+  hostnames:
+    - "kafka-ui.app.com" # <-- 替换成你希望访问 Kafka UI 的域名
+  rules:
+    - matches:
+        # 匹配所有路径 (/)，将流量转发给 Kafka UI
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: kafka-ui # Kafka UI Service 的名称
+          port: 80       # 路由到 Kafka UI Service 的 http 端口
+
+# kubectl get gateway -n kafka
+# kubectl get kafka-ui-route -n kafka
+# http://kafka-ui.app.com:16680/

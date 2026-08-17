@@ -1,0 +1,21 @@
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: shopping-cart-vpa # 每个微服务改一下名字
+  namespace: ecommerce
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: shopping-cart # 对应你的微服务 Deployment 名字
+  updatePolicy:
+    updateMode: "InPlace" # 流量来了原地热扩容，不重启，微服务不断连
+  resourcePolicy:
+    containerPolicies:
+      - containerName: '*'
+        minAllowed:
+          cpu: "30m"
+          memory: "100Mi"  # 极低启动，平时帮你省内存
+        maxAllowed:
+          cpu: "500m"
+          memory: "384Mi"  # 11个微服务如果同时飙到上限会吃掉 4GB 内存，384M 是安全边界

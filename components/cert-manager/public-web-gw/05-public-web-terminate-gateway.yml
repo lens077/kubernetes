@@ -1,0 +1,32 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: cilium-gateway
+  namespace: default
+  annotations:
+    # 让 cert-manager 自动根据路由（HTTPRoute）里的域名去动态生成证书
+    cert-manager.io/cluster-issuer: global-ca-issuer
+spec:
+  gatewayClassName: cilium
+  listeners:
+    - name: http
+      port: 80
+      protocol: HTTP
+      allowedRoutes:
+        namespaces:
+          from: All
+    - name: https
+      port: 443
+      protocol: HTTPS
+      allowedRoutes:
+        namespaces:
+          from: All
+      tls:
+        mode: Terminate
+        certificateRefs:
+          # 指向一个固定的、处在 default 命名空间的默认泛域名证书
+          - kind: Secret
+            name: global-default-tls
+    - name: tls
+      port: 443 # 或独立一个8443 端口
+      protocol: TLS # 留给个别强安全、自签 HTTPS 后端的业务 (Passthrough)

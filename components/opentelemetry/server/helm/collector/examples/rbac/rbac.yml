@@ -1,0 +1,27 @@
+#日志中密密麻麻的 E0611 ... reflector.go:204] "Failed to watch" err="failed to list *v1.Pod: pods is forbidden... 报错，是因为你在 processors 中启用了 k8s_attributes 来提取 Pod、Namespace 等元数据。
+#
+#该组件需要通过 Kubernetes API 监听集群内 Pod 的变化，但当前 Operator 自动创建的 ServiceAccount otel-collector 缺乏集群维度的（Cluster-scoped）权限。
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: otel-collector-k8s-attributes
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "namespaces", "nodes"]
+    verbs: ["get", "watch", "list"]
+  - apiGroups: ["apps"]
+    resources: ["replicasets"]
+    verbs: ["get", "watch", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: otel-collector-k8s-attributes-binding
+subjects:
+  - kind: ServiceAccount
+    name: otel-collector # 对应你报错日志中的 ServiceAccount 名字
+    namespace: observability # 所在的命名空间
+roleRef:
+  kind: ClusterRole
+  name: otel-collector-k8s-attributes
+  apiGroup: rbac.authorization.k8s.io

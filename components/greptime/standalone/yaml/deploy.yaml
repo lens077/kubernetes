@@ -1,0 +1,26 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: greptime
+  labels:
+    app: greptime
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: greptime
+  template:
+    metadata:
+      name: greptime
+      labels:
+        app: greptime
+    spec:
+      containers:
+        - name: greptime
+          image: greptime-registry.cn-hangzhou.cr.aliyuncs.com/kindest/node:v1.27.3
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 80
+              protocol: TCP
+      restartPolicy: Always
+      

@@ -1,0 +1,19 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: consul-route
+  namespace: consul
+spec:
+  parentRefs:
+    - name: consul-gateway
+      sectionName: https # 对应 Gateway 的监听器名称
+  hostnames:
+    - "consul.app.com"
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: consul-expose-servers
+          port: 8500

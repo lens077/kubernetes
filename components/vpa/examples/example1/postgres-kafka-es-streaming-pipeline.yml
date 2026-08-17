@@ -1,0 +1,12 @@
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: cdc-pipeline-vpa
+  namespace: default
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: postgres-kafka-es-streaming-pipeline
+  updatePolicy:
+    updateMode: "Off" # 只收集数据供你输入 kubectl describe vpa 查看，绝不私自篡改

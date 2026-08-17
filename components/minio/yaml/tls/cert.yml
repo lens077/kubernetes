@@ -1,0 +1,14 @@
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: minio-tls-cert # 这是资源的名字
+  namespace: minio
+spec:
+  secretName: minio-tls-secret # 关键！这是最终生成的 Secret 名字，必须固定
+  dnsNames:
+    - "minio-ui.app.com"
+    - "minio-api.app.com"
+  issuerRef:
+    name: global-ca-issuer
+    kind: ClusterIssuer
+    group: cert-manager.io

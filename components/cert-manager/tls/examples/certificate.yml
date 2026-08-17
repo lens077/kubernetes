@@ -1,0 +1,27 @@
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: elastic-stack-tls
+  namespace: elastic-stack
+spec:
+  # 最终生成的 Secret 名字，稍后给 Gateway 使用
+  secretName: elastic-stack-tls-secret
+  duration: 2160h # 90天
+  renewBefore: 360h # 提前15天自动续期
+  subject:
+    organizations:
+      - dev-org
+  commonName: kibana.example.com
+  isCA: false
+  privateKey:
+    algorithm: RSA
+    encoding: PKCS1
+    size: 2048
+  usages:
+    - server auth
+  dnsNames:
+    - "kibana.example.com"
+    - "elasticsearch.example.com"
+  issuerRef:
+    name: selfsigned-issuer
+    kind: Issuer

@@ -1,0 +1,26 @@
+services:
+
+  minio:
+    image: pgsty/silo
+    container_name: minio
+    restart: on-failure:3
+    pull_policy: always
+    environment:
+      # Web管理用户名
+      MINIO_ROOT_USER: admin
+      #Web管理密码
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD in the environment}
+    volumes:
+      - data:/data
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: [ "CMD", "mc", "ready", "local" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  data:

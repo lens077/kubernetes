@@ -1,0 +1,125 @@
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaConnector
+metadata:
+  name: postgres-source-connector
+  namespace: kafka
+  labels:
+    strimzi.io/cluster: my-connect-cluster
+spec:
+  class: io.debezium.connector.postgresql.PostgresConnector
+  tasksMax: 1
+  config:
+    database.hostname: postgres-postgresql.postgres.svc  # 对应你的 K8s 内部 PG 服务 DNS 域名
+    database.port: 5432
+    database.user: debezium_user
+    database.password: msdnmm
+    database.dbname: ecommerce
+    topic.prefix: ecommerce_cdc
+    database.sslmode: require
+
+    # ── 2026-08-06 pgoutput 相关的三项，缺一不可 ─────────────────────────────────
+    #
+    # pgoutput 与 wal2json 最关键的差异在**过滤发生在哪一侧**：
+    #   wal2json 在插件层过滤，不需要 publication，普通 replication 角色就能跑；
+    #   pgoutput 靠服务端的 PUBLICATION 对象决定复制哪些表。
+    #
+    # 因此 Debezium 在没有 publication 时会自己去建，而 table.include.list 是
+    # 全表通配 → 翻译成 `CREATE PUBLICATION ... FOR ALL TABLES`，这条语句在
+    # PostgreSQL 里**硬性要求超级用户**，于是 task 直接失败：
+    #   ERROR: must be superuser to create FOR ALL TABLES publication
+    #
+    # 解法不是给 debezium_user 提权（那样权限过大），而是**由超级用户预先建好
+    # publication**，再把 autocreate 关掉。建库语句见同目录 debezium-postgres-example.sql。
+    #   CREATE PUBLICATION dbz_publication FOR ALL TABLES;
+    #
+    # 另外注意：**复制槽在创建时就和输出插件永久绑定，无法修改**。库里若残留旧的
+    # wal2json 槽，必须先 `SELECT pg_drop_replication_slot('<旧槽名>');` 再重建。
+    # 废弃的槽不是无害的 —— 只要槽存在，PostgreSQL 就必须保留它未确认消费的全部
+    # WAL，而本集群 max_slot_wal_keep_size=-1（无上限），会一直堆到撑爆磁盘。
+    #
+    # 这三项都显式写出来（而非依赖默认值），是为了让文件与线上一致、便于对账。
+    plugin.name: pgoutput
+    publication.name: dbz_publication
+    publication.autocreate.mode: disabled
+    slot.name: debezium
+
+    # 想捕获的表匹配的列表
+    # 显式声明表和schema, 例如:
+    # table.include.list: orders.order_main,orders.order_item
+    # schema.include.list: public
+    # 使用通配符, 例如: 按 schema 捕获: orders\..*,products\..*
+    # schema.include.list: orders\..*,products\..*
+
+    # 在该数据库内捕获所有变更
+    schema.include.list: .*
+    table.include.list: .*\..*
+
+    # 数值处理 (解决 Base64 问题)
+    # 将 Decimal 转换为 float64，这样 应用 读到就是数字
+    decimal.handling.mode: "double"
+
+    # ── 2026-08-06 utf8 → base64。原值 utf8 是**无效值**，Debezium 只接受
+    #    bytes / base64 / hex / base64-url-safe 四个之一。
+    #
+    # 这个错误当时被一个 NPE 完全掩盖了，值得记一下排查路径：
+    # 连接器创建时 REST 返回 500，日志里是
+    #   NullPointerException at AbstractHerder.maybeAddConfigErrors
+    #   （ConfigInfo.configValue() 返回 null）
+    # 完全看不出是哪个配置项有问题。成因是一条链：
+    #   1) binary.handling.mode 非法 → errorCount=1
+    #   2) errorCount>0 才会触发 maybeAddConfigErrors 去遍历所有配置项拼错误消息
+    #   3) 遍历时撞上 internal.legacy.snapshot.max.threads —— Debezium 在
+    #      ConfigDef 里声明了这个内部键，却不在 validate() 结果中返回值，
+    #      于是 configValue() 为 null → NPE，真正的错误信息被吞掉
+    #
+    # 绕开 NPE 拿到真实错误的办法：直接打 validate 端点（它走另一条代码路径）
+    #   kubectl -n kafka exec my-connect-cluster-connect-0 -- curl -s -X PUT \
+    #     -H "Content-Type: application/json" --data @<完整配置.json> \
+    #     http://localhost:8083/connector-plugins/io.debezium.connector.postgresql.PostgresConnector/config/validate
+    # 返回的 JSON 里逐项带 errors 字段，一眼就能看到是 binary.handling.mode。
+    # 注意要用**完整配置**去验证 —— 用精简配置试时 errorCount=0，问题不会复现。
+    #
+    # 选 base64 的理由：value.converter 是 JsonConverter 且 schemas.enable=false，
+    # base64 在 JSON 场景下最可预测、下游最好解。
+    binary.handling.mode: base64
+
+    # 消息展平 SMT (解决结构解析问题)
+    # 启用 Debezium 的 ExtractNewRecordState 转换器
+    transforms: unwrap
+    transforms.unwrap.type: io.debezium.transforms.ExtractNewRecordState
+
+    # ── 2026-08-06 修正：删除事件此前被静默丢弃 ────────────────────────────────
+    #
+    # 原先写的是这两行，**在 Debezium 3.x 里都已不存在**：
+    #     transforms.unwrap.delete.handling.mode: rewrite
+    #     transforms.unwrap.drop.tombstones: true
+    # 它们被合并重命名为下面这一个 delete.tombstone.handling.mode。
+    #
+    # 最阴险的地方：**Kafka Connect 对未知的 SMT 配置不发任何告警**
+    # （实测 Connect 日志里 "isn't a known config" 告警数为 0），
+    # 这两行被静默忽略，于是回落到默认值 `tombstone`。
+    #
+    # 后果实测：DELETE 一行数据后，Kafka 里产生的是一条 **null value 的 tombstone**，
+    # 而下游 Go 消费者（internal/kafka/consumer.go）开头就是
+    #     if len(msg.Value) == 0 { return nil }
+    # ——空值消息直接跳过并提交位移。**删除永远同步不到 ES，且全程无任何报错**，
+    # ES 里留下已在库中删除的孤儿文档。全量重建也修不掉（reindex 只写不删）。
+    #
+    # 各取值含义（来自 validate 端点的 documentation 字段）：
+    #   drop                   - 删除事件和 tombstone 都不发
+    #   tombstone (默认)        - 每个删除事件只留一条 tombstone
+    #   rewrite                - 去掉 tombstone，加 `__deleted: true` 字段  ← 消费者要的
+    #   rewrite-with-tombstone - 保留 tombstone 且加 `__deleted` 字段
+    #
+    # 排查手法记一下：SMT 的可用配置项可以从 validate 端点问出来，比翻文档可靠 ——
+    # 传入含 transforms 的完整配置，返回的 configs 里会列出所有
+    # `transforms.<别名>.*` 定义，不在列表里的就是会被静默忽略的。
+    transforms.unwrap.delete.tombstone.handling.mode: rewrite
+
+    # 时间戳处理 (可选)
+    # 将时间戳转为符合 ISO8601 的字符串，方便 ES 自动识别日期, 解决时间戳精度问题 (转换为 Connect 标准格式)
+    time.precision.mode: connect
+
+    # 确保序列化器不带冗余 Schema
+    value.converter: org.apache.kafka.connect.json.JsonConverter
+    value.converter.schemas.enable: false

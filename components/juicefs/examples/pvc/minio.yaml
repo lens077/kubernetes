@@ -1,0 +1,62 @@
+# minio-pvc.yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: minio-pvc
+  namespace: minio
+spec:
+  # 必须指定 StorageClass，使用 OpenEBS LVM 的 StorageClass 名称
+  storageClassName: openebs-lvmpv  # <-- **重点修改：指定 OpenEBS LVM 的 SC**
+
+  # MinIO 通常部署为单个副本，适合使用 RWO 模式
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: minio
+  name: minio
+  namespace: minio
+spec:
+  selector:
+    matchLabels:
+      app: minio
+  template:
+    metadata:
+      labels:
+        app: minio
+    spec:
+      containers:
+        - name: minio
+          # https://www.cnblogs.com/java365/articles/18922432
+          # MinIO社区版在2025-05-24T17-08-30Z这个版本之后，移除了控制台大部分管理功能，想要完整minio，请安装旧版本。
+          # https://quay.io/repository/minio/minio?tab=tags&tag=latest 版本
+          image: quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z
+          command:
+            - /bin/bash
+            - -c
+          args:
+            - minio server /data --console-address :9090
+          volumeMounts:
+            - mountPath: /data
+              name: data
+          ports:
+            - containerPort: 9090
+              name: console
+            - containerPort: 9000
+              name: api
+          env:
+            - name: MINIO_ROOT_USER # 指定用户名
+              value: "admin"
+            - name: MINIO_ROOT_PASSWORD # 指定密码，最少8位置
+              value: "minioadmin"
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: minio-pvc
+---

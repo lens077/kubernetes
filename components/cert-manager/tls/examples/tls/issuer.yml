@@ -1,0 +1,8 @@
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: example-internal-issuer
+  namespace: example
+spec:
+  ca:
+    secretName: example-root-ca-secret # 引用上面生成的 Secret

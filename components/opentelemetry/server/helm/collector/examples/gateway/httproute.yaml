@@ -1,0 +1,17 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: otlp-https-route
+  namespace: observability
+spec:
+  parentRefs:
+    - name: cilium-gateway # 绑定到您的 Gateway 名称
+      namespace: default
+      sectionName: https
+  hostnames:
+    - "otlp-http.app.com"
+  rules:
+    # OTLP 规范要求数据上报到 /v1/traces, /v1/metrics, 或 /v1/logs 路径下
+    - backendRefs:
+        - name: otel-collector # OpenTelemetry Collector Service 的名称
+          port: 4318             # 路由到 OTLP/HTTP 端口
