@@ -263,7 +263,7 @@ spec:
           fail=0
 
           push() {  # \$1=信号 \$2=OTLP 路径 \$3=载荷文件
-            code=\$(curl -s -o /tmp/resp -w '%{http_code}' -X POST \\
+            code=\$(curl -s -o /tmp/resp -w '%{http_code}' --connect-timeout 5 --max-time 20 -X POST \\
                      -H 'Content-Type: application/json' --data-binary @"\$3" "\$OTLP\$2")
             if [ "\$code" = 200 ]; then
               echo "  push  \$1: ok"
@@ -272,16 +272,18 @@ spec:
             fi
           }
 
+          # curl 必须带超时: 后端 Service 端口写错时 Cilium 对未定义端口是丢包不是拒绝,
+          # 不设超时会挂在默认连接超时上, 把 120s 的轮询窗口拖成十几分钟(实测踩过)
           poll() {  # \$1=信号 \$2=期望子串 \$3=回查命令(eval)
             n=0
-            while [ \$n -lt 40 ]; do    # 40×3s=120s: VM 默认 -search.latencyOffset=30s, 要留够
+            while [ \$n -lt 25 ]; do    # 25×(≤5s 请求 + 4s 间隔): 快路径窗口 100s: VM 默认 -search.latencyOffset=30s, 要留够
               out=\$(eval "\$3" 2>/dev/null || true)
               case "\$out" in
                 *"\$2"*) echo "  查回  \$1: ok (第 \$((n+1)) 次)"; return 0 ;;
               esac
-              n=\$((n + 1)); sleep 3
+              n=\$((n + 1)); sleep 4
             done
-            echo "  查回  \$1: 失败(120s 内没查到 \$2)"; fail=1; return 1
+            echo "  查回  \$1: 失败(100s 内没查到 \$2)"; fail=1; return 1
           }
 
           if [ "\$CK_VM" = true ]; then
@@ -291,7 +293,7 @@ spec:
           {"asDouble":1,"timeUnixNano":"\$TS","attributes":[{"key":"run","value":{"stringValue":"\$RUN"}}]}]}}]}]}]}
           JSON
             push metrics /v1/metrics /tmp/m.json && poll metrics '"result":[{' \\
-              "curl -sG 'http://\$VM_SVC/api/v1/query' --data-urlencode 'query=otel_smoke_probe{run=\\"\$RUN\\"}'"
+              "curl -sG --connect-timeout 3 --max-time 5 'http://\$VM_SVC/api/v1/query' --data-urlencode 'query=otel_smoke_probe{run=\\"\$RUN\\"}'"
           fi
 
           if [ "\$CK_LOKI" = true ]; then
@@ -301,7 +303,7 @@ spec:
           "body":{"stringValue":"otel pipeline smoke \$RUN"}}]}]}]}
           JSON
             push logs /v1/logs /tmp/l.json && poll logs "otel pipeline smoke \$RUN" \\
-              "curl -sG 'http://\$LOKI_SVC/loki/api/v1/query_range' --data-urlencode 'query={service_name=\\"\$SVC\\"}' --data-urlencode 'limit=5'"
+              "curl -sG --connect-timeout 3 --max-time 5 'http://\$LOKI_SVC/loki/api/v1/query_range' --data-urlencode 'query={service_name=\\"\$SVC\\"}' --data-urlencode 'limit=5'"
           fi
 
           if [ "\$CK_JAEGER" = true ]; then
@@ -311,7 +313,7 @@ spec:
           "name":"smoke-span","kind":1,"startTimeUnixNano":"\$TS","endTimeUnixNano":"\$TS"}]}]}]}
           JSON
             push traces /v1/traces /tmp/t.json && poll traces "\$SVC" \\
-              "curl -s 'http://\$JAEGER_SVC:16686/api/services'"
+              "curl -s --connect-timeout 3 --max-time 5 'http://\$JAEGER_SVC:16686/api/services'"
           fi
 
           [ \$fail -eq 0 ] && echo "SMOKE-RESULT ok" || echo "SMOKE-RESULT failed"
@@ -319,7 +321,7 @@ spec:
 EOF
 
   local phase="" i
-  for ((i = 0; i < 90; i++)); do   # 最长 450s: 首次要拉 curl 镜像
+  for ((i = 0; i < 180; i++)); do  # 最长 900s: 覆盖三条信号全部超时(3×225s)+首次拉 curl 镜像
     phase=$(kctl -n "$OTEL_SMOKE_NS" get pod otel-smoke -o jsonpath='{.status.phase}' 2>/dev/null || true)
     [[ $phase == Succeeded || $phase == Failed ]] && break
     sleep 5
