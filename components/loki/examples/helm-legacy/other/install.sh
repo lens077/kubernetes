@@ -40,15 +40,15 @@ loki:
       admin: admin
     s3:
       # s3 URL can be used to specify the endpoint, access key, secret key, and bucket name this works well for S3 compatible storages or are hosting Loki on-premises and want to use S3 as the storage backend. Either use the s3 URL or the individual fields below (AWS endpoint, region, secret).
-      #s3: s3://z4mYKNhTeNMMuidn5G9A:2035Jq2GH2m781XxOBMILhj1n1u2aArJULySIUSj@minio-service.minio.svc:9000/loki
+      #s3: s3://<REDACTED-20260817>:<REDACTED-20260817>@minio-service.minio.svc:9000/loki
       # AWS endpoint URL
       endpoint: minio-service.minio.svc:9000
       # AWS region where the S3 bucket is located
       # region: <your-region>
       # AWS secret access key
-      secretAccessKey: 2035Jq2GH2m781XxOBMILhj1n1u2aArJULySIUSj
+      secretAccessKey: <REDACTED-20260817>
       # AWS access key ID
-      accessKeyId: z4mYKNhTeNMMuidn5G9A
+      accessKeyId: <REDACTED-20260817>
       # AWS signature version (e.g., v2 or v4)
       # signatureVersion: <your-signature-version>
       # 强制S3的路径样式 Forces the path style for S3 (true/false)

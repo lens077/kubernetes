@@ -14,7 +14,7 @@ helm install grafana grafana/grafana \
 --create-namespace
 
 
-kubectl get secret --namespace monitoring grafana -o jsonpath="{.data.admin-password}" | base64 --decode ; echo
+kubectl get secret --namespace monitoring grafana -o jsonpath="{.data.admin-<REDACTED-20260817>}" | base64 --decode ; echo
 
 kubectl patch svc/grafana -n monitoring -p '{"spec":{"type":"NodePort"}}'
 

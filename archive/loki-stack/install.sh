@@ -60,7 +60,7 @@ helm upgrade --install loki ./loki-stack \
 -n loki-stack
 
 # 获取密码， 账号admin
-kubectl get secret --namespace loki-stack loki-grafana -o jsonpath="{.data.admin-password}" | base64 --decode ; echo
+kubectl get secret --namespace loki-stack loki-grafana -o jsonpath="{.data.admin-<REDACTED-20260817>}" | base64 --decode ; echo
 
 set +x
 

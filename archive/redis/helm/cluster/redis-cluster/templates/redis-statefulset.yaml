@@ -165,7 +165,7 @@ spec:
                   key: {{ template "redis-cluster.secretPasswordKey" . }}
             {{- if .Values.usePasswordFile }}
             - name: REDIS_PASSWORD_FILE
-              value: "/opt/bitnami/redis/secrets/redis-password"
+              value: "/opt/bitnami/redis/secrets/redis-<REDACTED-20260817>"
             {{- else }}
             - name: REDIS_PASSWORD
               valueFrom:
@@ -277,7 +277,7 @@ spec:
             - name: scripts
               mountPath: /scripts
             {{- if .Values.usePasswordFile }}
-            - name: redis-password
+            - name: redis-<REDACTED-20260817>
               mountPath: /opt/bitnami/redis/secrets/
             {{- end }}
             - name: redis-data
@@ -342,7 +342,7 @@ spec:
             {{- end }}
             {{- if .Values.usePasswordFile }}
             - name: REDIS_PASSWORD_FILE
-              value: "/opt/bitnami/redis/secrets/redis-password"
+              value: "/opt/bitnami/redis/secrets/redis-<REDACTED-20260817>"
             {{- end }}
             {{- if .Values.tls.enabled }}
             - name: REDIS_EXPORTER_TLS_CLIENT_KEY_FILE
@@ -363,7 +363,7 @@ spec:
               mountPath: /tmp
               subPath: tmp-dir
             {{- if .Values.usePasswordFile }}
-            - name: redis-password
+            - name: redis-<REDACTED-20260817>
               mountPath: /opt/bitnami/redis/secrets/
             {{- end }}
             {{- if .Values.tls.enabled }}
@@ -440,12 +440,12 @@ spec:
             name: {{ include "common.names.fullname" . }}-scripts
             defaultMode: 0755
         {{- if .Values.usePasswordFile }}
-        - name: redis-password
+        - name: redis-<REDACTED-20260817>
           secret:
             secretName: {{ include "redis-cluster.secretName" . }}
             items:
               - key: {{ include "redis-cluster.secretPasswordKey" . }}
-                path: redis-password
+                path: redis-<REDACTED-20260817>
         {{- end }}
         - name: default-config
           configMap:

@@ -34,14 +34,14 @@ metadata:
 type: Opaque
 stringData:
   name: juicefs
-#  metaurl: redis://default:msdnmm@redis-service.redis:6379/15
-  metaurl: redis://default:msdnmm@192.168.3.101:32379/15
+#  metaurl: redis://default:<REDACTED-20260817>@redis-service.redis:6379/15
+  metaurl: redis://default:<REDACTED-20260817>@192.168.3.101:32379/15
   storage: minio
 #  bucket: https://<BUCKET>.s3.<REGION>.amazonaws.com
   bucket: http://minio-service.minio.svc.cluster.local:9000
 #  bucket: https://10.103.0.160/juicefs
-  access-key: z4mYKNhTeNMMuidn5G9A
-  secret-key: 2035Jq2GH2m781XxOBMILhj1n1u2aArJULySIUSj
+  access-key: <REDACTED-20260817>
+  secret-key: <REDACTED-20260817>
   # 为 Mount Pod 注入环境变量，比如时区（默认 UTC），或者文件系统的 RSA 加密口令
   # envs: "{TZ: Asia/Shanghai, JFS_RSA_PASSPHRASE: xxx}"
   # juicefs format 命令参数
@@ -59,9 +59,9 @@ kubectl apply -f juicefs-secret.yml -n default
 juicefs format \
     --storage minio \
     --bucket http://192.168.3.101:30306/juicefs \
-    --access-key z4mYKNhTeNMMuidn5G9A \
-    --secret-key 2035Jq2GH2m781XxOBMILhj1n1u2aArJULySIUSj \
-    redis://default:msdnmm@192.168.3.101:32379/15 \
+    --access-key <REDACTED-20260817> \
+    --secret-key <REDACTED-20260817> \
+    redis://default:<REDACTED-20260817>@192.168.3.101:32379/15 \
     juicefs
 
 cat > juicefs.sc.yml <<EOF

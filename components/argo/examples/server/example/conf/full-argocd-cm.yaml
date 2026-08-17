@@ -25,8 +25,8 @@ data:
   # Specifies token expiration duration
   users.session.duration: "24h"
 
-  # Specifies regex expression for password
-  passwordPattern: "^.{8,32}$"
+  # Specifies regex expression for <REDACTED-20260817>
+  <REDACTED-20260817>Pattern: "^.{8,32}$"
 
   # Enables google analytics tracking is specified
   ga.trackingid: "UA-12345-1"

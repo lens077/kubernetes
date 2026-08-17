@@ -7,13 +7,13 @@ helm pull bitnami/redis-cluster
 tar -zxvf redis-cluster-*.*.*.tgz
 
 kubectl create secret \
-generic redis-password-secret \
---from-literal=redis-password=msdnmm,. \
+generic redis-<REDACTED-20260817>-secret \
+--from-literal=redis-<REDACTED-20260817>=<REDACTED-20260817> \
 -n redis-ha
 
 # rm
 # kubectl delete secret \
-# redis-password-secret \
+# redis-<REDACTED-20260817>-secret \
 # -n redis-ha
 
 # TLS
@@ -21,13 +21,13 @@ generic redis-password-secret \
 
 helm uninstall redis-ha -n redis-ha
 cat > values.yaml <<EOF
-#password: msdnmm,.
+#<REDACTED-20260817>: <REDACTED-20260817>
 # 使用密码身份验证
 usePassword: true
 # 将密码挂载为文件而不是环境变量
 usePasswordFile: true
 # 密码密钥对象的名称（用于密码身份验证）
-existingSecret: redis-password-secret
+existingSecret: redis-<REDACTED-20260817>-secret
 
 tls:
   enabled: false
@@ -66,7 +66,7 @@ cluster:
 
 EOF
 
-# --set password
+# --set <REDACTED-20260817>
 helm upgrade --install \
 redis-ha redis-cluster-*.*.*.tgz \
 -f values.yaml \
@@ -80,7 +80,7 @@ kubectl get po,svc -n redis-ha
 
 # 添加节点
 # helm upgrade --timeout 600s <release> \
-# --set "password=${REDIS_PASSWORD} \
+# --set "<REDACTED-20260817>=${REDIS_PASSWORD} \
 # --set cluster.nodes=7 \
 # --set cluster.update.addNodes=true \
 # --set cluster.update.currentNumberOfNodes=6" \
@@ -93,9 +93,9 @@ kubectl get po,svc -n redis-ha
 #
 #
 #
-# To get your password run:
+# To get your <REDACTED-20260817> run:
 #
-#     export REDIS_PASSWORD=$(kubectl get secret --namespace redis-ha redis-ha -o jsonpath="{.data.redis-password}" | base64 -d)
+#     export REDIS_PASSWORD=$(kubectl get secret --namespace redis-ha redis-ha -o jsonpath="{.data.redis-<REDACTED-20260817>}" | base64 -d)
 #
 # To connect to your Redis&reg; server:
 #

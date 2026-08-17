@@ -17,7 +17,7 @@ kubectl create ns casdoor
 
 # 修改values.yaml, 如果使用postgres:
 #driverName = postgres
-#dataSourceName = "user=root password=msdnmm host=localhost port=5432 sslmode=disable dbname=casdoor"
+#dataSourceName = "user=root <REDACTED-20260817>=<REDACTED-20260817> host=localhost port=5432 sslmode=disable dbname=casdoor"
 #dbName = casdoor
 
 # 配置页面: https://casdoor.org/docs/basic/try-with-helm
@@ -26,7 +26,7 @@ kubectl create ns casdoor
 
 host="postgres-postgresql.postgres.svc.cluster.local"
 user="postgres"
-password="msdnmm"
+<REDACTED-20260817>="<REDACTED-20260817>"
 driver="postgres"
 port=5432
 databaseName="casdoor"
@@ -80,7 +80,7 @@ database:
   driver: postgres
 
   user: "postgres"
-  password: "msdnmm"
+  <REDACTED-20260817>: "<REDACTED-20260817>"
   host: "postgres-postgresql.postgres.svc.cluster.local"
   # If port is empty, default port will be used.
   # mysql: 3306, postgres: 5432, cockroachdb: 26257
@@ -218,7 +218,7 @@ helm upgrade --install casdoor ./casdoor-helm-charts \
 #  -n casdoor \
 #  --set database.user=${user} \
 #  --set database.host=${host} \
-#  --set database.password=${password} \
+#  --set database.<REDACTED-20260817>=${<REDACTED-20260817>} \
 #  --set database.driver=${driver} \
 #  --set database.port=${port} \
 #  --set database.sslMode=${ssl_mode} \

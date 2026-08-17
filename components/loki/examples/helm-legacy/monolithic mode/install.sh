@@ -81,8 +81,8 @@ loki:
       ruler: ruler
     s3:
       endpoint: http://minio-service.minio.svc:9000
-      secretAccessKey: LWBPpaCEYDnYFX6QUL0v21Dd6LKiWvbk4E5cfBIq
-      accessKeyId: A3UhS0icgTX4lEHK9fp6
+      secretAccessKey: <REDACTED-20260817>
+      accessKeyId: <REDACTED-20260817>
       s3ForcePathStyle: true
       insecure: false
       http_config: {}

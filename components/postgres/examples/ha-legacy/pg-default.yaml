@@ -10,16 +10,16 @@
 ## @param global.imagePullSecrets Global Docker registry secret names as an array
 ## @param global.storageClass Global StorageClass for Persistent Volume(s)
 ## @param global.postgresql.username PostgreSQL username (overrides `postgresql.username`)
-## @param global.postgresql.password PostgreSQL password (overrides `postgresql.password`)
+## @param global.postgresql.<REDACTED-20260817> PostgreSQL <REDACTED-20260817> (overrides `postgresql.<REDACTED-20260817>`)
 ## @param global.postgresql.database PostgreSQL database (overrides `postgresql.database`)
 ## @param global.postgresql.repmgrUsername PostgreSQL repmgr username (overrides `postgresql.repmgrUsername`)
-## @param global.postgresql.repmgrPassword PostgreSQL repmgr password (overrides `postgresql.repmgrpassword`)
+## @param global.postgresql.repmgrPassword PostgreSQL repmgr <REDACTED-20260817> (overrides `postgresql.repmgr<REDACTED-20260817>`)
 ## @param global.postgresql.repmgrDatabase PostgreSQL repmgr database (overrides `postgresql.repmgrDatabase`)
-## @param global.postgresql.existingSecret Name of existing secret to use for PostgreSQL passwords (overrides `postgresql.existingSecret`)
-## @param global.ldap.bindpw LDAP bind password (overrides `ldap.bindpw`)
-## @param global.ldap.existingSecret Name of existing secret to use for LDAP passwords (overrides `ldap.existingSecret`)
+## @param global.postgresql.existingSecret Name of existing secret to use for PostgreSQL <REDACTED-20260817>s (overrides `postgresql.existingSecret`)
+## @param global.ldap.bindpw LDAP bind <REDACTED-20260817> (overrides `ldap.bindpw`)
+## @param global.ldap.existingSecret Name of existing secret to use for LDAP <REDACTED-20260817>s (overrides `ldap.existingSecret`)
 ## @param global.pgpool.adminUsername Pgpool Admin username (overrides `pgpool.adminUsername`)
-## @param global.pgpool.adminPassword Pgpool Admin password (overrides `pgpool.adminPassword`)
+## @param global.pgpool.adminPassword Pgpool Admin <REDACTED-20260817> (overrides `pgpool.adminPassword`)
 ## @param global.pgpool.existingSecret Pgpool existing secret
 ##
 global:
@@ -32,7 +32,7 @@ global:
   storageClass: ""
   postgresql:
     username: ""
-    password: ""
+    <REDACTED-20260817>: ""
     database: ""
     repmgrUsername: ""
     repmgrPassword: ""
@@ -447,24 +447,24 @@ postgresql:
     maxUnavailable: ""
   ## PostgreSQL configuration parameters
   ## @param postgresql.username PostgreSQL username
-  ## @param postgresql.password PostgreSQL password
+  ## @param postgresql.<REDACTED-20260817> PostgreSQL <REDACTED-20260817>
   ## @param postgresql.database PostgreSQL database
   ##
   username: postgres
-  password: ""
+  <REDACTED-20260817>: ""
   database: ""
-  ## @param postgresql.existingSecret PostgreSQL password using existing secret
+  ## @param postgresql.existingSecret PostgreSQL <REDACTED-20260817> using existing secret
   ##
   existingSecret: ""
-  ## @param postgresql.postgresPassword PostgreSQL password for the `postgres` user when `username` is not `postgres`
+  ## @param postgresql.postgresPassword PostgreSQL <REDACTED-20260817> for the `postgres` user when `username` is not `postgres`
   ## ref: https://github.com/bitnami/containers/tree/main/bitnami/postgresql#creating-a-database-user-on-first-run (see note!)
   ##
   postgresPassword: ""
   ## @param postgresql.usePasswordFile Set to `true` to mount PostgreSQL secret as a file instead of passing environment variable
   ##
   usePasswordFile: ""
-  ## @param postgresql.repmgrUsePassfile Set to `true` to configure repmgrl to use `passfile` instead of `password` vars*:*:*:username:password" and use it to configure Repmgr instead of using password (Requires Postgresql 10+, otherwise ignored)
-  ## ref: https://repmgr.org/docs/current/configuration-password-management.html
+  ## @param postgresql.repmgrUsePassfile Set to `true` to configure repmgrl to use `passfile` instead of `<REDACTED-20260817>` vars*:*:*:username:<REDACTED-20260817>" and use it to configure Repmgr instead of using <REDACTED-20260817> (Requires Postgresql 10+, otherwise ignored)
+  ## ref: https://repmgr.org/docs/current/configuration-<REDACTED-20260817>-management.html
   ##      https://www.postgresql.org/docs/current/libpq-pgpass.html
   ##
   repmgrUsePassfile: ""
@@ -486,7 +486,7 @@ postgresql:
   syncReplicationMode: ""
   ## Repmgr configuration parameters
   ## @param postgresql.repmgrUsername PostgreSQL Repmgr username
-  ## @param postgresql.repmgrPassword PostgreSQL Repmgr password
+  ## @param postgresql.repmgrPassword PostgreSQL Repmgr <REDACTED-20260817>
   ## @param postgresql.repmgrDatabase PostgreSQL Repmgr database
   ## @param postgresql.repmgrLogLevel Repmgr log level (DEBUG, INFO, NOTICE, WARNING, ERROR, ALERT, CRIT or EMERG)
   ## @param postgresql.repmgrConnectTimeout Repmgr backend connection timeout (in seconds)
@@ -1140,15 +1140,15 @@ pgpool:
     ##
     debug: false
   ## @param pgpool.customUsers.usernames Comma or semicolon separated list of additional users that will be performing connections to the database using pgpool.
-  ## @param pgpool.customUsers.passwords Comma or semicolon separated list of the associated passwords for the users above. Must have the same number of elements as the usernames list.
-  ## Use this property in order to create new user/password entries that will be appended to the "pgpool_passwd" file.
+  ## @param pgpool.customUsers.<REDACTED-20260817>s Comma or semicolon separated list of the associated <REDACTED-20260817>s for the users above. Must have the same number of elements as the usernames list.
+  ## Use this property in order to create new user/<REDACTED-20260817> entries that will be appended to the "pgpool_passwd" file.
   ## e.g:
   ##    customUsers:
   ##      usernames: "user01;user02"
-  ##      passwords: "pass01;pass02"
+  ##      <REDACTED-20260817>s: "pass01;pass02"
   customUsers:
     usernames: ""
-    passwords: ""
+    <REDACTED-20260817>s: ""
   ## @param pgpool.automountServiceAccountToken Mount Service Account token in pod
   ##
   automountServiceAccountToken: false
@@ -1156,11 +1156,11 @@ pgpool:
   ## https://kubernetes.io/docs/concepts/services-networking/add-entries-to-pod-etc-hosts-with-host-aliases/
   ##
   hostAliases: [ ]
-  ## @param pgpool.customUsersSecret Name of a secret containing the usernames and passwords of accounts that will be added to pgpool_passwd
-  ## The secret must contain the keys "usernames" and "passwords" respectively.
+  ## @param pgpool.customUsersSecret Name of a secret containing the usernames and <REDACTED-20260817>s of accounts that will be added to pgpool_passwd
+  ## The secret must contain the keys "usernames" and "<REDACTED-20260817>s" respectively.
   ##
   customUsersSecret: ""
-  ## @param pgpool.existingSecret Pgpool admin password using existing secret
+  ## @param pgpool.existingSecret Pgpool admin <REDACTED-20260817> using existing secret
   ##
   existingSecret: ""
   ## @param pgpool.srCheckDatabase Name of the database to perform streaming replication checks
@@ -1474,7 +1474,7 @@ pgpool:
   minReadySeconds: ""
   ## Credentials for the pgpool administrator
   ## @param pgpool.adminUsername Pgpool Admin username
-  ## @param pgpool.adminPassword Pgpool Admin password
+  ## @param pgpool.adminPassword Pgpool Admin <REDACTED-20260817>
   ##
   adminUsername: admin
   adminPassword: ""
@@ -1614,12 +1614,12 @@ pgpool:
 
 ## LDAP parameters
 ## @param ldap.enabled Enable LDAP support
-## @param ldap.existingSecret Name of existing secret to use for LDAP passwords
+## @param ldap.existingSecret Name of existing secret to use for LDAP <REDACTED-20260817>s
 ## @param ldap.uri LDAP URL beginning in the form `ldap[s]://<hostname>:<port>`
 ## DEPRECATED ldap.base will be removed in a future, please use 'ldap.basedn' instead
 ## @param ldap.basedn LDAP base DN
 ## @param ldap.binddn LDAP bind DN
-## @param ldap.bindpw LDAP bind password
+## @param ldap.bindpw LDAP bind <REDACTED-20260817>
 ## @param ldap.bslookup LDAP base lookup
 ## @param ldap.scope LDAP search scope
 ## @param ldap.tlsReqcert LDAP TLS check on server certificates
@@ -2205,7 +2205,7 @@ backup:
     command:
       - /bin/sh
       - -c
-      - "pg_dumpall --clean --if-exists --load-via-partition-root --quote-all-identifiers --no-password --file=${PGDUMP_DIR}/pg_dumpall-$(date '+%Y-%m-%d-%H-%M').pgdump"
+      - "pg_dumpall --clean --if-exists --load-via-partition-root --quote-all-identifiers --no-<REDACTED-20260817> --file=${PGDUMP_DIR}/pg_dumpall-$(date '+%Y-%m-%d-%H-%M').pgdump"
 
     ## @param backup.cronjob.labels Set the cronjob labels
     labels: { }

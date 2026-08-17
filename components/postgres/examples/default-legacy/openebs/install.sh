@@ -62,7 +62,7 @@ helm upgrade --install postgres ./postgresql \
   -n postgres \
   --create-namespace \
   --set global.postgresql.auth.username="postgres" \
-  --set global.postgresql.auth.password="msdnmm" \
+  --set global.postgresql.auth.<REDACTED-20260817>="<REDACTED-20260817>" \
   --set global.postgresql.auth.database="postgres" \
   --set primary.service.type=LoadBalancer \
   --set global.postgresql.service.ports.postgresql="5432" \

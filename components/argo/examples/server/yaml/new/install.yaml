@@ -10993,7 +10993,7 @@ spec:
                                         type: string
                                       basicAuth:
                                         properties:
-                                          passwordRef:
+                                          <REDACTED-20260817>Ref:
                                             properties:
                                               key:
                                                 type: string
@@ -11006,7 +11006,7 @@ spec:
                                           username:
                                             type: string
                                         required:
-                                        - passwordRef
+                                        - <REDACTED-20260817>Ref
                                         - username
                                         type: object
                                       bearerToken:
@@ -11038,7 +11038,7 @@ spec:
                                         type: string
                                       basicAuth:
                                         properties:
-                                          passwordRef:
+                                          <REDACTED-20260817>Ref:
                                             properties:
                                               key:
                                                 type: string
@@ -11051,7 +11051,7 @@ spec:
                                           username:
                                             type: string
                                         required:
-                                        - passwordRef
+                                        - <REDACTED-20260817>Ref
                                         - username
                                         type: object
                                       bearerToken:
@@ -11858,7 +11858,7 @@ spec:
                                         type: string
                                       basicAuth:
                                         properties:
-                                          passwordRef:
+                                          <REDACTED-20260817>Ref:
                                             properties:
                                               key:
                                                 type: string
@@ -11871,7 +11871,7 @@ spec:
                                           username:
                                             type: string
                                         required:
-                                        - passwordRef
+                                        - <REDACTED-20260817>Ref
                                         - username
                                         type: object
                                       bearerToken:
@@ -16357,7 +16357,7 @@ spec:
                                         type: string
                                       basicAuth:
                                         properties:
-                                          passwordRef:
+                                          <REDACTED-20260817>Ref:
                                             properties:
                                               key:
                                                 type: string
@@ -16370,7 +16370,7 @@ spec:
                                           username:
                                             type: string
                                         required:
-                                        - passwordRef
+                                        - <REDACTED-20260817>Ref
                                         - username
                                         type: object
                                       bearerToken:
@@ -16402,7 +16402,7 @@ spec:
                                         type: string
                                       basicAuth:
                                         properties:
-                                          passwordRef:
+                                          <REDACTED-20260817>Ref:
                                             properties:
                                               key:
                                                 type: string
@@ -16415,7 +16415,7 @@ spec:
                                           username:
                                             type: string
                                         required:
-                                        - passwordRef
+                                        - <REDACTED-20260817>Ref
                                         - username
                                         type: object
                                       bearerToken:
@@ -17222,7 +17222,7 @@ spec:
                                         type: string
                                       basicAuth:
                                         properties:
-                                          passwordRef:
+                                          <REDACTED-20260817>Ref:
                                             properties:
                                               key:
                                                 type: string
@@ -17235,7 +17235,7 @@ spec:
                                           username:
                                             type: string
                                         required:
-                                        - passwordRef
+                                        - <REDACTED-20260817>Ref
                                         - username
                                         type: object
                                       bearerToken:
@@ -19246,7 +19246,7 @@ spec:
                               type: string
                             basicAuth:
                               properties:
-                                passwordRef:
+                                <REDACTED-20260817>Ref:
                                   properties:
                                     key:
                                       type: string
@@ -19259,7 +19259,7 @@ spec:
                                 username:
                                   type: string
                               required:
-                              - passwordRef
+                              - <REDACTED-20260817>Ref
                               - username
                               type: object
                             bearerToken:
@@ -19291,7 +19291,7 @@ spec:
                               type: string
                             basicAuth:
                               properties:
-                                passwordRef:
+                                <REDACTED-20260817>Ref:
                                   properties:
                                     key:
                                       type: string
@@ -19304,7 +19304,7 @@ spec:
                                 username:
                                   type: string
                               required:
-                              - passwordRef
+                              - <REDACTED-20260817>Ref
                               - username
                               type: object
                             bearerToken:
@@ -20111,7 +20111,7 @@ spec:
                               type: string
                             basicAuth:
                               properties:
-                                passwordRef:
+                                <REDACTED-20260817>Ref:
                                   properties:
                                     key:
                                       type: string
@@ -20124,7 +20124,7 @@ spec:
                                 username:
                                   type: string
                               required:
-                              - passwordRef
+                              - <REDACTED-20260817>Ref
                               - username
                               type: object
                             bearerToken:
@@ -23353,7 +23353,7 @@ spec:
       - command:
         - argocd
         - admin
-        - redis-initial-password
+        - redis-initial-<REDACTED-20260817>
         image: quay.io/argoproj/argocd:v2.13.2
         imagePullPolicy: IfNotPresent
         name: secret-init

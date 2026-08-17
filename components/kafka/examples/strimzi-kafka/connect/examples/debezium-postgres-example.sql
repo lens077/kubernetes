@@ -16,7 +16,7 @@ DO $$
     BEGIN
         -- 2.1 检查并创建角色（如果不存在）
         IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'debezium_user') THEN
-            CREATE ROLE debezium_user WITH LOGIN PASSWORD 'msdnmm' REPLICATION;
+            CREATE ROLE debezium_user WITH LOGIN PASSWORD '<REDACTED-20260817>' REPLICATION;
         ELSE
             -- 2.2 如果已存在，强制修正其核心属性（剥离超级用户，保留登录与流复制）
             ALTER USER debezium_user WITH NOSUPERUSER REPLICATION LOGIN;

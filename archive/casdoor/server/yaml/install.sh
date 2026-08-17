@@ -13,7 +13,7 @@ httpport = 8000
 runmode = dev
 copyrequestbody = true
 driverName = postgres
-dataSourceName = "user=root password=msdnmm host=localhost port=5432 sslmode=disable dbname=casdoor"
+dataSourceName = "user=root <REDACTED-20260817>=<REDACTED-20260817> host=localhost port=5432 sslmode=disable dbname=casdoor"
 dbName = casdoor
 tableNamePrefix =
 showSql = false

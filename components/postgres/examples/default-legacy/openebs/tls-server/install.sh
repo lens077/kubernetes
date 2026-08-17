@@ -87,7 +87,7 @@ global:
   postgresql:
     auth:
       username: "postgres"
-      password: "msdnmm"
+      <REDACTED-20260817>: "<REDACTED-20260817>"
       database: "postgres"
     service:
       ports:

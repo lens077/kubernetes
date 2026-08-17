@@ -20,8 +20,8 @@ data:
     REDIS_STATUS_FILE=/tmp/.redis_cluster_check
 
     {{- if .Values.usePasswordFile }}
-    password_aux=`cat ${REDIS_PASSWORD_FILE}`
-    export REDISCLI_AUTH=$password_aux
+    <REDACTED-20260817>_aux=`cat ${REDIS_PASSWORD_FILE}`
+    export REDISCLI_AUTH=$<REDACTED-20260817>_aux
     {{- else }}
     if [ ! -z "$REDIS_PASSWORD" ]; then export REDISCLI_AUTH=$REDIS_PASSWORD; fi;
     {{- end }}
@@ -82,8 +82,8 @@ data:
     set -e
 
     {{- if .Values.usePasswordFile }}
-    password_aux=`cat ${REDIS_PASSWORD_FILE}`
-    export REDISCLI_AUTH=$password_aux
+    <REDACTED-20260817>_aux=`cat ${REDIS_PASSWORD_FILE}`
+    export REDISCLI_AUTH=$<REDACTED-20260817>_aux
     {{- else }}
     if [ ! -z "$REDIS_PASSWORD" ]; then export REDISCLI_AUTH=$REDIS_PASSWORD; fi;
     {{- end }}

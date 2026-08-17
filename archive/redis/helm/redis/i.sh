@@ -10,13 +10,13 @@ helm pull bitnami/redis
 tar -zxvf redis-*.tgz
 
 kubectl create secret \
-generic redis-password-secret \
---from-literal=redis-password=msdnmm,. \
+generic redis-<REDACTED-20260817>-secret \
+--from-literal=redis-<REDACTED-20260817>=<REDACTED-20260817> \
 -n redis-ha
 
 # rm
 # kubectl delete secret \
-# redis-password-secret \
+# redis-<REDACTED-20260817>-secret \
 # -n redis-ha
 
 # TLS
@@ -26,25 +26,25 @@ helm uninstall redis-ha -n redis-ha
 cp {values.yaml,.back}
 cat > values.yaml <<EOF
 auth:
-  ## @param auth.enabled Enable password authentication
+  ## @param auth.enabled Enable <REDACTED-20260817> authentication
   ##
   enabled: true
-  ## @param auth.sentinel Enable password authentication on sentinels too
+  ## @param auth.sentinel Enable <REDACTED-20260817> authentication on sentinels too
   ##
   sentinel: true
-  ## @param auth.password Redis&reg; password
+  ## @param auth.<REDACTED-20260817> Redis&reg; <REDACTED-20260817>
   ## Defaults to a random 10-character alphanumeric string if not set
   ##
-  password: "msdnmm,."
-  #existingSecret: "redis-password-secret"
+  <REDACTED-20260817>: "<REDACTED-20260817>"
+  #existingSecret: "redis-<REDACTED-20260817>-secret"
   ## @param auth.existingSecretPasswordKey Password key to be retrieved from existing secret
   ## NOTE: ignored unless `auth.existingSecret` parameter is set
   ##
-  #existingSecretPasswordKey: "password"
+  #existingSecretPasswordKey: "<REDACTED-20260817>"
   ## @param auth.usePasswordFiles Mount credentials as files instead of using an environment variable
   ##
   usePasswordFiles: false
-  ## @param auth.usePasswordFileFromSecret Mount password file from secret
+  ## @param auth.usePasswordFileFromSecret Mount <REDACTED-20260817> file from secret
   ##
   usePasswordFileFromSecret: false
 
@@ -79,7 +79,7 @@ replica:
       memory: 1024Mi
 EOF
 
-# --set password
+# --set <REDACTED-20260817>
 helm upgrade --install \
 redis-ha . \
 -f values.yaml \
@@ -93,7 +93,7 @@ kubectl get po,svc -n redis-ha
 
 # 添加节点
 # helm upgrade --timeout 600s <release> \
-# --set "password=${REDIS_PASSWORD} \
+# --set "<REDACTED-20260817>=${REDIS_PASSWORD} \
 # --set cluster.nodes=7 \
 # --set cluster.update.addNodes=true \
 # --set cluster.update.currentNumberOfNodes=6" \
@@ -106,9 +106,9 @@ kubectl get po,svc -n redis-ha
 #
 #
 #
-# To get your password run:
+# To get your <REDACTED-20260817> run:
 #
-#     export REDIS_PASSWORD=$(kubectl get secret --namespace redis-ha redis-ha -o jsonpath="{.data.redis-password}" | base64 -d)
+#     export REDIS_PASSWORD=$(kubectl get secret --namespace redis-ha redis-ha -o jsonpath="{.data.redis-<REDACTED-20260817>}" | base64 -d)
 #
 # To connect to your Redis&reg; server:
 #

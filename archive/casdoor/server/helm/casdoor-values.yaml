@@ -38,7 +38,7 @@ database:
   driver: postgres
 
   user: "postgres"
-  password: "postgres"
+  <REDACTED-20260817>: "postgres"
   host: "postgres-postgresql.postgres.svc.cluster.local"
   # If port is empty, default port will be used.
   # mysql: 3306, postgres: 5432, cockroachdb: 26257

@@ -301,7 +301,7 @@ func tracerProvider() error {
 }
 
 func Server2(c *gin.Context) {
-	dsn := "postgresql://root:msdnmm@192.168.2.158:5432/postgres"
+	dsn := "postgresql://root:<REDACTED-20260817>@192.168.2.158:5432/postgres"
 	newLogger := logger.New(
 		helper.New(os.Stdout, "\r\n", helper.LstdFlags),
 		logger.Config{

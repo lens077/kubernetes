@@ -10,7 +10,7 @@ spec:
   extraConfig:
     accounts.admin: "apiKey, login" #The same entry is reflected in Argo CD Configmap.
     accounts.dev: "apiKey, login"
-    passwordPattern: "^.{6,32}$"
+    <REDACTED-20260817>Pattern: "^.{6,32}$"
     users.session.duration: "24d"
     # exec.enabled indicates whether the UI exec feature is enabled. It is disabled by default.
     exec.enabled: "true"

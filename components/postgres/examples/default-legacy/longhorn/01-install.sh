@@ -23,7 +23,7 @@ helm install postgres ./postgresql \
   -n postgres \
   --create-namespace \
   --set global.postgresql.auth.username="postgres" \
-  --set global.postgresql.auth.password="postgres" \
+  --set global.postgresql.auth.<REDACTED-20260817>="postgres" \
   --set global.postgresql.auth.database="postgres" \
   --set primary.service.type=NodePort \
   --set global.postgresql.service.ports.postgresql="5432" \

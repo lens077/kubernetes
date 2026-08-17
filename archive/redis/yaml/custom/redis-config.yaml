@@ -15,7 +15,7 @@ data:
     tcp-keepalive 300
 
     # 安全：启用密码
-    requirepass msdnmm
+    requirepass <REDACTED-20260817>
     # 可选：限制特定命令（如禁用 FLUSHDB）
     # rename-command FLUSHDB ""
     # rename-command FLUSHALL ""

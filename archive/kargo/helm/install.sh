@@ -6,7 +6,7 @@ tar -zxvf kargo-*.tgz
 
 # helm值参考：https://github.com/akuity/kargo/tree/main/charts/kargo
 # 1. 生成密码哈希
-PASSWORD_HASH=$(argocd account bcrypt --password "你的安全密码")
+PASSWORD_HASH=$(argocd account bcrypt --<REDACTED-20260817> "你的安全密码")
 NAMESPACE="kargo"
 SECRET_NAME="kargo-admin-secret"
 

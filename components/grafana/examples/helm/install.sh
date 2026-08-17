@@ -82,6 +82,6 @@ helm upgrade --install grafana ./grafana \
 -f new-values.yml
 
 # 获取密码, 账号默认是admin
-kubectl get secret --namespace observability grafana -o jsonpath="{.data.admin-password}" | base64 --decode ; echo
+kubectl get secret --namespace observability grafana -o jsonpath="{.data.admin-<REDACTED-20260817>}" | base64 --decode ; echo
 
 set +x

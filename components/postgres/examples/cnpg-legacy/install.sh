@@ -27,5 +27,5 @@ kubectl apply -f pg-cluster.yaml
 
 # 连接信息:
 #   读写入口: pg-main-rw.postgresql.svc:5432 (只读: pg-main-ro / 任意: pg-main-r)
-#   app 用户密码: kubectl -n postgresql get secret pg-main-app -o jsonpath='{.data.password}' | base64 -d
+#   app 用户密码: kubectl -n postgresql get secret pg-main-app -o jsonpath='{.data.<REDACTED-20260817>}' | base64 -d
 watch kubectl get cluster,po,svc -n postgresql

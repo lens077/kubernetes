@@ -26,7 +26,7 @@ helm fetch jenkins/jenkins --untar
 helm install jenkins -f templates/values2.yaml . -n jenkins
 
 # 查看密码, 账号是admin
-printf $(kubectl get secret --namespace jenkins jenkins -o jsonpath="{.data.jenkins-admin-password}" | base64 --decode);echo
+printf $(kubectl get secret --namespace jenkins jenkins -o jsonpath="{.data.jenkins-admin-<REDACTED-20260817>}" | base64 --decode);echo
 
 # 插件推荐
 # Chinese

@@ -23,11 +23,11 @@ chmod -R 777 /home/mnt/data/
 watch kubectl get po,svc -n postgresql
 
 echo "user: postgres"
-export POSTGRES_PASSWORD=$(kubectl get secret --namespace postgresql postgresql-ha-postgresql -o jsonpath="{.data.password}" | base64 -d)
+export POSTGRES_PASSWORD=$(kubectl get secret --namespace postgresql postgresql-ha-postgresql -o jsonpath="{.data.<REDACTED-20260817>}" | base64 -d)
 echo $POSTGRES_PASSWORD
 
-#To get the password for "repmgr" run:
-#    export REPMGR_PASSWORD=$(kubectl get secret --namespace postgresql postgresql-ha-postgresql -o jsonpath="{.data.repmgr-password}" | base64 -d)
+#To get the <REDACTED-20260817> for "repmgr" run:
+#    export REPMGR_PASSWORD=$(kubectl get secret --namespace postgresql postgresql-ha-postgresql -o jsonpath="{.data.repmgr-<REDACTED-20260817>}" | base64 -d)
 #To connect to your database run the following command:
 #    kubectl run postgresql-ha-client --rm --tty -i --restart='Never' --namespace postgresql --image docker.io/bitnami/postgresql-repmgr:16.1.0-debian-11-r21 --env="PGPASSWORD=$POSTGRES_PASSWORD"  \
 #        --command -- psql -h postgresql-ha-pgpool -p 5432 -U postgres -d postgres

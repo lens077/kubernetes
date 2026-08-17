@@ -12,7 +12,7 @@ kubectl apply -f redis-service.yaml
 kubectl get pods -l app=redis
 kubectl exec -it redis-0 -- redis-cli
 # 在内部执行：
-auth msdnmm
+auth <REDACTED-20260817>
 ping
 config get appendonly
 config get dir
@@ -20,6 +20,6 @@ set mykey "Hello from Redis"
 get mykey
 quit
 
-# 2. 在外部执行，账号default，密码msdnmm，端口32379，IP是运行该Redis Pod的节点IP
+# 2. 在外部执行，账号default，密码<REDACTED-20260817>，端口32379，IP是运行该Redis Pod的节点IP
 
 set +x

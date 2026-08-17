@@ -537,7 +537,7 @@ spec:
                       type: object
                       required:
                         - create
-                        - passwordSecretRef
+                        - <REDACTED-20260817>SecretRef
                       properties:
                         alias:
                           description: |-
@@ -548,18 +548,18 @@ spec:
                           description: |-
                             Create enables JKS keystore creation for the Certificate.
                             If true, a file named `keystore.jks` will be created in the target
-                            Secret resource, encrypted using the password stored in
-                            `passwordSecretRef`.
+                            Secret resource, encrypted using the <REDACTED-20260817> stored in
+                            `<REDACTED-20260817>SecretRef`.
                             The keystore file will be updated immediately.
                             If the issuer provided a CA certificate, a file named `truststore.jks`
                             will also be created in the target Secret resource, encrypted using the
-                            password stored in `passwordSecretRef`
+                            <REDACTED-20260817> stored in `<REDACTED-20260817>SecretRef`
                             containing the issuing Certificate Authority
                           type: boolean
-                        passwordSecretRef:
+                        <REDACTED-20260817>SecretRef:
                           description: |-
                             PasswordSecretRef is a reference to a key in a Secret resource
-                            containing the password used to encrypt the JKS keystore.
+                            containing the <REDACTED-20260817> used to encrypt the JKS keystore.
                           type: object
                           required:
                             - name
@@ -582,24 +582,24 @@ spec:
                       type: object
                       required:
                         - create
-                        - passwordSecretRef
+                        - <REDACTED-20260817>SecretRef
                       properties:
                         create:
                           description: |-
                             Create enables PKCS12 keystore creation for the Certificate.
                             If true, a file named `keystore.p12` will be created in the target
-                            Secret resource, encrypted using the password stored in
-                            `passwordSecretRef`.
+                            Secret resource, encrypted using the <REDACTED-20260817> stored in
+                            `<REDACTED-20260817>SecretRef`.
                             The keystore file will be updated immediately.
                             If the issuer provided a CA certificate, a file named `truststore.p12` will
                             also be created in the target Secret resource, encrypted using the
-                            password stored in `passwordSecretRef` containing the issuing Certificate
+                            <REDACTED-20260817> stored in `<REDACTED-20260817>SecretRef` containing the issuing Certificate
                             Authority
                           type: boolean
-                        passwordSecretRef:
+                        <REDACTED-20260817>SecretRef:
                           description: |-
                             PasswordSecretRef is a reference to a key in a Secret resource
-                            containing the password used to encrypt the PKCS12 keystore.
+                            containing the <REDACTED-20260817> used to encrypt the PKCS12 keystore.
                           type: object
                           required:
                             - name
@@ -1357,7 +1357,7 @@ spec:
                             clientSecretSecretRef:
                               description: |-
                                 Auth: Azure Service Principal:
-                                A reference to a Secret containing the password associated with the Service Principal.
+                                A reference to a Secret containing the <REDACTED-20260817> associated with the Service Principal.
                                 If set, ClientID and TenantID must also be set.
                               type: object
                               required:
@@ -4671,7 +4671,7 @@ spec:
                                   clientSecretSecretRef:
                                     description: |-
                                       Auth: Azure Service Principal:
-                                      A reference to a Secret containing the password associated with the Service Principal.
+                                      A reference to a Secret containing the <REDACTED-20260817> associated with the Service Principal.
                                       If set, ClientID and TenantID must also be set.
                                     type: object
                                     required:
@@ -7938,7 +7938,7 @@ spec:
                           description: |-
                             CredentialsRef is a reference to a Secret containing the Venafi TPP API credentials.
                             The secret must contain the key 'access-token' for the Access Token Authentication,
-                            or two keys, 'username' and 'password' for the API Keys Authentication.
+                            or two keys, 'username' and '<REDACTED-20260817>' for the API Keys Authentication.
                           type: object
                           required:
                             - name
@@ -8398,7 +8398,7 @@ spec:
                                   clientSecretSecretRef:
                                     description: |-
                                       Auth: Azure Service Principal:
-                                      A reference to a Secret containing the password associated with the Service Principal.
+                                      A reference to a Secret containing the <REDACTED-20260817> associated with the Service Principal.
                                       If set, ClientID and TenantID must also be set.
                                     type: object
                                     required:
@@ -11665,7 +11665,7 @@ spec:
                           description: |-
                             CredentialsRef is a reference to a Secret containing the Venafi TPP API credentials.
                             The secret must contain the key 'access-token' for the Access Token Authentication,
-                            or two keys, 'username' and 'password' for the API Keys Authentication.
+                            or two keys, 'username' and '<REDACTED-20260817>' for the API Keys Authentication.
                           type: object
                           required:
                             - name

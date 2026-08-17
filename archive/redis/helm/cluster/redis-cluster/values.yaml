@@ -10,7 +10,7 @@
 ## @param global.imageRegistry Global Docker image registry
 ## @param global.imagePullSecrets Global Docker registry secret names as an array
 ## @param global.storageClass Global StorageClass for Persistent Volume(s)
-## @param global.redis.password Redis&reg; password (overrides `password`)
+## @param global.redis.<REDACTED-20260817> Redis&reg; <REDACTED-20260817> (overrides `<REDACTED-20260817>`)
 ##
 global:
   imageRegistry: ""
@@ -21,7 +21,7 @@ global:
   imagePullSecrets: [ ]
   storageClass: ""
   redis:
-    password: ""
+    <REDACTED-20260817>: ""
   ## Compatibility adaptations for Kubernetes platforms
   ##
   compatibility:
@@ -236,21 +236,21 @@ containerSecurityContext:
     drop: [ "ALL" ]
   seccompProfile:
     type: "RuntimeDefault"
-## @param usePassword Use password authentication
+## @param usePassword Use <REDACTED-20260817> authentication
 ##
 usePassword: true
-## @param password Redis&reg; password (ignored if existingSecret set)
+## @param <REDACTED-20260817> Redis&reg; <REDACTED-20260817> (ignored if existingSecret set)
 ## Defaults to a random 10-character alphanumeric string if not set and usePassword is true
-## ref: https://github.com/bitnami/containers/tree/main/bitnami/redis#setting-the-server-password-on-first-run
+## ref: https://github.com/bitnami/containers/tree/main/bitnami/redis#setting-the-server-<REDACTED-20260817>-on-first-run
 ##
-password: ""
-## @param existingSecret Name of existing secret object (for password authentication)
+<REDACTED-20260817>: ""
+## @param existingSecret Name of existing secret object (for <REDACTED-20260817> authentication)
 ##
 existingSecret: ""
-## @param existingSecretPasswordKey Name of key containing password to be retrieved from the existing secret
+## @param existingSecretPasswordKey Name of key containing <REDACTED-20260817> to be retrieved from the existing secret
 ##
 existingSecretPasswordKey: ""
-## @param usePasswordFile Mount passwords as files instead of environment variables
+## @param usePasswordFile Mount <REDACTED-20260817>s as files instead of environment variables
 ##
 usePasswordFile: false
 ##

@@ -101,7 +101,7 @@ data:
     # IF YOU ARE SURE YOU WANT YOUR INSTANCE TO LISTEN TO ALL THE INTERFACES
     # COMMENT OUT THE FOLLOWING LINE.
     #
-    # You will also need to set a password unless you explicitly disable protected
+    # You will also need to set a <REDACTED-20260817> unless you explicitly disable protected
     # mode.
     # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     bind 127.0.0.1 -::1
@@ -121,7 +121,7 @@ data:
     # Protected mode is a layer of security protection, in order to avoid that
     # Redis instances left open on the internet are accessed and exploited.
     #
-    # When protected mode is on and the default user has no password, the server
+    # When protected mode is on and the default user has no <REDACTED-20260817>, the server
     # only accepts local connections from the IPv4 address (127.0.0.1), IPv6 address
     # (::1) or Unix domain sockets.
     #
@@ -546,12 +546,12 @@ data:
     #
     # replicaof <masterip> <masterport>
 
-    # If the master is password protected (using the "requirepass" configuration
+    # If the master is <REDACTED-20260817> protected (using the "requirepass" configuration
     # directive below) it is possible to tell the replica to authenticate before
     # starting the replication synchronization process, otherwise the master will
     # refuse the replica request.
     #
-    # masterauth <master-password>
+    # masterauth <master-<REDACTED-20260817>>
     #
     # However this is not enough if you are using Redis ACLs (for Redis version
     # 6 or greater), and the default user is not capable of running the PSYNC
@@ -562,7 +562,7 @@ data:
     # masteruser <username>
     #
     # When masteruser is specified, the replica will authenticate against its
-    # master using the new AUTH form: AUTH <username> <password>.
+    # master using the new AUTH form: AUTH <username> <<REDACTED-20260817>>.
 
     # When a replica loses its connection with the master, or when the replication
     # is still in progress, the replica can act in two different ways:
@@ -875,12 +875,12 @@ data:
     ################################## SECURITY ###################################
 
     # Warning: since Redis is pretty fast, an outside user can try up to
-    # 1 million passwords per second against a modern box. This means that you
-    # should use very strong passwords, otherwise they will be very easy to break.
-    # Note that because the password is really a shared secret between the client
-    # and the server, and should not be memorized by any human, the password
+    # 1 million <REDACTED-20260817>s per second against a modern box. This means that you
+    # should use very strong <REDACTED-20260817>s, otherwise they will be very easy to break.
+    # Note that because the <REDACTED-20260817> is really a shared secret between the client
+    # and the server, and should not be memorized by any human, the <REDACTED-20260817>
     # can be easily a long string from /dev/urandom or whatever, so by using a
-    # long and unguessable password no brute force attack will be possible.
+    # long and unguessable <REDACTED-20260817> no brute force attack will be possible.
 
     # Redis ACL users are defined in the following format:
     #
@@ -892,7 +892,7 @@ data:
     #
     # The special username "default" is used for new connections. If this user
     # has the "nopass" rule, then new connections will be immediately authenticated
-    # as the "default" user without the need of any password provided via the
+    # as the "default" user without the need of any <REDACTED-20260817> provided via the
     # AUTH command. Otherwise if the "default" user is not flagged with "nopass"
     # the connections will start in not authenticated state, and will require
     # AUTH (or the HELLO command AUTH option) in order to be authenticated and
@@ -940,21 +940,21 @@ data:
     #               patterns.
     #  allchannels  Alias for &*
     #  resetchannels            Flush the list of allowed channel patterns.
-    #  ><password>  Add this password to the list of valid password for the user.
+    #  ><<REDACTED-20260817>>  Add this <REDACTED-20260817> to the list of valid <REDACTED-20260817> for the user.
     #               For example >mypass will add "mypass" to the list.
     #               This directive clears the "nopass" flag (see later).
-    #  <<password>  Remove this password from the list of valid passwords.
-    #  nopass       All the set passwords of the user are removed, and the user
-    #               is flagged as requiring no password: it means that every
-    #               password will work against this user. If this directive is
+    #  <<<REDACTED-20260817>>  Remove this <REDACTED-20260817> from the list of valid <REDACTED-20260817>s.
+    #  nopass       All the set <REDACTED-20260817>s of the user are removed, and the user
+    #               is flagged as requiring no <REDACTED-20260817>: it means that every
+    #               <REDACTED-20260817> will work against this user. If this directive is
     #               used for the default user, every new connection will be
     #               immediately authenticated with the default user without
     #               any explicit AUTH command required. Note that the "resetpass"
     #               directive will clear this condition.
-    #  resetpass    Flush the list of allowed passwords. Moreover removes the
+    #  resetpass    Flush the list of allowed <REDACTED-20260817>s. Moreover removes the
     #               "nopass" status. After "resetpass" the user has no associated
-    #               passwords and there is no way to authenticate without adding
-    #               some password (or setting it as "nopass" later).
+    #               <REDACTED-20260817>s and there is no way to authenticate without adding
+    #               some <REDACTED-20260817> (or setting it as "nopass" later).
     #  reset        Performs the following actions: resetpass, resetkeys, off,
     #               -@all. The user returns to the same state it has immediately
     #               after its creation.
@@ -968,18 +968,18 @@ data:
     #                           user (outside the parentheses).
     #
     # ACL rules can be specified in any order: for instance you can start with
-    # passwords, then flags, or key patterns. However note that the additive
+    # <REDACTED-20260817>s, then flags, or key patterns. However note that the additive
     # and subtractive rules will CHANGE MEANING depending on the ordering.
     # For instance see the following example:
     #
-    #   user alice on +@all -DEBUG ~* >somepassword
+    #   user alice on +@all -DEBUG ~* >some<REDACTED-20260817>
     #
     # This will allow "alice" to use all the commands with the exception of the
     # DEBUG command, since +@all added all the commands to the set of the commands
     # alice can use, and later DEBUG was removed. However if we invert the order
     # of two ACL rules the result will be different:
     #
-    #   user alice on -DEBUG +@all ~* >somepassword
+    #   user alice on -DEBUG +@all ~* >some<REDACTED-20260817>
     #
     # Now DEBUG was removed when alice had yet no commands in the set of allowed
     # commands, later all the commands are added, so the user will be able to
@@ -1046,8 +1046,8 @@ data:
 
     # IMPORTANT NOTE: starting with Redis 6 "requirepass" is just a compatibility
     # layer on top of the new ACL system. The option effect will be just setting
-    # the password for the default user. Clients will still authenticate using
-    # AUTH <password> as usually, or more explicitly with AUTH default <password>
+    # the <REDACTED-20260817> for the default user. Clients will still authenticate using
+    # AUTH <<REDACTED-20260817>> as usually, or more explicitly with AUTH default <<REDACTED-20260817>>
     # if they follow the new protocol: both will work.
     #
     # The requirepass is not compatible with aclfile option and the ACL LOAD

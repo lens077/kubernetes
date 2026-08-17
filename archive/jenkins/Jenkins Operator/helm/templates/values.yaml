@@ -77,14 +77,14 @@ controller:
 
     # -- Admin username created as a secret if `controller.admin.createSecret` is true
     username: "admin"
-    # -- Admin password created as a secret if `controller.admin.createSecret` is true
-    # @default -- <random password>
-    password:
+    # -- Admin <REDACTED-20260817> created as a secret if `controller.admin.createSecret` is true
+    # @default -- <random <REDACTED-20260817>>
+    <REDACTED-20260817>:
 
     # -- The key in the existing admin secret containing the username
     userKey: jenkins-admin-user
-    # -- The key in the existing admin secret containing the password
-    passwordKey: jenkins-admin-password
+    # -- The key in the existing admin secret containing the <REDACTED-20260817>
+    <REDACTED-20260817>Key: jenkins-admin-<REDACTED-20260817>
 
     # The default configuration uses this secret to configure an admin user
     # If you don't need that user or use a different security realm, then you can disable it
@@ -449,7 +449,7 @@ controller:
   # 'name' is a name of an existing secret in the same namespace as jenkins,
   # 'keyName' is the name of one of the keys inside the current secret.
   # the 'name' and 'keyName' are concatenated with a '-' in between, so for example:
-  # an existing secret "secret-credentials" and a key inside it named "github-password" should be used in JCasC as ${secret-credentials-github-password}
+  # an existing secret "secret-credentials" and a key inside it named "github-<REDACTED-20260817>" should be used in JCasC as ${secret-credentials-github-<REDACTED-20260817>}
   # 'name' and 'keyName' must be lowercase RFC 1123 label must consist of lower case alphanumeric characters or '-',
   # and must start and end with an alphanumeric character (e.g. 'my-name', or '123-abc')
   # existingSecret existing secret "secret-credentials" and a key inside it named "github-username" should be used in JCasC as ${github-username}
@@ -463,7 +463,7 @@ controller:
   #  - name: secret-name-1
   #    keyName: username
   #  - name: secret-name-1
-  #    keyName: password
+  #    keyName: <REDACTED-20260817>
 
   # -- List of additional secrets to create and mount
   additionalSecrets: [ ]
@@ -527,7 +527,7 @@ controller:
         users:
         - id: "${chart-admin-username}"
           name: "Jenkins Admin"
-          password: "${chart-admin-password}"
+          <REDACTED-20260817>: "${chart-admin-<REDACTED-20260817>}"
 
     # Ignored if authorizationStrategy is defined in controller.JCasC.configScripts
     # -- Jenkins Config as Code Authorization Strategy-section
@@ -816,10 +816,10 @@ controller:
     jenkinsHttpsJksSecretName: ""
     # -- Name of the key in the secret that already has ssl keystore
     jenkinsHttpsJksSecretKey: "jenkins-jks-file"
-    # -- Name of the secret that contains the JKS password, if it is not in the same secret as the JKS file
+    # -- Name of the secret that contains the JKS <REDACTED-20260817>, if it is not in the same secret as the JKS file
     jenkinsHttpsJksPasswordSecretName: ""
-    # -- Name of the key in the secret that contains the JKS password
-    jenkinsHttpsJksPasswordSecretKey: "https-jks-password"
+    # -- Name of the key in the secret that contains the JKS <REDACTED-20260817>
+    jenkinsHttpsJksPasswordSecretKey: "https-jks-<REDACTED-20260817>"
     disableSecretMount: false
 
     # When HTTPS keystore is enabled, servicePort and targetPort will be used as HTTPS port
@@ -829,8 +829,8 @@ controller:
     path: "/var/jenkins_keystore"
     # -- Jenkins keystore filename which will appear under controller.httpsKeyStore.path
     fileName: "keystore.jks"
-    # -- Jenkins keystore password
-    password: "password"
+    # -- Jenkins keystore <REDACTED-20260817>
+    <REDACTED-20260817>: "<REDACTED-20260817>"
 
     # -- Base64 encoded Keystore content. Keystore must be converted to base64 then being pasted here
     jenkinsKeyStoreBase64Encoded:

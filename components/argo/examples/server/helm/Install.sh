@@ -19,4 +19,4 @@ helm upgrade --install argocd \
   -f examples/new-values.yml
 
 # 获取初始化的密码, 账号admin
-argocd admin initial-password -n argocd
+argocd admin initial-<REDACTED-20260817> -n argocd

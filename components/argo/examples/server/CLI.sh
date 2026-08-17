@@ -6,7 +6,7 @@ mkdir -p /home/kubernetes/argocd
 cd /home/kubernetes/argocd
 
 # 获取初始化的密码
-argocd admin initial-password -n argocd
+argocd admin initial-<REDACTED-20260817> -n argocd
 
 # CLI登录
 # $lb_ip:port: ip与端口
@@ -18,22 +18,22 @@ lb_ip="argocd-server.app.com"
 argocd login \
 $lb_ip \
 --username admin \
---password "${ARGOCD_PASSWORD:?Set ARGOCD_PASSWORD before running this script}" \
+--<REDACTED-20260817> "${ARGOCD_PASSWORD:?Set ARGOCD_PASSWORD before running this script}" \
 --insecure
 
 # 遗忘密码的解决方案:
 # 1. 删除 argocd-secret 中的密码相关字段，这会触发系统生成新的随机密码。
 # 2. 密码修改需要重启才能被服务加载。
 # 3. 获取新生成的密码
-#kubectl -n argocd patch secret argocd-secret --type=json -p='[{"op": "remove", "path": "/data/admin.password"}, {"op": "remove", "path": "/data/admin.passwordMtime"}]'
+#kubectl -n argocd patch secret argocd-secret --type=json -p='[{"op": "remove", "path": "/data/admin.<REDACTED-20260817>"}, {"op": "remove", "path": "/data/admin.<REDACTED-20260817>Mtime"}]'
 #kubectl -n argocd rollout restart deployment argocd-server
-#argocd admin initial-password -n argocd
+#argocd admin initial-<REDACTED-20260817> -n argocd
 
 # 列出用户
 argocd account list
 
 # 修改密码
-argocd account update-password
+argocd account update-<REDACTED-20260817>
 
 # 1. 注册集群以将应用程序部署到该集群(可选, 推荐)
 # 将 ServiceAccount （argocd-manager） 安装到该 kubectl 上下文的 kube-system 命名空间中，
@@ -49,7 +49,7 @@ OCI_URL=harbor.apikv.com:5443
 argocd repo add $OCI_URL \
   --name oci-helm-registry \
   --username <username> \
-  --password <password> \
+  --<REDACTED-20260817> <<REDACTED-20260817>> \
   --type helm \
   --enable-oci
 
@@ -113,7 +113,7 @@ argocd proj add-source frontend https://gitlab.com/lookeke/full-stack-engineerin
 ## 方式1 HTTPS + Token:
 argocd repo add https://github.com/your-org/your-monorepo.git \
   --username your-github-username \
-  --password ghp_xxxxxxxxxxxx
+  --<REDACTED-20260817> ghp_xxxxxxxxxxxx
 ## 方式2 私钥方式:
 argocd repo add git@gitlab.com:your-org/your-monorepo.git \
   --ssh-private-key-path ~/.ssh/id_ed25519
@@ -132,7 +132,7 @@ stringData:
   name: argocd-example-apps
   url: https://github.com/argoproj/argocd-example-apps.git
   username: your-github-username
-  password: ghp_xxxxxxxxxxxx
+  <REDACTED-20260817>: ghp_xxxxxxxxxxxx
 EOF
 kubectl apply -f gitlab-secret.yml -n argocd
 

@@ -36,8 +36,8 @@ func main() {
 	// 4. 配置数据库连接
 	// 如果你改成了 TCPRoute，端口是 443；如果直连 LB，端口是 5432。请根据实际情况修改。
 	// 这里假设你本地 `/etc/hosts` 已经配置了 pg-dev.app.com 指向 192.168.3.119
-	dsn := "host=pg-dev.app.com port=5432 user=postgres password=msdnmm dbname=postgres sslmode=require"
-	// dsn := "host=192.168.3.109 port=5432 user=postgres password=msdnmm dbname=postgres sslmode=require"
+	dsn := "host=pg-dev.app.com port=5432 user=postgres password=<REDACTED-20260817> dbname=postgres sslmode=require"
+	// dsn := "host=192.168.3.109 port=5432 user=postgres password=<REDACTED-20260817> dbname=postgres sslmode=require"
 
 	config, err := pgx.ParseConfig(dsn)
 	if err != nil {
@@ -99,8 +99,8 @@ func main() {
 // 	}
 //
 // 	// 3. 构建连接配置
-// 	connStr := "postgres://postgres:msdnmm@pg.app.com:443/postgres"
-// 	// connStr := "postgres://postgres:msdnmm@192.168.3.106:5432/postgres"
+// 	connStr := "postgres://postgres:<REDACTED-20260817>@pg.app.com:443/postgres"
+// 	// connStr := "postgres://postgres:<REDACTED-20260817>@192.168.3.106:5432/postgres"
 // 	config, err := pgx.ParseConfig(connStr)
 // 	if err != nil {
 // 		log.Fatal(err)

@@ -13,5 +13,5 @@ kubectl create -f ./argocd-deploy.yaml -n $ns
 
 # 获取密码
 echo "将default-argocd替换成你的argocd的名称"
-pwd=$(kubectl -n $ns get secret argocd-cluster -o jsonpath='{.data.admin\.password}' | base64 -d)
+pwd=$(kubectl -n $ns get secret argocd-cluster -o jsonpath='{.data.admin\.<REDACTED-20260817>}' | base64 -d)
 # bCGuMlvgYtd5UnRN9qZWhsDFI1PQ8B0H

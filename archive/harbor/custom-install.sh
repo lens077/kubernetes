@@ -104,9 +104,9 @@ database:
     host: "192.168.3.121"
     port: "5432"
     username: "postgres"
-    password: "postgres"
+    <REDACTED-20260817>: "postgres"
     coreDatabase: "harbor"
-    # if using existing secret, the key must be "password"
+    # if using existing secret, the key must be "<REDACTED-20260817>"
     existingSecret: ""
     # "disable" - No SSL
     # "require" - Always SSL (skip verification)
@@ -139,7 +139,7 @@ redis:
     # cacheLayerDatabaseIndex: "7"
     # username field can be an empty string, and it will be authenticated against the default user
     username: "default"
-    password: "msdnmm"
+    <REDACTED-20260817>: "<REDACTED-20260817>"
     # If using existingSecret, the key must be REDIS_PASSWORD
     existingSecret: ""
 trivy:
@@ -159,11 +159,11 @@ trace:
   #   application: harbor
   jaeger:
     # jaeger supports two modes:
-    #   collector mode(uncomment endpoint and uncomment username, password if needed)
+    #   collector mode(uncomment endpoint and uncomment username, <REDACTED-20260817> if needed)
     #   agent mode(uncomment agent_host and agent_port)
     endpoint: http://hostname:14268/api/traces
     # username:
-    # password:
+    # <REDACTED-20260817>:
     # agent_host: hostname
     # export trace data by jaeger.thrift in compact mode
     # agent_port: 6831

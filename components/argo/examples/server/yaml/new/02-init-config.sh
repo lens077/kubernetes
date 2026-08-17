@@ -3,16 +3,16 @@
 set -o posix errexit -o pipefail
 
 # 获取初始化的密码, 用户名是admin
-argocd admin initial-password -n argocd
+argocd admin initial-<REDACTED-20260817> -n argocd
 
 argocd_sever="192.168.3.125"
-password="D7V-xBgeRI9Hyviq"
+<REDACTED-20260817>="D7V-xBgeRI9Hyviq"
 echo $argocd_sever
-echo $password
+echo $<REDACTED-20260817>
 argocd login \
   $argocd_sever \
   --username admin \
-  --password $password \
+  --<REDACTED-20260817> $<REDACTED-20260817> \
   --insecure
 
 # 注册集群以将应用程序部署到该集群(可选, 推荐)

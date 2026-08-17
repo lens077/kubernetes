@@ -294,7 +294,7 @@ persistence:
     swift:
       authurl: https://storage.myprovider.com/v3/auth
       username: username
-      password: password
+      <REDACTED-20260817>: <REDACTED-20260817>
       container: containername
       # keys in existing secret must be REGISTRY_STORAGE_SWIFT_PASSWORD, REGISTRY_STORAGE_SWIFT_SECRETKEY, REGISTRY_STORAGE_SWIFT_ACCESSKEY
       existingSecret: ""
@@ -342,7 +342,7 @@ updateStrategy:
 # debug, info, warning, error or fatal
 logLevel: info
 
-# The initial password of Harbor admin. Change it from portal after launching Harbor
+# The initial <REDACTED-20260817> of Harbor admin. Change it from portal after launching Harbor
 # or give an existing secret for it
 # key in secret is given via (default to HARBOR_ADMIN_PASSWORD)
 # existingSecretAdminPassword:
@@ -639,10 +639,10 @@ registry:
   relativeurls: false
   credentials:
     username: "harbor_registry_user"
-    password: "harbor_registry_password"
+    <REDACTED-20260817>: "harbor_registry_<REDACTED-20260817>"
     # If using existingSecret, the key must be REGISTRY_PASSWD and REGISTRY_HTPASSWD
     existingSecret: ""
-    # Login and password in htpasswd string format. Excludes `registry.credentials.username`  and `registry.credentials.password`. May come in handy when integrating with tools like argocd or flux. This allows the same line to be generated each time the template is rendered, instead of the `htpasswd` function from helm, which generates different lines each time because of the salt.
+    # Login and <REDACTED-20260817> in htpasswd string format. Excludes `registry.credentials.username`  and `registry.credentials.<REDACTED-20260817>`. May come in handy when integrating with tools like argocd or flux. This allows the same line to be generated each time the template is rendered, instead of the `htpasswd` function from helm, which generates different lines each time because of the salt.
     # htpasswdString: $apr1$XLefHzeG$Xl4.s00sMSCCcMyJljSZb0 # example string
     htpasswdString: ""
   middleware:
@@ -759,8 +759,8 @@ database:
     image:
       repository: goharbor/harbor-db
       tag: v2.10.0
-    # The initial superuser password for internal database
-    password: "changeit"
+    # The initial superuser <REDACTED-20260817> for internal database
+    <REDACTED-20260817>: "changeit"
     # The size limit for Shared memory, pgSQL use it for shared_buffer
     # More details see:
     # https://github.com/goharbor/harbor/issues/15034
@@ -796,9 +796,9 @@ database:
     host: "192.168.0.1"
     port: "5432"
     username: "user"
-    password: "password"
+    <REDACTED-20260817>: "<REDACTED-20260817>"
     coreDatabase: "registry"
-    # if using existing secret, the key must be "password"
+    # if using existing secret, the key must be "<REDACTED-20260817>"
     existingSecret: ""
     # "disable" - No SSL
     # "require" - Always SSL (skip verification)
@@ -871,7 +871,7 @@ redis:
     # cacheLayerDatabaseIndex: "7"
     # username field can be an empty string, and it will be authenticated against the default user
     username: ""
-    password: ""
+    <REDACTED-20260817>: ""
     # If using existingSecret, the key must be REDIS_PASSWORD
     existingSecret: ""
   ## Additional deployment annotations
@@ -963,11 +963,11 @@ trace:
   #   application: harbor
   jaeger:
     # jaeger supports two modes:
-    #   collector mode(uncomment endpoint and uncomment username, password if needed)
+    #   collector mode(uncomment endpoint and uncomment username, <REDACTED-20260817> if needed)
     #   agent mode(uncomment agent_host and agent_port)
     endpoint: http://hostname:14268/api/traces
     # username:
-    # password:
+    # <REDACTED-20260817>:
     # agent_host: hostname
     # export trace data by jaeger.thrift in compact mode
     # agent_port: 6831

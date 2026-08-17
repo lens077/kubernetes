@@ -17,12 +17,12 @@ tar -zxvf dragonfly-$VERSION.tgz
 
 kubectl create ns dragonfly || true
 # 设置密码 secret
-# 如果不需要密码, 把dragonfly-values.yaml的passwordFromSecret下的enable: true改成enable: false
-# passwordFromSecret:
+# 如果不需要密码, 把dragonfly-values.yaml的<REDACTED-20260817>FromSecret下的enable: true改成enable: false
+# <REDACTED-20260817>FromSecret:
 #  enable: false
-DFLY_PASSOWRD=msdnmm
-kubectl create secret generic dragonfly-password-secret \
-  --from-literal=password=$DFLY_PASSOWRD -n dragonfly
+DFLY_PASSOWRD=<REDACTED-20260817>
+kubectl create secret generic dragonfly-<REDACTED-20260817>-secret \
+  --from-literal=<REDACTED-20260817>=$DFLY_PASSOWRD -n dragonfly
 
 cat > dragonfly-tls-values.yaml <<EOF
 replicaCount: 1
@@ -59,12 +59,12 @@ resources:
 
 # If enabled will set DFLY_PASSOWRD environment variable with the specified existing secret value
 # Note that if enabled and the secret does not exist pods will not start
-passwordFromSecret:
+<REDACTED-20260817>FromSecret:
   # 如果不需要密码, 把enable: true改成enable: false
   enable: true
   existingSecret:
-    name: "dragonfly-password-secret"
-    key: "password"
+    name: "dragonfly-<REDACTED-20260817>-secret"
+    key: "<REDACTED-20260817>"
 
 tls:
   # -- enable TLS

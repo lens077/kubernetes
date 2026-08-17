@@ -27,7 +27,7 @@ chmod +x ./argocd-${OS}-${ARCH}
 mv ./argocd-${OS}-${ARCH} /usr/local/bin/argocd
 
 # 使用 CLI 登录
-argocd admin initial-password -n argocd
+argocd admin initial-<REDACTED-20260817> -n argocd
 # hv0uqcQpbwGhsiwN
 PASSWORLD="0WOLHw-nJgkpfOGb"
 
@@ -38,6 +38,6 @@ argocd login 192.168.2.100:30618
 # 更改密码
 # 第一次要求输入原密码
 # 第二次和第三次是重新新的密码
-argocd account update-password
+argocd account update-<REDACTED-20260817>
 
 set +x

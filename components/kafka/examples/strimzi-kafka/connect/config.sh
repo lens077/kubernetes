@@ -6,5 +6,5 @@ kubectl delete secret tcr-registry-secret -n kafka || true
 kubectl create secret docker-registry tcr-registry-secret \
   --docker-server=ccr.ccs.tencentyun.com \
   --docker-username= \
-  --docker-password= \
+  --docker-<REDACTED-20260817>= \
   -n kafka

@@ -32,12 +32,12 @@ resources:
 
 # If enabled will set DFLY_PASSOWRD environment variable with the specified existing secret value
 # Note that if enabled and the secret does not exist pods will not start
-passwordFromSecret:
+<REDACTED-20260817>FromSecret:
   # 如果不需要密码, 把enable: true改成enable: false
   enable: true
   existingSecret:
-    name: "dragonfly-password-secret"
-    key: "password"
+    name: "dragonfly-<REDACTED-20260817>-secret"
+    key: "<REDACTED-20260817>"
 
 tls:
   # -- enable TLS

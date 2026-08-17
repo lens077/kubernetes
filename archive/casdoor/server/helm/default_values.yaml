@@ -39,7 +39,7 @@ database:
   driver: sqlite3
 
   user: ""
-  password: ""
+  <REDACTED-20260817>: ""
   host: ""
   # If port is empty, default port will be used.
   # mysql: 3306, postgres: 5432, cockroachdb: 26257

@@ -10379,7 +10379,7 @@ spec:
                                           type: string
                                         basicAuth:
                                           properties:
-                                            passwordRef:
+                                            <REDACTED-20260817>Ref:
                                               properties:
                                                 key:
                                                   type: string
@@ -10392,7 +10392,7 @@ spec:
                                             username:
                                               type: string
                                           required:
-                                            - passwordRef
+                                            - <REDACTED-20260817>Ref
                                             - username
                                           type: object
                                         bearerToken:
@@ -10424,7 +10424,7 @@ spec:
                                           type: string
                                         basicAuth:
                                           properties:
-                                            passwordRef:
+                                            <REDACTED-20260817>Ref:
                                               properties:
                                                 key:
                                                   type: string
@@ -10437,7 +10437,7 @@ spec:
                                             username:
                                               type: string
                                           required:
-                                            - passwordRef
+                                            - <REDACTED-20260817>Ref
                                             - username
                                           type: object
                                         project:
@@ -11179,7 +11179,7 @@ spec:
                                           type: string
                                         basicAuth:
                                           properties:
-                                            passwordRef:
+                                            <REDACTED-20260817>Ref:
                                               properties:
                                                 key:
                                                   type: string
@@ -11192,7 +11192,7 @@ spec:
                                             username:
                                               type: string
                                           required:
-                                            - passwordRef
+                                            - <REDACTED-20260817>Ref
                                             - username
                                           type: object
                                         project:
@@ -15436,7 +15436,7 @@ spec:
                                           type: string
                                         basicAuth:
                                           properties:
-                                            passwordRef:
+                                            <REDACTED-20260817>Ref:
                                               properties:
                                                 key:
                                                   type: string
@@ -15449,7 +15449,7 @@ spec:
                                             username:
                                               type: string
                                           required:
-                                            - passwordRef
+                                            - <REDACTED-20260817>Ref
                                             - username
                                           type: object
                                         bearerToken:
@@ -15481,7 +15481,7 @@ spec:
                                           type: string
                                         basicAuth:
                                           properties:
-                                            passwordRef:
+                                            <REDACTED-20260817>Ref:
                                               properties:
                                                 key:
                                                   type: string
@@ -15494,7 +15494,7 @@ spec:
                                             username:
                                               type: string
                                           required:
-                                            - passwordRef
+                                            - <REDACTED-20260817>Ref
                                             - username
                                           type: object
                                         project:
@@ -16236,7 +16236,7 @@ spec:
                                           type: string
                                         basicAuth:
                                           properties:
-                                            passwordRef:
+                                            <REDACTED-20260817>Ref:
                                               properties:
                                                 key:
                                                   type: string
@@ -16249,7 +16249,7 @@ spec:
                                             username:
                                               type: string
                                           required:
-                                            - passwordRef
+                                            - <REDACTED-20260817>Ref
                                             - username
                                           type: object
                                         project:
@@ -18136,7 +18136,7 @@ spec:
                                 type: string
                               basicAuth:
                                 properties:
-                                  passwordRef:
+                                  <REDACTED-20260817>Ref:
                                     properties:
                                       key:
                                         type: string
@@ -18149,7 +18149,7 @@ spec:
                                   username:
                                     type: string
                                 required:
-                                  - passwordRef
+                                  - <REDACTED-20260817>Ref
                                   - username
                                 type: object
                               bearerToken:
@@ -18181,7 +18181,7 @@ spec:
                                 type: string
                               basicAuth:
                                 properties:
-                                  passwordRef:
+                                  <REDACTED-20260817>Ref:
                                     properties:
                                       key:
                                         type: string
@@ -18194,7 +18194,7 @@ spec:
                                   username:
                                     type: string
                                 required:
-                                  - passwordRef
+                                  - <REDACTED-20260817>Ref
                                   - username
                                 type: object
                               project:
@@ -18936,7 +18936,7 @@ spec:
                                 type: string
                               basicAuth:
                                 properties:
-                                  passwordRef:
+                                  <REDACTED-20260817>Ref:
                                     properties:
                                       key:
                                         type: string
@@ -18949,7 +18949,7 @@ spec:
                                   username:
                                     type: string
                                 required:
-                                  - passwordRef
+                                  - <REDACTED-20260817>Ref
                                   - username
                                 type: object
                               project:

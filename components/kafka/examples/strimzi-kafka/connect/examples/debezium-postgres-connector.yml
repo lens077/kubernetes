@@ -12,7 +12,7 @@ spec:
     database.hostname: postgres-postgresql.postgres.svc  # 对应你的 K8s 内部 PG 服务 DNS 域名
     database.port: 5432
     database.user: debezium_user
-    database.password: msdnmm
+    database.<REDACTED-20260817>: <REDACTED-20260817>
     database.dbname: ecommerce
     topic.prefix: ecommerce_cdc
     database.sslmode: require

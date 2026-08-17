@@ -1,5 +1,40 @@
 # TODO
 
+## 2026-08-17(第二批) · L3 硬化 + 明文迁移:审查建议落地
+
+同日下方「GitOps L3 落地」的续篇:四人审查团(改动清单/性能/安全/产品影响)给出的建议按用户拍板执行。
+
+### 已执行
+
+| 项 | 结果 |
+|---|---|
+| git filter-repo 重写本仓历史 | 抹除 install.sh 曾含的 VPS SSH 坐标;上下文串替换(裸 `34123` 会误伤 archive/citus CSV);重写后 HEAD 树哈希与原 HEAD 逐字节一致;已强推。**教训:从 filter-repo 产物仓直接 push 会因缺旧对象在协商阶段挂死,fetch 回工作仓再推秒过** |
+| P1-A 专网隔离 | `vault_backend`(10.66.0.0/24;172.16-31 的 /16 已被本机占满,eth0 是腾讯 VPC 10.1.0.0/22)。gerbil 运行时 `network connect` 接入零中断;vault 重建后只在专网。**验证:pangolin_frontend 里的容器访问 vault:8200 = BLOCKED** |
+| P1-B 审计 | `vault audit enable file`(logs/audit.log),开启状态持久于 storage;install.sh 幂等块 |
+| P1-C XFF | listener 加 `x_forwarded_for_authorized_addrs=[10.66.0.0/24]`。**验证:audit 里 remote_address = 真实公网 IP 而非 traefik 内网 IP** |
+| demo ExternalSecret | 集群实例已删(物化 Secret 随 Owner 联动消失);examples 文件改为 1h 模板 + 分级注释(性能审查:无 reloader 时 1m 纯空转) |
+| raft snapshot | 迁移前/后各一份,存 Mac `lens077/vault-backups/`(时序:备份必须先于真实密钥迁入——迁入后「密钥可丢」前提即失效) |
+| VPS minio root 轮换 | 旧密码属 msdnmm 家族(见下),已换强随机并写入 Vault `secret/vps/minio`;git 侧 compose 改占位符 |
+| 集群 minio → Vault | `secret/k8s/minio`(新随机值)→ `components/minio/externalsecret.yaml` 物化 Secret `minio-root`(同名同键,Deployment 零改动);install.sh Vault 优先 + get_cred 降级;component.env `DEPENDS_ON="external-secrets"`;summary.sh 改读集群 Secret。**验证:Secret ownerRef=ExternalSecret,Pod env 哈希 = Secret 哈希 = Vault 值** |
+| 全仓明文置换 | **730 处 / 124 文件**替换为 `<REDACTED-20260817>`:本仓(archive + components/*/examples 的 legacy 拷贝,含本文件 08-06 段的值引用)、cloud-native-deploy 全仓、pipeline 仓、docker-deploy/minio。archive「原样保留」原则为安全让路,特此记录 |
+
+### 迁移中的关键发现:msdnmm 密码家族
+
+审计五处明文时发现真正的问题比清单大:**`msdnmm` 系列密码在公开仓(本仓 + cloud-native-deploy)出现约 700 处**,横跨 casdoor/dragonfly/harbor/juicefs/redis/postgres/kafka-connect 的示例与脚本,而 **VPS 上活着的 minio 用的就是这个家族**(已轮换)。其余状态:
+
+- 老集群消费者(loki S3 四组 key、minio123)已随集群重建死亡 —— 值作废,占位符只是卫生
+- **ecommerce 仓(公开)的 20 份 `configs/{dev,pre}.yml` 也在家族里,本次刻意未动**:它有自己的 Config Center 单源迁移轨道(ecommerce TODO §96),混改会破坏其契约;需在该轨道内轮换
+- docker-deploy(已转私有)里 casdoor/postgres/redis/gorse/pgsync 等 compose 仍是字面量真值:私有仓风险可控,**但 VPS 上这些服务的活口令与公开仓历史里的家族同源,逐个轮换列为待办**
+
+### 待办(新增)
+
+- [ ] **VPS 存活服务逐个轮换 msdnmm 家族口令**(casdoor/postgres/redis/gorse/consul/kafka…),轮换后写入 Vault `secret/vps/<svc>`,compose 改从环境/文件注入
+- [ ] **cloud-native-deploy 与 pipeline 仓的 git 历史仍含明文**(HEAD 已清):值多数已死/已轮换,是否 filter-repo 重写待决策(公开仓、有外链引用,重写会改 hash)
+- [ ] ecommerce 仓口令轮换(挂靠其 Config Center 轨道,见上)
+- [ ] 安全审查 P1-D 未执行(用户未点名):vault UI 拆 router 挂 badger + traefik rateLimit
+- [ ] audit.log 无轮转;raft snapshot 进 cron(当前手动两份)
+- [ ] ESO chart 用户拍板**不钉版本**(跟最新),记录在案:重装行为随上游漂移属接受的取舍
+
 ## 2026-08-17 · GitOps L3 落地:线上 Vault + External Secrets Operator
 
 ### 决策
@@ -351,20 +386,20 @@ otel-collector 的配置**无需功能性改动** —— 它只与 Jaeger 的 Se
 
 - [ ] **fluent-bit 手机号脱敏是空操作 + `Keep_Log On` 保留原始明文(PII 泄漏)**。`fluent-bit/helm/install.sh:73` 的 lua 用 `string.gsub(record["phone"], "(%d{3})%d{4}(%d{4})", ...)`——**Lua 模式不支持 `{n}` 量词**,`{3}` 被当字面字符,匹配不上任何手机号,原样返回。更糟:`:57-58` 的 `Merge_Log On` + `Keep_Log On` 会保留原始 `log` 字符串字段,即使有效的 email 脱敏(`(.+)@`→`***@`)也被绕过——完整未脱敏 JSON 随 `log` 整条进 Loki。改法:`Keep_Log Off` + 手机号换成有效 pattern(如按 `%d%d%d%d%d%d%d%d%d%d%d` 或分段捕获)。
 - [ ] **脱敏只匹配顶层 `email`/`phone` 两个键**(`install.sh:73`),漏掉应用真正写出的敏感字段:payment 服务 dump 的 `form_data`(交易/回调)、RUM 的 `user_id`/`session_id`、debug 日志里的 bearer token。这些键名不同,脱敏看不见。需扩展字段名单或改成按值模式扫描。
-- [ ] **对象存储凭据明文入库,违反本仓 `SECURITY.md`**。两处泄漏:①MinIO **root** 凭据明文写在 `minio/yaml/single.yaml:60-63`(`MINIO_ROOT_USER=admin` / `MINIO_ROOT_PASSWORD=minio123`,env value);②loki 用的 **S3 access key** 明文散落 4 处——`loki/helm/other/install.sh:43,49,51`、`loki/helm/other/new-values.yaml`、`loki/helm/monolithic mode/install.sh:84-85`、`loki/helm/monolithic mode/examples/minio-values.yml`(值不在此复述)。线上是 `single.yaml` 单副本(minio ns,`deployment/minio`,image `pgsty/minio`,S3 端点 `minio-service.minio.svc:9000`),loki-0 是 monolithic 版、实际用 `install.sh:84-85` 那把 key。按 `SECURITY.md`「凭据泄露处置」——**删文件或补一次「删密码」提交都不足以撤销,旧凭据必须先在 MinIO 侧失效**。执行步骤:
+- [ ] **对象存储凭据明文入库,违反本仓 `SECURITY.md`**。两处泄漏:①MinIO **root** 凭据明文写在 `minio/yaml/single.yaml:60-63`(`MINIO_ROOT_USER=admin` / `MINIO_ROOT_PASSWORD=<REDACTED-20260817>`,env value);②loki 用的 **S3 access key** 明文散落 4 处——`loki/helm/other/install.sh:43,49,51`、`loki/helm/other/new-values.yaml`、`loki/helm/monolithic mode/install.sh:84-85`、`loki/helm/monolithic mode/examples/minio-values.yml`(值不在此复述)。线上是 `single.yaml` 单副本(minio ns,`deployment/minio`,image `pgsty/minio`,S3 端点 `minio-service.minio.svc:9000`),loki-0 是 monolithic 版、实际用 `install.sh:84-85` 那把 key。按 `SECURITY.md`「凭据泄露处置」——**删文件或补一次「删密码」提交都不足以撤销,旧凭据必须先在 MinIO 侧失效**。执行步骤:
 
   轮换 + 改 Secret 引用 runbook(逐条勾):
 
   - [ ] **0. 确认范围**:root(single.yaml)与 S3 key(loki 4 文件)都要换;先确认 loki-0 实际读的是 monolithic 那把(`A3Uh…`),`other/` 那份 key 若无工作负载引用则只作历史泄漏处理。
-  - [ ] **1. 进 mc**:`kubectl -n minio run mc --rm -it --image=minio/mc --restart=Never -- sh`,进去后 `mc alias set m http://minio-service.minio.svc:9000 admin minio123`(用旧 root 临时登录;或用 console :9090)。
+  - [ ] **1. 进 mc**:`kubectl -n minio run mc --rm -it --image=minio/mc --restart=Never -- sh`,进去后 `mc alias set m http://minio-service.minio.svc:9000 admin <REDACTED-20260817>`(用旧 root 临时登录;或用 console :9090)。
   - [ ] **2. 为 loki 建最小权限账户**:只授 loki bucket 的读写,而非拿 root 当 S3 key。先写一份仅含 `s3:*` on `arn:aws:s3:::loki/*` + `arn:aws:s3:::loki` 的 policy(`mc admin policy create m loki-rw ./loki-rw.json`),再 `mc admin user svcacct add --access-key <新AK> --secret-key <新SK> m admin`(服务账户)或 `mc admin user add m <新AK> <新SK>` + `mc admin policy attach m loki-rw --user <新AK>`。记下新 AK/SK。
   - [ ] **3. 轮换 root**:新建 `minio-root` Secret(`kubectl -n minio create secret generic minio-root --from-literal=MINIO_ROOT_USER=<新root> --from-literal=MINIO_ROOT_PASSWORD=<新强口令≥16位>`),把 `single.yaml:60-63` 的两个 env 改成 `valueFrom.secretKeyRef` 指向它,`kubectl apply` 后 `kubectl -n minio rollout restart deploy/minio`。(pgsty/minio 的 root 来自 env,重启即生效;若已存在其它数据请先确认重启不影响。)
   - [ ] **4. 建 loki 的 S3 Secret**:`kubectl -n loki create secret generic loki-s3 --from-literal=AWS_ACCESS_KEY_ID=<新AK> --from-literal=AWS_SECRET_ACCESS_KEY=<新SK>`。
   - [ ] **5. 改 Loki values 去内联**:删掉 `loki-monolithic-mode-values.yml`(即 `monolithic mode/install.sh` heredoc 写出的那份)里 s3 段的 `accessKeyId`/`secretAccessKey` 两行,改由环境变量注入——`loki.storage.s3` 只留 `endpoint`/`bucketnames`/`s3ForcePathStyle`,并加 `loki.extraEnvFrom: [{secretRef: {name: loki-s3}}]`。Loki 的 S3 SDK 会自动读 `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` env;若坚持在 config 里写 `${AWS_ACCESS_KEY_ID}` 占位,则必须给容器加 `-config.expand-env=true`(`loki.extraArgs`),否则 `${VAR}` 不展开会当字面量。
   - [ ] **6. 上线并验证**:`helm upgrade` loki + `kubectl -n loki rollout restart statefulset/loki`;写一条日志→按标签查回;`kubectl -n loki logs loki-0 | grep -Ei 'AccessDenied|SignatureDoesNotMatch|InvalidAccessKeyId'` 应为空。
-  - [ ] **7. 停用旧凭据**:回 mc `mc admin user svcacct rm m <旧AK>` 或 `mc admin user remove m <旧AK>`,并确认旧 root(`admin/minio123`)已随第 3 步重启失效;再观察 loki 仍正常写读。
+  - [ ] **7. 停用旧凭据**:回 mc `mc admin user svcacct rm m <旧AK>` 或 `mc admin user remove m <旧AK>`,并确认旧 root(`admin/<REDACTED-20260817>`)已随第 3 步重启失效;再观察 loki 仍正常写读。
   - [ ] **8. 清仓库为占位符**:把上述 5 个文件(single.yaml + loki 4 文件)里的真实值全改成 `<SET_VIA_SECRET>` 之类占位,并在各自 README/注释里写明「凭据经 Secret 注入,勿写真值」。
-  - [ ] **9. 历史撤销评估**:旧凭据已在第 7 步失效即为主要缓解;若本仓推到公开远端,按 `SECURITY.md` 评估是否 `git filter-repo` 重写历史清除 `A3Uh…`/`z4mY…`/`minio123` 等串,否则依赖「已轮换失效」。
+  - [ ] **9. 历史撤销评估**:旧凭据已在第 7 步失效即为主要缓解;若本仓推到公开远端,按 `SECURITY.md` 评估是否 `git filter-repo` 重写历史清除 `A3Uh…`/`z4mY…`/`<REDACTED-20260817>` 等串,否则依赖「已轮换失效」。
 - [ ] **遥测端点是否匿名可达需核实(PLAUSIBLE)**。`victoriametrics/single/httproute.yaml`、`jaeger/gateway/*.yml`、`loki/**`、`grafana/helm/httproute.yaml`、`kafka/kafka-ui/**`、`minio/**` 均有 Gateway API 路由。VM-single / Jaeger 默认无鉴权,若网关前未挂 AuthorizationPolicy/认证,LAN 客户端即可查询敏感日志或伪造 metric/log/trace 撑爆存储。`SECURITY.md` 已明确「不要因为示例方便而开放匿名管理接口」,需逐条确认这些路由前是否有认证。
 
 ### 管道缺陷

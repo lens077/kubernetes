@@ -1039,7 +1039,7 @@ spec:
                     - key
                     type: object
                     x-kubernetes-map-type: atomic
-                  passwordFromSecret:
+                  <REDACTED-20260817>FromSecret:
                     description: (Optional) Dragonfly Password from Secret as a reference
                       to a specific key
                     properties:
