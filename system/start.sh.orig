@@ -1,0 +1,519 @@
+#!/usr/bin/env bash
+set -euo pipefail
+IFS=$'\n\t'
+trap 'echo "Error at line $LINENO (exit $?)" >&2' ERR
+
+ARCH=""
+# 使用uname -m获取架构信息
+machine=$(uname -m)
+# 判断架构信息并设置变量的值
+if [ "$machine" = "aarch64" ]; then
+    ARCH="arm64"
+elif [ "$machine" = "x86_64" ]; then
+    ARCH="amd64"
+else
+    echo "请手动定义你的发行版的架构"
+fi
+
+echo "ARCH=${ARCH}"
+
+apt update -y
+apt full-upgrade -y
+
+sudo apt install -y git curl wget vim net-tools ethtool iproute2 gpg ca-certificates apt-transport-https
+
+BASHRC="$HOME/.bashrc"
+MARKER="# >>> proxy aliases >>>"
+
+if grep -qF "$MARKER" "$BASHRC" 2>/dev/null; then
+    echo "代理 alias 已存在，跳过写入"
+else
+    cat >> "$BASHRC" <<'EOF'
+
+# >>> proxy aliases >>>
+alias proxy='export http_proxy=http://192.168.3.220:7890
+https_proxy=http://192.168.3.220:7890'
+alias unproxy='unset http_proxy https_proxy'
+# <<< proxy aliases <<<
+EOF
+    echo "已写入 $BASHRC"
+fi
+
+cat > /etc/netplan/00-installer-config.yaml <<EOF
+# This is the network config written by 'subiquity'
+network:
+  ethernets:
+    enp0s5:
+      dhcp4: false
+      dhcp6: false
+      nameservers:
+        addresses:
+          - 192.168.3.1
+          - 114.114.114.114
+      addresses:
+        - 192.168.3.201/24
+      routes:
+        - to: default
+          via: 192.168.3.1
+      match:
+        macaddress: 00:1c:42:de:c7:b9
+      set-name: enp0s5
+  version: 2
+EOF
+
+netplan apply
+
+# 替换成按字段匹配
+cat >> /etc/ssh/sshd_config <<EOF
+PermitRootLogin yes
+PubkeyAuthentication yes
+EOF
+
+systemctl restart ssh
+systemctl daemon-reload
+systemctl restart ssh.socket
+
+# 2. 时区设置
+sudo timedatectl set-timezone Asia/Shanghai
+
+timedatectl status
+# 查看当前时间是否与标准时间一致
+date
+
+cp /etc/chrony/sources.d/ubuntu-ntp-pools.sources{,.back}
+
+cat > /etc/chrony/sources.d/ubuntu-ntp-pools.sources <<'EOF'
+# 使用国内稳定的阿里云 NTP（不支持 NTS，去掉 prefer 和 nts 参数）
+pool ntp.aliyun.com iburst maxsources 4
+pool ntp.tencent.com iburst maxsources 2
+EOF
+sudo chronyc -a makestep
+sudo systemctl restart chrony
+
+# 4. 禁用 Swap（K8s 强制要求）
+sudo swapoff -a
+sudo sed -i '/swap/s/^/#/' /etc/fstab
+
+# 5. 加载内核模块（overlay, br_netfilter, conntrack, xt_socket）
+sudo modprobe overlay
+sudo modprobe br_netfilter
+sudo modprobe nf_conntrack
+sudo modprobe xt_socket
+cat <<EOF | sudo tee /etc/modules-load.d/k8s.conf
+overlay
+br_netfilter
+nf_conntrack
+xt_socket
+EOF
+sudo systemctl restart systemd-modules-load.service
+
+
+# 6. 配置内核参数（基于 7GB 内存优化的安全参数）
+sudo rm -f /etc/sysctl.d/99-kubernetes-cri.conf   # 删除旧的大厂参数文件
+cat <<EOF | sudo tee /etc/sysctl.d/99-k8s-optimized.conf > /dev/null
+# ========== 基础网络 ==========
+net.ipv4.ip_forward = 1
+net.bridge.bridge-nf-call-iptables = 1
+net.bridge.bridge-nf-call-ip6tables = 1
+
+# 彻底禁用 IPv6
+net.ipv6.conf.all.disable_ipv6 = 1
+net.ipv6.conf.default.disable_ipv6 = 1
+net.ipv6.conf.lo.disable_ipv6 = 1
+
+# ========== TCP 内存安全 ==========
+net.core.rmem_max = 4194304
+net.core.wmem_max = 4194304
+net.ipv4.tcp_rmem = 4096 1048576 4194304
+net.ipv4.tcp_wmem = 4096 1048576 4194304
+
+net.core.netdev_max_backlog = 8192
+net.core.somaxconn = 4096
+net.ipv4.ip_local_port_range = 1024 65535
+net.ipv4.tcp_max_syn_backlog = 16384
+net.ipv4.tcp_tw_reuse = 1
+net.ipv4.tcp_fin_timeout = 30
+
+# ========== eBPF 优化 ==========
+net.core.bpf_jit_enable = 1
+net.core.bpf_jit_kallsyms = 1
+net.core.bpf_jit_harden = 0          # 内网安全，降低内存开销
+
+# ========== 拥塞控制 ==========
+net.core.default_qdisc = fq
+net.ipv4.tcp_congestion_control = bbr
+
+# ========== 连接跟踪表（50 万条，约 160MB 内存）==========
+net.netfilter.nf_conntrack_max = 500000
+net.nf_conntrack_max = 500000
+net.netfilter.nf_conntrack_tcp_timeout_established = 7200
+net.netfilter.nf_conntrack_tcp_timeout_time_wait = 60
+net.netfilter.nf_conntrack_tcp_timeout_close_wait = 30
+
+# ========== 其他网络优化 ==========
+net.ipv4.tcp_slow_start_after_idle = 0
+net.core.dev_weight = 64
+net.core.dev_weight_rx_bias = 16
+net.core.dev_weight_tx_bias = 16
+
+# ========== 内存管理 ==========
+vm.swappiness = 0
+vm.overcommit_memory = 0
+vm.panic_on_oom = 0
+vm.vfs_cache_pressure = 50
+
+# ========== 文件句柄 ==========
+fs.file-max = 52706963
+fs.nr_open = 52706963
+fs.epoll.max_user_instances = 8192
+fs.inotify.max_user_instances = 8192
+fs.inotify.max_user_watches = 524288
+EOF
+
+sudo sysctl --system
+
+# 7. 设置 limits.conf（文件描述符、进程数）
+sudo cp /etc/security/limits.conf /etc/security/limits.conf.bak 2>/dev/null || true
+cat <<EOF | sudo tee /etc/security/limits.conf
+* soft nofile 655350
+* hard nofile 655350
+* soft nproc 655350
+* hard nproc 655350
+* soft core unlimited
+* hard core unlimited
+EOF
+
+# 关掉服务器不需要的服务（蓝牙支持，mDNS/零配置局域网发现，打印服务）
+for svc in bluetooth avahi-daemon cups; do
+    if systemctl list-unit-files | grep -q "^${svc}\.service"; then
+        sudo systemctl disable --now "$svc"
+    fi
+done
+
+# 校验，应该在每个步骤之后来校验
+
+echo "减少虚拟机开销、关闭大页透明化（避免数据库延迟抖动）"
+# shellcheck disable=SC2016  # 变量要留给 grub-mkconfig source 时展开
+echo 'GRUB_CMDLINE_LINUX_DEFAULT="$GRUB_CMDLINE_LINUX_DEFAULT nmi_watchdog=0 transparent_hugepage=never"' \
+| sudo tee /etc/default/grub.d/99-tuning.cfg
+sudo update-grub
+
+# 重启后确认生效：
+#  cat /proc/cmdline
+#  cat /sys/kernel/mm/transparent_hugepage/enabled
+
+
+# 如果使用较短的 nf_conntrack_tcp_timeout_established（如 180 秒），则需开启 TCP keepalive 避免长连接被中断：
+
+cat <<EOF | sudo tee -a /etc/sysctl.d/99-k8s-optimized.conf
+net.ipv4.tcp_keepalive_time = 60
+net.ipv4.tcp_keepalive_intvl = 10
+net.ipv4.tcp_keepalive_probes = 3
+EOF
+sudo sysctl --system
+# 确保应用代码（如 PostgreSQL 客户端、Kafka 生产者）启用了 SO_KEEPALIVE。
+# 查看当前连接数
+#cat /proc/sys/net/netfilter/nf_conntrack_count
+## 监控日志是否有 table full 警告
+#dmesg | grep nf_conntrack
+
+# 新的脚本文件
+
+wget https://github.com/opencontainers/runc/releases/download/v1.5.1/runc.arm64
+install -m 755 ./runc."${ARCH}" /usr/local/sbin/runc
+which runc
+runc -v
+
+# 安装ctr
+proxy
+wget https://github.com/containerd/containerd/releases/download/v2.3.4/containerd-2.3.4-linux-arm64.tar.gz
+tar -zxvf containerd-"$version"-linux-$ARCH.tar.gz -C /usr/local/
+ctr -v
+
+export CONTAINERD_SERVICE="/etc/systemd/system/containerd.service"
+export CONTAINERD_CONFIG_FILE_PATH="/etc/containerd/config.toml"
+
+mkdir -p /etc/containerd/
+containerd config default | tee "$CONTAINERD_CONFIG_FILE_PATH"
+# 配置文件默认在`/etc/containerd/config.toml` 这里仅修改两处配置
+# 替换为国内镜像, 国内服务器可以使用k8s.m.daocloud.io或者registry.cn-hangzhou.aliyuncs.com/google_containers/pause
+#  sed -i 's#sandbox = .*#sandbox = "registry.aliyuncs.com/google_containers/pause:3.10"#' "$CONTAINERD_CONFIG_FILE_PATH"
+sudo sed -i 's|sandbox = '.*'|sandbox = '\'registry.aliyuncs.com/google_containers/pause:3.10.2\''|' "$CONTAINERD_CONFIG_FILE_PATH"
+# 确认修改成功
+sudo containerd config dump | grep sandbox
+
+if grep -q "SystemdCgroup = false" "$CONTAINERD_CONFIG_FILE_PATH"; then
+  sed -i 's/SystemdCgroup = false/SystemdCgroup = true/' "$CONTAINERD_CONFIG_FILE_PATH"
+  echo "已将 SystemdCgroup 修改为 true"
+fi
+
+wget https://raw.githubusercontent.com/containerd/containerd/main/containerd.service
+sudo cat containerd.service | sudo tee "$CONTAINERD_SERVICE"
+
+ # 校验配置文件
+grep -nE "sandbox|SystemdCgroup" "$CONTAINERD_CONFIG_FILE_PATH"
+ctr -v
+which containerd
+
+systemctl daemon-reload
+systemctl enable --now containerd
+systemctl restart containerd
+
+mkdir /etc/containerd/certs.d
+sudo sed -i "s|^\([[:space:]]*config_path = \)''$|\1'/etc/containerd/certs.d'|" /etc/containerd/config.toml
+
+systemctl daemon-reload
+systemctl restart containerd
+cat -n /etc/containerd/config.toml | grep -A 1 config_path
+
+if [[ -d /etc/containerd/certs.d ]];then
+  echo "目录生成成功"
+fi
+
+# Download the public signing key for the Kubernetes package repositories. The same signing key is used for all repositories so you can disregard the version in the URL:
+# If the directory `/etc/apt/keyrings` does not exist, it should be created before the curl command, read the note below.
+# mkdir -p -m 755 /etc/apt/keyrings
+curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.36/deb/Release.key | sudo gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+
+#Add the appropriate Kubernetes apt repository. Please note that this repository have packages only for Kubernetes 1.36; for other Kubernetes minor versions, you need to change the Kubernetes minor version in the URL to match your desired minor version (you should also check that you are reading the documentation for the version of Kubernetes that you plan to install).
+# This overwrites any existing configuration in /etc/apt/sources.list.d/kubernetes.list
+echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.36/deb/ /' | sudo tee /etc/apt/sources.list.d/kubernetes.list
+
+# Update the apt package index, install kubelet, kubeadm and kubectl, and pin their version:
+sudo apt-get update
+sudo apt-get install -y kubelet kubeadm kubectl
+sudo systemctl enable --now kubelet
+
+cat >> /etc/hosts <<EOF
+192.168.3.201 node1
+192.168.3.202 node2
+192.168.3.203 node3
+EOF
+
+cat > kubeadm.yml <<EOF
+apiVersion: kubeadm.k8s.io/v1beta4
+bootstrapTokens:
+  - groups:
+      - system:bootstrappers:kubeadm:default-node-token
+    token: abcdef.0123456789abcdef
+    ttl: 24h0m0s
+    usages:
+      - signing
+      - authentication
+kind: InitConfiguration
+localAPIEndpoint:
+  # 优先使用内网IP, 如果不知道,请注释该advertiseAddress参数,k8s会自动获取
+  advertiseAddress: 192.168.3.201
+  bindPort: 6443
+nodeRegistration:
+  criSocket: unix:///var/run/containerd/containerd.sock
+  imagePullPolicy: IfNotPresent
+  imagePullSerial: true
+  # 如果初始化失败, 尝试注释name
+  name: node1
+  taints: null
+timeouts:
+  controlPlaneComponentHealthCheck: 4m0s
+  discovery: 5m0s
+  etcdAPICall: 2m0s
+  kubeletHealthCheck: 4m0s
+  kubernetesAPICall: 1m0s
+  tlsBootstrap: 5m0s
+  upgradeManifests: 5m0s
+skipPhases:
+  - addon/kube-proxy
+---
+apiServer:
+  certSANs:
+    - 192.168.3.201
+    - 192.168.3.202
+    - 192.168.3.203
+    - node1
+    - node2
+    - node3
+apiVersion: kubeadm.k8s.io/v1beta4
+caCertificateValidityPeriod: 87600h0m0s
+certificateValidityPeriod: 8760h0m0s
+certificatesDir: /etc/kubernetes/pki
+clusterName: kubernetes
+controllerManager:
+  extraArgs:
+    - name: "allocate-node-cidrs"
+      value: "true"
+dns: {}
+encryptionAlgorithm: RSA-2048
+etcd:
+  local:
+    dataDir: /var/lib/etcd
+imageRepository: registry.aliyuncs.com/google_containers
+kind: ClusterConfiguration
+kubernetesVersion: 1.36.3
+networking:
+  dnsDomain: cluster.local
+  # serviceSubnet: 192.168.0.0/16
+  # podSubnet: 172.0.0.0/16
+  podSubnet: 10.244.0.0/16
+
+EOF
+
+kubeadm config images pull
+
+unproxy
+
+lsof -i:6443 -t
+lsof -i:10259 -t
+lsof -i:10257 -t
+
+mkdir -p /etc/kubernetes/manifests
+HOME="/home/kubernetes"
+cd $HOME || exit
+if kubeadm init phase preflight --dry-run --config kubeadm.yml; then
+  echo "预检成功"
+  # 安装
+  kubeadm init \
+  --config=kubeadm.yml \
+  --upload-certs \
+  --v=7
+
+  rm -rf $HOME/.kube
+  mkdir -p $HOME/.kube
+  sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
+  sudo chown $(id -u):$(id -g) $HOME/.kube/config
+
+  export KUBECONFIG=/etc/kubernetes/admin.conf
+fi
+
+wget https://github.com/kubernetes-sigs/cri-tools/releases/download/v1.36.0/crictl-v1.36.0-linux-arm64.tar.gz
+tar -zxvf crictl*.tar.gz -C /usr/local/bin
+
+cat > /etc/crictl.yaml << EOF
+runtime-endpoint: "unix:///run/containerd/containerd.sock"
+image-endpoint: "unix:///run/containerd/containerd.sock"
+timeout: 10
+debug: false
+pull-image-on-create: false
+disable-pull-on-run: false
+EOF
+
+crictl config runtime-endpoint unix:///var/run/containerd/containerd.sock
+
+crictl version
+cat /etc/crictl.yaml
+# 输出版本
+crictl -v
+
+# 别名
+echo 'alias k=kubectl' >>~/.bashrc
+echo 'complete -o default -F __start_kubectl k' >>~/.bashrc
+source ~/.bashrc
+
+proxy
+CILIUM_CLI_VERSION=$(curl -s https://raw.githubusercontent.com/cilium/cilium-cli/main/stable.txt)
+CLI_ARCH=amd64
+if [ "$(uname -m)" = "aarch64" ]; then CLI_ARCH=arm64; fi
+curl -L --fail --remote-name-all https://github.com/cilium/cilium-cli/releases/download/${CILIUM_CLI_VERSION}/cilium-linux-${CLI_ARCH}.tar.gz{,.sha256sum}
+sha256sum --check cilium-linux-${CLI_ARCH}.tar.gz.sha256sum
+sudo tar xzvfC cilium-linux-${CLI_ARCH}.tar.gz /usr/local/bin
+rm cilium-linux-${CLI_ARCH}.tar.gz{,.sha256sum}
+unproxy
+
+# 备份
+cp /boot/config-$(uname -r){,.back}
+
+# 查看:
+cat /boot/config-$(uname -r) | grep CONFIG_BPF
+cat /boot/config-$(uname -r) | grep CONFIG_BPF_SYSCALL
+cat /boot/config-$(uname -r) | grep CONFIG_NET_CLS_BPF
+cat /boot/config-$(uname -r) | grep CONFIG_BPF_JIT
+cat /boot/config-$(uname -r) | grep CONFIG_NET_CLS_ACT
+cat /boot/config-$(uname -r) | grep CONFIG_NET_SCH_INGRESS
+cat /boot/config-$(uname -r) | grep CONFIG_CRYPTO_SHA1
+cat /boot/config-$(uname -r) | grep CONFIG_CRYPTO_USER_API_HASH
+cat /boot/config-$(uname -r) | grep CONFIG_CGROUPS
+cat /boot/config-$(uname -r) | grep CONFIG_CGROUP_BPF
+cat /boot/config-$(uname -r) | grep CONFIG_PERF_EVENTS
+cat /boot/config-$(uname -r) | grep CONFIG_SCHEDSTATS
+cat /boot/config-$(uname -r) | grep CONFIG_NET_SCH_FQ
+
+# 如果不使用 BPF 进行伪装（ enable-bpf-masquerade=false ，默认值），那么您将需要以下内核配置选项。
+#CONFIG_NETFILTER_XT_SET=m
+#CONFIG_IP_SET=m
+#CONFIG_IP_SET_HASH_IP=m
+
+#Cilium 默认使用 VXLAN 等隧道协议进行跨节点的 Pod 到 Pod 通信，以及用于各种流量管理功能的策略路由。正确运行需要以下内核配置选项：
+#CONFIG_VXLAN=y
+#CONFIG_GENEVE=y
+#CONFIG_FIB_RULES=y
+
+# 为了正确启用 eBPF 功能，必须启用以下内核配置选项。分发内核通常就是这种情况
+# 当一个选项可以构建为模块或静态链接时，任何一个选择都是有效的
+# https://docs.cilium.io/en/v1.15.0-rc.0/operations/system_requirements/#admin-system-reqs
+CONFIG_BPF=y
+CONFIG_BPF_SYSCALL=y
+CONFIG_NET_CLS_BPF=y
+CONFIG_BPF_JIT=y
+CONFIG_NET_CLS_ACT=y
+CONFIG_NET_SCH_INGRESS=y
+CONFIG_CRYPTO_SHA1=y
+CONFIG_CRYPTO_USER_API_HASH=y
+CONFIG_CGROUPS=y
+CONFIG_CGROUP_BPF=y
+CONFIG_PERF_EVENTS=y
+CONFIG_SCHEDSTATS=y
+
+# L7 和 FQDN 策略的要求
+# L7 proxy redirection currently uses TPROXY iptables actions as well as socket matches. For L7 redirection to work as intended kernel configuration must include the following modules:
+# L7 代理重定向目前使用 TPROXY iptables 操作以及套接字匹配。要使 L7 重定向按预期工作，内核配置必须包括以下模块：
+
+CONFIG_NETFILTER_XT_TARGET_TPROXY=m
+CONFIG_NETFILTER_XT_TARGET_MARK=m
+CONFIG_NETFILTER_XT_TARGET_CT=m
+CONFIG_NETFILTER_XT_MATCH_MARK=m
+CONFIG_NETFILTER_XT_MATCH_SOCKET=m
+
+# IPsec 要求
+# IPsec 透明加密功能需要许多内核配置选项，其中大多数选项用于启用实际加密。请注意，所需的特定选项取决于算法。以下列表对应于 GCM-128-AES 的要求。
+sudo modprobe ipcomp xfrm4_tunnel tunnel4
+lsmod | grep -E 'esp|ipcomp|tunnel'
+cat > /etc/modules-load.d/cilium-ipsec.conf <<EOF
+esp4
+ipcomp
+xfrm4_tunnel
+tunnel4
+EOF
+cat /etc/modules-load.d/cilium-ipsec.conf
+
+#如果需要 IPv6 的 IPsec，再加：
+#sudo modprobe esp6 ipcomp6 xfrm6_tunnel tunnel6
+
+CONFIG_XFRM=y
+CONFIG_XFRM_OFFLOAD=y
+CONFIG_XFRM_STATISTICS=y
+CONFIG_XFRM_ALGO=m
+CONFIG_XFRM_USER=m
+
+CONFIG_INET_XFRM_MODE_TUNNEL=m
+CONFIG_CRYPTO_AEAD=m
+CONFIG_CRYPTO_AEAD2=m
+CONFIG_CRYPTO_GCM=m
+CONFIG_CRYPTO_SEQIV=m
+CONFIG_CRYPTO_CBC=m
+CONFIG_CRYPTO_HMAC=m
+CONFIG_CRYPTO_SHA256=m
+CONFIG_CRYPTO_AES=m
+
+# 检查
+#CONFIG_INET{,6}_ESP=m
+#CONFIG_INET{,6}_IPCOMP=m
+#CONFIG_INET{,6}_XFRM_TUNNEL=m
+#CONFIG_INET{,6}_TUNNEL=m 是否存在（为m或者y）
+grep CONFIG_XFRM /boot/config-$(uname -r)
+grep -E 'CONFIG_INET6?_(ESP|IPCOMP|XFRM_TUNNEL|TUNNEL)=' /boot/config-$(uname -r)
+grep -E 'CONFIG_CRYPTO_(AEAD|GCM|SEQIV|CBC|HMAC|SHA256|AES)=' /boot/config-$(uname -r)
+
+# 带宽管理器需要以下内核配置选项来更改数据包调度算法
+# https://docs.cilium.io/en/v1.15.0-rc.0/operations/system_requirements/#admin-system-reqs
+cat /boot/config-$(uname -r) | grep CONFIG_NET_SCH_FQ
+CONFIG_NET_SCH_FQ=m
+
+sysctl --system

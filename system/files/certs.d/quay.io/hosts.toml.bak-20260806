@@ -1,0 +1,9 @@
+server = "https://quay.io"
+[host."https://quay.m.daocloud.io"]
+  capabilities = ["pull", "resolve", "push"]
+
+[host."https://quay.nju.edu.cn"]
+  capabilities = ["pull", "resolve", "push"]
+
+[host."https://quay.mirrors.ustc.edu.cn"]
+  capabilities = ["pull", "resolve", "push"]

@@ -1,0 +1,9 @@
+server = "https://k8s.gcr.io"
+[host."https://k8s-gcr-io.mirrors.sjtug.sjtu.edu.cn"]
+  capabilities = ["pull", "resolve", "push"]
+
+[host."https://gcr.nju.edu.cn"]
+  capabilities = ["pull", "resolve", "push"]
+
+[host."https://k8s-gcr.m.daocloud.io"]
+  capabilities = ["pull", "resolve", "push"]

@@ -1,0 +1,9 @@
+server = "https://nvcr.io"
+[host."https://nvcr.m.daocloud.io"]
+  capabilities = ["pull", "resolve", "push"]
+
+[host."https://nvcr.nju.edu.cn"]
+  capabilities = ["pull", "resolve", "push"]
+
+[host."https://nvcr.kubesre.xyz"]
+  capabilities = ["pull", "resolve", "push"]

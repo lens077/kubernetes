@@ -1,0 +1,71 @@
+server = "https://docker.io"
+# 2. 毫秒镜像（商业服务）- 更新/合并
+[host."https://docker.1ms.run"]
+  capabilities = ["pull", "resolve", "push"]
+
+# 4. DaoCloud 镜像站 - 已存在/合并
+[host."https://docker.m.daocloud.io"]
+  capabilities = ["pull", "resolve", "push"]
+
+# 1. 轩辕镜像（免费版）- 新增
+[host."https://docker.xuanyuan.me"]
+  capabilities = ["pull", "resolve"]
+
+
+# 3. 轩辕镜像（专业版）- 新增
+[host."https://xuanyuan.cloud"]
+  capabilities = ["pull", "resolve", "push"]
+
+# 5. AtomHub（开放原子）- 新增
+[host."https://atomhub.openatom.cn"]
+  capabilities = ["pull", "resolve"]
+
+# --- 以下为你原有的其他镜像站 ---
+
+[host."https://646f636b6572.boown.com"]
+  capabilities = ["pull", "resolve"]
+
+[host."https://docker.rainbond.cc"]
+  capabilities = ["pull", "resolve", "push"]
+
+[host."https://dockerproxy.cn"]
+  capabilities = ["pull", "resolve", "push"]
+
+[host."https://docker.udayun.com"]
+  capabilities = ["pull", "resolve"]
+
+[host."https://docker.211678.top"]
+  capabilities = ["pull", "resolve"]
+
+[host."https://docker-cf.registry.cyou"]
+  capabilities = ["pull", "resolve"]
+
+[host."https://dockercf.jsdelivr.fyi"]
+  capabilities = ["pull", "resolve"]
+
+[host."https://docker.jsdelivr.fyi"]
+  capabilities = ["pull", "resolve"]
+
+[host."https://dockertest.jsdelivr.fyi"]
+  capabilities = ["pull", "resolve"]
+
+[host."https://mirror.aliyuncs.com"]
+  capabilities = ["pull", "resolve", "push"]
+
+[host."https://dockerproxy.com"]
+  capabilities = ["pull", "resolve", "push"]
+
+[host."https://mirror.baidubce.com"]
+  capabilities = ["pull", "resolve", "push"]
+
+[host."https://docker.nju.edu.cn"]
+  capabilities = ["pull", "resolve"]
+
+[host."https://docker.mirrors.sjtug.sjtu.edu.cn"]
+  capabilities = ["pull", "resolve"]
+
+[host."https://docker.mirrors.ustc.edu.cn"]
+  capabilities = ["pull", "resolve"]
+
+[host."https://mirror.iscas.ac.cn"]
+  capabilities = ["pull", "resolve", "push"]

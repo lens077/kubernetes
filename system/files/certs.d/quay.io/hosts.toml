@@ -1,0 +1,7 @@
+server = "https://quay.io"
+
+[host."https://quay.nju.edu.cn"]
+  capabilities = ["pull", "resolve"]
+
+[host."https://quay.io"]
+  capabilities = ["pull", "resolve"]

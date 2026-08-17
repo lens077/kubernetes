@@ -1,0 +1,5 @@
+server = "https://dhi.io"
+
+# 4. DaoCloud 镜像站 - 已存在/合并
+[host."https://dhi.m.daocloud.io"]
+  capabilities = ["pull", "resolve", "push"]

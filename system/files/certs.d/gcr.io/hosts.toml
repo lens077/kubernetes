@@ -1,0 +1,10 @@
+server = "https://gcr.io"
+
+[host."gcr.m.daocloud.io"]
+  capabilities = ["pull", "resolve", "push"]
+
+[host."gcr.lank8s.cn"]
+  capabilities = ["pull", "resolve", "push"]
+
+[host."https://gcr.kubesre.xyz"]
+  capabilities = ["pull", "resolve", "push"]
