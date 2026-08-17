@@ -3,7 +3,7 @@
 面向 Ubuntu 的单控制面 Kubernetes 安装器：containerd 运行时、Cilium eBPF 数据面（**完全移除并替代 kube-proxy**）、OpenEBS LVM 本地存储，并针对数据库/缓存/搜索/MQ 等基础设施负载做了内核与网络调优。
 
 ```
-kubernetes/system/
+kubernetes/bootstrap/
 ├── start.sh                    # 编排入口(阶段调度/后台并行下载/断点续跑)
 ├── start.sh.orig               # 重构前的原始脚本备份
 ├── config.env                  # 唯一配置入口(节点/网段/版本/开关全部在此)
@@ -28,7 +28,7 @@ kubernetes/system/
 
 ### 控制平面
 ```bash
-cd /root/kubernetes/system
+cd /root/kubernetes/bootstrap
 # 1. 按环境修改配置(至少确认 NODE_NAME/NODE_IP/网段/代理)
 vim config.env
 
@@ -54,7 +54,7 @@ kubeadm token create --print-join-command
 交互式询问
 ```bash
 # 工作负载节点上
-cd /root/kubernetes/system
+cd /root/kubernetes/bootstrap
 
 sudo bash start.sh --worker
 ```
@@ -65,7 +65,7 @@ export JOIN_ENDPOINT="192.168.3.202:6443"                 # join 后面那段 = 
 export JOIN_TOKEN="abcdef.0123456789abcdef"               # --token 后面那段(24 小时有效)               # --token 后面那段(24 小时有效)
 export JOIN_CA_CERT_HASH="sha256:95342ee3e7df85aeb85cb40e83737c6add1e50024dd803b5411e5fed8b4f7c41"               # --discovery-token-ca-cert-hash 后面整段, 含 sha256: 前缀
 
-cd /root/kubernetes/system
+cd /root/kubernetes/bootstrap
 bash start.sh --worker --yes
 ```
 
