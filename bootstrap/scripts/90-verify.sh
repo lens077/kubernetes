@@ -195,15 +195,15 @@ EOF
 #   (实测踩过: collector 早于后端启动会刷一屏 connection refused, 靠重试自愈——光看日志分不清
 #    是"已自愈的历史噪声"还是"至今没通")。这里按信号逐条打点再回查, 只校验实际启用的后端。
 OTEL_SMOKE_NS="otel-smoke"
-# 组件是否在 80 阶段被选中(addon_selected 定义在 80-addons.sh 里, 本阶段自带一份)
-addon_on() { grep -qx "$1" "$STATE_DIR/addons.selected" 2>/dev/null; }
+# 组件是否在 80 阶段被选中(编排器把选择结果落在 components.selected, 本阶段自带一份判断)
+comp_on() { grep -qx "$1" "$STATE_DIR/components.selected" 2>/dev/null; }
 
 smoke_observability() {
   if [[ $VERIFY_OTEL_SMOKE_TEST != true ]]; then
     log_info "已关闭可观测链路冒烟测试, 跳过"
     return 0
   fi
-  if ! addon_on otel; then
+  if ! comp_on opentelemetry; then
     log_info "未安装 OTel Collector, 跳过可观测链路冒烟"
     return 0
   fi
@@ -215,11 +215,11 @@ smoke_observability() {
   # 三条 pipeline 各自独立可选: 后端没装就不打对应信号(collector 里根本没有那条 pipeline,
   # 打过去会 404), 也不回查
   local ck_vm=false ck_loki=false ck_jaeger=false signals=()
-  addon_on vm     && kctl -n victoriametrics get svc vm-single-victoria-metrics-single-server &>/dev/null \
+  comp_on victoriametrics && kctl -n victoriametrics get svc vm-single-victoria-metrics-single-server &>/dev/null \
     && { ck_vm=true;     signals+=("metrics→VictoriaMetrics"); }
-  addon_on loki   && kctl -n logging get svc loki &>/dev/null \
+  comp_on loki            && kctl -n logging get svc loki &>/dev/null \
     && { ck_loki=true;   signals+=("logs→Loki"); }
-  addon_on jaeger && kctl -n observability get svc jaeger &>/dev/null \
+  comp_on jaeger          && kctl -n observability get svc jaeger &>/dev/null \
     && { ck_jaeger=true; signals+=("traces→Jaeger"); }
   if (( ${#signals[@]} == 0 )); then
     log_info "未启用任何观测后端(vm/loki/jaeger), 跳过可观测链路冒烟"

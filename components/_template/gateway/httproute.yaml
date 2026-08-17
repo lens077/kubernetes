@@ -1,0 +1,47 @@
+# HTTP 暴露的标准写法: 共享网关 default/cilium-gateway
+#   - 80 listener 只做 301 到 443
+#   - 443 listener 由 cert-manager 的 ClusterIssuer 签证书, 网关终结 TLS
+#   - Gateway 不写 addresses, IP 由 Cilium 从 CiliumLoadBalancerIPPool 自动分配
+#     (查看: kubectl -n default get gateway cilium-gateway -o wide)
+# ${HOSTNAME} 由 render_tpl 替换, 默认 <组件>.${CLUSTER_DOMAIN}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: ${RELEASE}-redirect
+  namespace: ${NAMESPACE}
+spec:
+  parentRefs:
+    - name: cilium-gateway
+      namespace: default
+      sectionName: http
+  hostnames:
+    - "${HOSTNAME}"
+  rules:
+    - filters:
+        - type: RequestRedirect
+          requestRedirect:
+            scheme: https
+            port: 443
+            statusCode: 301
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: ${RELEASE}
+  namespace: ${NAMESPACE}
+spec:
+  parentRefs:
+    - name: cilium-gateway
+      namespace: default
+      sectionName: https
+  hostnames:
+    - "${HOSTNAME}"
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: ${RELEASE}
+          port: 80

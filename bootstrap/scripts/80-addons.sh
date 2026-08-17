@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
 # =============================================================================
+# ⚠ 已停用 —— 本文件正在被拆解到 components/<组件>/ 下, start.sh 已不再调用它
+#   （编排器换成了同目录的 80-components.sh）。保留它只为迁移期间对照 values,
+#   14 个组件全部迁完后删除。不要再往这里加东西。
+# =============================================================================
 # 80-addons —— 可选基础设施组件(交互多选; --yes 时按 config.env)
 #   数据库(CloudNativePG) / 缓存(Redis) / 搜索(Meilisearch) / MQ(Strimzi Kafka)
 #   GitOps(ArgoCD, yaml 安装) / 观测(VictoriaMetrics+Grafana) / 对象存储(MinIO) / metrics-server

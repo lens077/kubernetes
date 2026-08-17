@@ -37,7 +37,7 @@ STAGES=(
   "50-kubernetes|Kubernetes 控制面"
   "60-cilium|Cilium eBPF 网络"
   "70-storage|OpenEBS LVM 存储"
-  "80-addons|可选基础设施组件"
+  "80-components|组件安装(可选)"
   "90-verify|全局验收"
 )
 
@@ -66,7 +66,7 @@ reset_cluster() {
   ip link delete cilium_vxlan 2>/dev/null || true
   rm -f /root/.kube/config "$TARGET_HOME/.kube/config"
   local s
-  for s in 50-kubernetes 60-cilium 70-storage 80-addons 90-verify; do state_reset "$s"; done
+  for s in 50-kubernetes 60-cilium 70-storage 80-components 90-verify; do state_reset "$s"; done
   log_ok "集群已重置, 重新执行 sudo bash start.sh 可重建(系统准备阶段将自动跳过)"
 }
 
@@ -145,7 +145,7 @@ flock -n 200 || die "检测到另一个安装进程正在运行, 中止"
 
 # --------------------------- 运行列表 ---------------------------------------
 # worker 角色跳过集群级阶段(阶段脚本内部也有守卫, 此处过滤只为进度显示干净)
-WORKER_SKIP_STAGES=(45-etcd-disk 60-cilium 80-addons)
+WORKER_SKIP_STAGES=(45-etcd-disk 60-cilium 80-components)
 stage_skipped_for_role() {
   local s
   is_worker || return 1
