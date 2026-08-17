@@ -17,6 +17,15 @@
 [[ -n ${_K8S_COMP_ENV_LOADED:-} ]] && return 0
 _K8S_COMP_ENV_LOADED=1
 
+# bash 版本闸门(必须在用到 bash4 语法之前, 因此这段只用 3.2 也能解析的写法)。
+# 不加这段的话, 在 macOS 自带 bash 3.2 上执行组件脚本会静默退出 127 —— 实测踩过。
+if [ -z "${BASH_VERSINFO:-}" ] || [ "${BASH_VERSINFO[0]}" -lt 4 ] ||
+   { [ "${BASH_VERSINFO[0]}" -eq 4 ] && [ "${BASH_VERSINFO[1]}" -lt 2 ]; }; then
+  echo "组件脚本需要 bash >= 4.2(关联数组 / printf %(%T)), 当前是 ${BASH_VERSION:-未知}" >&2
+  echo "  macOS 自带的是 bash 3.2 —— 用 brew install bash 后以新 bash 执行, 或直接登到节点上跑" >&2
+  exit 1
+fi
+
 COMP_LIB_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)
 COMPONENTS_DIR=$(dirname "$COMP_LIB_DIR")
 REPO_ROOT=$(dirname "$COMPONENTS_DIR")

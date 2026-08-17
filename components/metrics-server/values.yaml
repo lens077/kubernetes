@@ -1,0 +1,18 @@
+# chart 的 args 是"追加到 defaultArgs 之后"，defaultArgs 已包含:
+#   --secure-port=10250 --cert-dir=/tmp --metric-resolution=15s
+#   --kubelet-use-node-status-port
+#   --kubelet-preferred-address-types=InternalIP,ExternalIP,Hostname
+# 这里只补集群相关的那一条，其余保持 chart 默认（见 README「本集群取舍」）
+args:
+  - --kubelet-insecure-tls
+
+# 不留 BestEffort：kubelet 驱逐排序里 BestEffort 排最前，指标源被驱逐会让 HPA 直接瞎掉
+resources:
+  requests:
+    cpu: 100m
+    memory: 200Mi
+
+# 单控制面集群没有第二个副本的意义；PDB 反而会在 kured 排空节点时卡住
+replicas: 1
+podDisruptionBudget:
+  enabled: false
