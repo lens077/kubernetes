@@ -61,13 +61,16 @@ hr()       { printf '%s%s%s\n' "$C_DIM" "─────────────
 require_root() { [[ $EUID -eq 0 ]] || die "请以 root 运行: sudo bash $0"; }
 
 TARGET_USER=${SUDO_USER:-root}
-TARGET_HOME=$(getent passwd "$TARGET_USER" 2>/dev/null | cut -d: -f6)
+# || true 必带:macOS 没有 getent,而组件脚本在 set -eo pipefail 下 source 本文件,
+# 127 会把整个脚本静默杀死(2>/dev/null 又吞了报错),下一行的 /root 兜底永远走不到 —— 实测踩过
+TARGET_HOME=$(getent passwd "$TARGET_USER" 2>/dev/null | cut -d: -f6 || true)
 TARGET_HOME=${TARGET_HOME:-/root}
 
 detect_arch() {
   case "$(uname -m)" in
     x86_64)  echo amd64 ;;
     aarch64) echo arm64 ;;
+    arm64)   echo arm64 ;;   # macOS 的写法(组件脚本允许在 Mac 上执行,见 components/_lib/env.sh)
     *) die "不支持的架构: $(uname -m) (仅支持 amd64/arm64)" ;;
   esac
 }
