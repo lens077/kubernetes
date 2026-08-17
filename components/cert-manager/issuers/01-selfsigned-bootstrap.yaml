@@ -1,0 +1,12 @@
+# 引导用自签 issuer，独立命名（不叫 global-ca-issuer）。
+#
+# 为什么必须独立命名：原方案里引导 issuer 与最终 issuer 同名，只有"分步 apply、
+# 等根证书签出后再 apply 第三步"才成立。一次性 apply 时第三步立刻覆盖引导定义，
+# 而根证书还没签出 → global-root-ca-secret 不存在 → 证书等 issuer、issuer 等证书，
+# 死锁。拆开之后 01~03 可以一次 apply，cert-manager 自行收敛。
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: selfsigned
+spec:
+  selfSigned: {}

@@ -1,0 +1,21 @@
+crds:
+  enabled: true
+
+# 单控制面集群：三个 Deployment 各一副本就够，多副本只是抢内存
+replicaCount: 1
+cainjector:
+  replicaCount: 1
+webhook:
+  replicaCount: 1
+
+# Gateway API 支持：在 Gateway 上加 cert-manager.io/cluster-issuer 注解即可自动签发
+# （没有这一项，注解会被静默忽略——看不到任何报错，证书就是不生成）
+config:
+  apiVersion: controller.config.cert-manager.io/v1alpha1
+  kind: ControllerConfiguration
+  enableGatewayAPI: true
+
+resources:
+  requests:
+    cpu: 10m
+    memory: 64Mi

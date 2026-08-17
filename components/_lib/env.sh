@@ -98,6 +98,18 @@ render_tpl() {  # render_tpl <模板> <输出> [额外变量名...]
   sed "${sed_args[@]}" "$src" > "$out"
 }
 
+# 目录下的有效清单文件(排除隐藏文件与 macOS 的 ._ 伴随文件)。
+# 不要直接 kubectl apply -f <目录>: 目录里任何非清单文件(编辑器 .swp、备份、跨平台
+# 拷贝产生的 ._*)都会被当 YAML 解析, 整条 apply 失败 —— 实测踩过。
+manifest_files() {  # manifest_files <目录>
+  local f
+  for f in "$1"/*.yaml "$1"/*.yml; do
+    [[ -f $f ]] || continue
+    case $(basename "$f") in ._*|.*) continue ;; esac
+    printf '%s\n' "$f"
+  done
+}
+
 # 渲染并应用 gateway/ 下的路由清单
 # 约定: Gateway 一律不写 addresses, 由 Cilium 从 CiliumLoadBalancerIPPool 自动分配,
 #       分配结果用 kubectl get gateway -o wide 查看(旧清单里硬编码 IP 是历史包袱)
@@ -113,11 +125,11 @@ routes_apply() {  # routes_apply <组件目录>
     return 0
   fi
   out=$(mktemp -d)
-  for f in "$dir"/gateway/*.yaml "$dir"/gateway/*.yml; do
-    [[ -e $f ]] || continue
+  while read -r f; do
+    [[ -n $f ]] || continue
     render_tpl "$f" "$out/$(basename "$f")"
     kctl apply -f "$out/$(basename "$f")"
-  done
+  done < <(manifest_files "$dir/gateway")
   rm -rf "$out"
 }
 

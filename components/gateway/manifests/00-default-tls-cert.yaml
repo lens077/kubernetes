@@ -1,0 +1,29 @@
+# 共享网关的泛域名证书：一张 *.${CLUSTER_DOMAIN} 覆盖所有组件子域，
+# 于是每加一个组件只需要写 HTTPRoute，不用再签一次证书。
+#
+# 叶子证书保持短周期 + 自动续期（与根证书的 10 年长周期相对）。
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: global-default-tls-cert
+  namespace: default            # 必须与 Gateway 同命名空间（certificateRefs 默认同 ns）
+spec:
+  secretName: global-default-tls   # 必须与 Gateway 的 certificateRefs.name 严格一致
+  duration: 2160h                  # 90 天
+  renewBefore: 360h                # 提前 15 天续期
+  commonName: ${CLUSTER_DOMAIN}
+  isCA: false
+  subject:
+    organizations:
+      - sumery-mesh-org
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  usages:
+    - server auth
+  dnsNames:
+    - "${CLUSTER_DOMAIN}"
+    - "*.${CLUSTER_DOMAIN}"        # 泛域名：grafana./jaeger./minio. 等一律覆盖
+  issuerRef:
+    name: global-ca-issuer
+    kind: ClusterIssuer

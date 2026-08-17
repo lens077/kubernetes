@@ -1,0 +1,33 @@
+# 全集群共享的 L7 入口。所有 HTTP 组件的 HTTPRoute 都 parentRef 到它。
+#
+# 两条约定（改之前先看 README）：
+#   1. 不写 addresses —— IP 由 Cilium 从 CiliumLoadBalancerIPPool 自动分配。
+#      查看：kubectl -n default get gateway cilium-gateway -o wide
+#   2. 不在这里放 TLS Passthrough listener。Passthrough 与 Terminate 抢同一个 443
+#      端口，一个 Gateway 里两个 listener 同端口不同协议是非法的；L4 组件
+#      （PostgreSQL/Dragonfly）各自带独立 Gateway，用自己的端口。
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: cilium-gateway
+  namespace: default
+spec:
+  gatewayClassName: cilium
+  listeners:
+    - name: http
+      port: 80
+      protocol: HTTP
+      allowedRoutes:
+        namespaces:
+          from: All            # 组件的 HTTPRoute 待在各自命名空间里
+    - name: https
+      port: 443
+      protocol: HTTPS
+      allowedRoutes:
+        namespaces:
+          from: All
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - kind: Secret
+            name: global-default-tls    # 由 00-default-tls-cert.yaml 签出

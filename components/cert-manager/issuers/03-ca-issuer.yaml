@@ -1,0 +1,9 @@
+# 集群统一的签发者。所有组件证书都引用它（kind: ClusterIssuer, name: global-ca-issuer），
+# 共享网关只要打上 cert-manager.io/cluster-issuer: global-ca-issuer 注解即可自动签发。
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: global-ca-issuer
+spec:
+  ca:
+    secretName: global-root-ca-secret
