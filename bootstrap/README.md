@@ -18,8 +18,8 @@ kubernetes/bootstrap/
 │   ├── 50-kubernetes.sh        # apt 仓库/kubeadm init(skip kube-proxy)/defrag 定时器
 │   ├── 60-cilium.sh            # Cilium(KPR/native路由/BBR/netkit/Hubble/GatewayAPI/L2)
 │   ├── 70-storage.sh           # LVM 卷组(交互选盘)+OpenEBS+StorageClass
-│   ├── 80-addons.sh            # 可选: PG/Redis/Meilisearch/Kafka/ArgoCD/Prom/MinIO/
-│   │                           #       cert-manager/Loki/kured
+│   ├── 80-components.sh        # 组件编排器(扫描 ../components/*/component.env,
+│   │                           #   拓扑排序后并行调用各 install.sh; 不含任何 values)
 │   └── 90-verify.sh            # 全局验收+冒烟测试+报告
 └── files/                      # 运行时生成: kubeadm.yml / cilium-values.yaml / 示例
 ```
@@ -76,7 +76,7 @@ bash start.sh --worker --yes
 | `sudo bash start.sh --list` | 查看阶段与已完成步骤数 |
 | `sudo bash start.sh --from 60-cilium` | 从指定阶段开始 |
 | `sudo bash start.sh --only 90-verify` / `--verify` | 只跑某阶段/验收 |
-| `sudo bash start.sh --reset-state 80-addons` | 清某阶段状态(如重新选组件) |
+| `sudo bash start.sh --reset-state 80-components` | 清某阶段状态(如重新选组件) |
 | `sudo bash start.sh --reset-cluster` | kubeadm reset 重置集群(保留系统调优/缓存) |
 | `sudo bash start.sh --pack-offline x.tgz` | 打离线包(工件+versions.lock+核心 chart) |
 | `sudo bash start.sh --unpack-offline x.tgz` | 目标机展开离线包后正常安装 |

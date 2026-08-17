@@ -37,7 +37,10 @@ scan_components() {
       # 子 shell 里读, 避免组件变量污染编排器
       # shellcheck disable=SC1091
       source "$dir/component.env"
-      printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+      # 分隔符用 \x1f(unit separator)而不是制表符: tab 属于 IFS 空白字符, 连续两个
+      # 会被 read 折叠成一个 —— DEPENDS_ON 为空时后面字段全部左移一位, CONFIG_VAR
+      # 拿到 READY_CHECK 的值, 报 "deploy/xxx: invalid variable name"(实测踩过)
+      printf '%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\n' \
         "${ID:-$id}" "${NAMESPACE:-default}" "${GROUP:-infra}" "${DEFAULT_ENABLED:-false}" \
         "${DEPENDS_ON:-}" "${EST_MEM_MI:-100}" "${CONFIG_VAR:-}" "${READY_CHECK:-}"
     )
@@ -46,7 +49,7 @@ scan_components() {
 
 load_components() {
   local id ns group def deps mem var ready desc
-  while IFS=$'\t' read -r id ns group def deps mem var ready; do
+  while IFS=$'\x1f' read -r id ns group def deps mem var ready; do
     [[ -n $id ]] || continue
     COMP_IDS+=("$id")
     C_NS[$id]=$ns; C_GROUP[$id]=$group; C_DEFAULT[$id]=$def
