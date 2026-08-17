@@ -1,0 +1,22 @@
+environment:
+  MEILI_ENV: production          # production 模式强制要求 master key（development 不要求）
+  MEILI_NO_ANALYTICS: "true"
+
+auth:
+  existingMasterKeySecret: meilisearch-master-key   # 由 install.sh 从 creds 生成
+
+persistence:
+  enabled: true
+  storageClass: ${SC_NAME}
+  size: ${MEILI_STORAGE_SIZE}
+
+service:
+  type: ClusterIP                # 对外只经共享网关
+  port: 7700
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    memory: 1Gi                  # 索引构建期是内存峰值，1Gi 给商品量级留余量

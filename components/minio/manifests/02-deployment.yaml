@@ -1,0 +1,55 @@
+# 单实例对象存储。镜像用 pgsty/silo —— MinIO 官方社区版 2025 年阉割了控制台，
+# silo 是保留完整 console 的 fork（基于 MinIO 技术，AGPLv3）。
+#
+# ⚠️ 镜像里的二进制叫 silo，不是 minio（另有 mc/mcli）。写成 `minio server` 会
+#    直接 exit 127 且只在容器日志里留一行 "minio: command not found"。
+#    环境变量仍然读 MINIO_*，所以凭据部分不用改。
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: minio
+  namespace: minio
+  labels:
+    app: minio
+spec:
+  selector:
+    matchLabels: {app: minio}
+  strategy:
+    type: Recreate            # 单副本 + RWO 卷：滚动更新会因为卷被占用而卡住
+  template:
+    metadata:
+      labels: {app: minio}
+    spec:
+      containers:
+        - name: minio
+          image: docker.io/pgsty/silo
+          command: [/bin/bash, -c]
+          args:
+            - silo server /data --console-address :9090
+          env:
+            - name: MINIO_ROOT_USER
+              valueFrom:
+                secretKeyRef: {name: minio-root, key: user}
+            - name: MINIO_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef: {name: minio-root, key: password}
+          ports:
+            - {containerPort: 9000, name: api}
+            - {containerPort: 9090, name: console}
+          volumeMounts:
+            - {name: data, mountPath: /data}
+          resources:
+            requests: {cpu: 100m, memory: 256Mi}
+            limits: {memory: 1Gi}
+          readinessProbe:
+            httpGet: {path: /minio/health/ready, port: 9000}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: {path: /minio/health/live, port: 9000}
+            initialDelaySeconds: 20
+            periodSeconds: 20
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: minio-pvc

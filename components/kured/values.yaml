@@ -1,0 +1,19 @@
+configuration:
+  # 只在维护窗口内重启（config.env 的 KURED_REBOOT_WINDOW_*）
+  startTime: "${KURED_REBOOT_WINDOW_START}"
+  endTime: "${KURED_REBOOT_WINDOW_END}"
+  timeZone: "${TIMEZONE}"
+  # 注意：values 文件里必须是 YAML 数组。`{mo,tu,...}` 是 helm --set 的花括号语法，
+  # 写进 values 会让 chart 的 range 报 "range can't iterate over"（实测）
+  rebootDays:
+    - mo
+    - tu
+    - we
+    - th
+    - fr
+    - sa
+    - su
+  period: 10m
+
+  # 单节点集群 drain 时业务会短暂中断，PDB 挡住的话会永远卡在排空阶段
+  forceReboot: true

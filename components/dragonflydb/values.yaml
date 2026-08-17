@@ -1,0 +1,32 @@
+replicaCount: 1
+
+service:
+  type: ClusterIP                # 对外走 Gateway 的 TCPRoute，不再各占一个 LB IP
+  port: 6379
+
+# 缓存语义：上限内存 + 满时淘汰（等价 redis maxmemory + allkeys-lru）
+#
+# ⚠️ proactor_threads 必须显式钉死：Dragonfly 启动时校验
+#    maxmemory >= 256MiB × io 线程数，不指定就按节点 CPU 核数起线程
+#    （4 核 => 要 1GiB），256mb 会直接 "Exiting..." 崩溃循环。
+extraArgs:
+  - --maxmemory=${DRAGONFLY_MAXMEMORY}
+  - --proactor_threads=${DRAGONFLY_PROACTOR_THREADS}
+  - --cache_mode=true
+
+passwordFromSecret:
+  enable: true
+  existingSecret:
+    name: dragonfly-password-secret
+    key: password
+
+serviceMonitor:
+  enabled: false                 # 集群里用的是 VictoriaMetrics + OTel，不是 Prometheus Operator
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  # 原部署 limits.cpu=100m 会造成缓存限流抖动，特意只限内存不限 CPU
+  limits:
+    memory: 512Mi

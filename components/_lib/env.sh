@@ -109,10 +109,19 @@ render_tpl() {  # render_tpl <模板> <输出> [额外变量名...]
               # config.env 里各组件的容量/保留期旋钮
               VM_STORAGE_SIZE LOKI_STORAGE_SIZE LOKI_RETENTION GRAFANA_STORAGE_SIZE
               MEILI_STORAGE_SIZE MINIO_STORAGE_SIZE JAEGER_STORAGE_SIZE
-              DRAGONFLY_MAXMEMORY DRAGONFLY_PROACTOR_THREADS "$@")
+              DRAGONFLY_MAXMEMORY DRAGONFLY_PROACTOR_THREADS
+              KURED_REBOOT_WINDOW_START KURED_REBOOT_WINDOW_END "$@")
   local sed_args=() v
   for v in "${vars[@]}"; do sed_args+=(-e "s|\${$v}|${!v-}|g"); done
   sed "${sed_args[@]}" "$src" > "$out"
+
+  # 白名单漏了变量的话, 占位符会原样进集群且不报任何错(实测: kured 的
+  # --start-time 变成了字面量 "${KURED_REBOOT_WINDOW_START}")。这里兜底拦一下。
+  local leftover
+  leftover=$(grep -oE '\$\{[A-Za-z_][A-Za-z0-9_]*\}' "$out" | sort -u | tr '\n' ' ') || true
+  [[ -z ${leftover// /} ]] \
+    || die "$(basename "$src") 渲染后仍有未替换的占位符: $leftover
+  → 把变量名加进 components/_lib/env.sh 的 render_tpl 白名单"
 }
 
 # 目录下的有效清单文件(排除隐藏文件与 macOS 的 ._ 伴随文件)。

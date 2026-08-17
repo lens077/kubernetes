@@ -1,49 +1,24 @@
 #!/usr/bin/env bash
-# 启用 POSIX 模式并设置严格的错误处理机制
-set -o posix errexit -o pipefail
+# =============================================================================
+# Meilisearch —— 商品即时搜索; 幂等; 可单独执行:
+#   bash components/meilisearch/install.sh
+# =============================================================================
+set -Eeuo pipefail
+source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../_lib" &>/dev/null && pwd)/env.sh"
 
-# Meilisearch 官方 chart: https://github.com/meilisearch/meilisearch-kubernetes#-documentation
-# 选型(2026-08-16): 替代 OpenSearch/ES —— elastic v9 客户端产品头校验连不上 OpenSearch;
-# 商品即时搜索场景下 Meilisearch 中文分词开箱、typo 容忍默认开、内存占用约为 ES 的 1/4
+DIR=$(comp_dir "${BASH_SOURCE[0]}")
+comp_load_meta "$DIR"
+comp_require_cluster
 
-mkdir -pv /home/kubernetes/meilisearch
-cd /home/kubernetes/meilisearch
+key=$(get_cred meili-master-key)   # 只生成一次; 重装不换 key(换了客户端要同步改)
 
-helm repo add meilisearch https://meilisearch.github.io/meilisearch-kubernetes
-helm repo update meilisearch
+log_step "安装 $ID → 命名空间 $NAMESPACE (存储 ${MEILI_STORAGE_SIZE})"
+ns_ensure "$NAMESPACE"
+kctl -n "$NAMESPACE" create secret generic meilisearch-master-key \
+  --from-literal=MEILI_MASTER_KEY="$key" \
+  --dry-run=client -o yaml | kctl apply -f -
 
-kubectl create ns search || true
+helm_install_component "$DIR"
+routes_apply "$DIR"
 
-# master key 至少 16 字节; 生产环境改成随机值并妥善保存
-MEILI_MASTER_KEY=${MEILI_MASTER_KEY:-$(openssl rand -hex 16)}
-kubectl -n search create secret generic meilisearch-master-key \
-  --from-literal=MEILI_MASTER_KEY="$MEILI_MASTER_KEY" \
-  --dry-run=client -o yaml | kubectl apply -f -
-echo "master key: $MEILI_MASTER_KEY"
-
-cat > meili-values.yaml <<EOF
-environment:
-  MEILI_ENV: production
-  MEILI_NO_ANALYTICS: "true"
-auth:
-  existingMasterKeySecret: meilisearch-master-key
-persistence:
-  enabled: true
-  storageClass: openebs-lvm      # 按集群实际 StorageClass 调整
-  size: 10Gi
-resources:
-  requests:
-    cpu: 100m
-    memory: 256Mi
-  limits:
-    memory: 1Gi
-service:
-  type: ClusterIP
-  port: 7700
-EOF
-
-helm upgrade --install meilisearch meilisearch/meilisearch \
-  -n search -f meili-values.yaml
-
-kubectl get po,svc -n search
-# 健康检查: kubectl -n search port-forward svc/meilisearch 7700 后 GET /health
+log_ok "$ID 安装完成(svc: $NAMESPACE/meilisearch:7700, master key 见 /root/.k8s-installer-credentials)"

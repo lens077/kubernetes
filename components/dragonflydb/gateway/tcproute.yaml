@@ -1,0 +1,38 @@
+# Redis 协议是纯 TCP：不能挂共享网关（那是 HTTP/HTTPS listener），需要独立 Gateway。
+#
+# TCPRoute 没有 hostname 概念 —— 一个 listener 端口对应一组后端，等价于 L4 端口映射。
+# 因此每个 TCP 组件都要占一个自己的端口（这里 6379），IP 仍由 Cilium 从 LB 池自动分配。
+#
+# 前置：TCPRoute CRD 必须存在，否则 Cilium 会静默关闭该功能（不报错）。
+#   kubectl get crd tcproutes.gateway.networking.k8s.io
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: dragonfly-gateway
+  namespace: ${NAMESPACE}
+spec:
+  gatewayClassName: cilium
+  listeners:
+    - name: redis
+      port: 6379
+      protocol: TCP
+      allowedRoutes:
+        kinds:
+          - kind: TCPRoute
+        namespaces:
+          from: Same
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: TCPRoute
+metadata:
+  name: dragonfly
+  namespace: ${NAMESPACE}
+spec:
+  parentRefs:
+    - name: dragonfly-gateway
+      sectionName: redis
+  rules:
+    - backendRefs:
+        - name: dragonfly
+          port: 6379

@@ -1,0 +1,23 @@
+# 数据库实例示例。算子装完后按需 apply（规格差异大，不自动创建）：
+#   kubectl create ns postgresql && kubectl apply -f pg-cluster.yaml
+#
+# 命名空间沿用既有习惯 postgresql。旧的 bitnami postgresql-ha 方案已由 CNPG 取代
+# （bitnami 镜像 2025 年起受限，且 CNPG 不需要 pgpool/repmgr 这些附加组件）。
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: pg-main
+  namespace: postgresql
+spec:
+  instances: 1                       # 两节点集群，多副本的价值有限；要 HA 先加节点
+  storage:
+    size: 10Gi
+    storageClass: ${SC_NAME}
+  postgresql:
+    parameters:
+      shared_buffers: 512MB
+      max_connections: "200"
+      random_page_cost: "1.1"        # SSD/NVMe
+      effective_io_concurrency: "200"
+  # CNPG 默认给实例签发自己的 TLS 证书（服务端证书 + 客户端 CA），
+  # 对外做 TLS passthrough 时用的就是它。

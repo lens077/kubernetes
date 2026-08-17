@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: minio-pvc
+  namespace: minio
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: ${SC_NAME}
+  resources:
+    requests:
+      storage: ${MINIO_STORAGE_SIZE}
