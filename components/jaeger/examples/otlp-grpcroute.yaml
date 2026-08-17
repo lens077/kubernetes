@@ -1,0 +1,52 @@
+# 可选：把 Jaeger 的 OTLP 入口也暴露到共享网关，给**集群外**的应用直接上报 trace 用。
+#
+# 集群内的应用不需要这个——直接推给 OTel Collector（otel-opentelemetry-collector
+# .opentelemetry.svc:4317），由 Collector 转发到 Jaeger，才能同时享受批处理与多后端分发。
+#
+# ⚠️ 前置条件：GRPCRoute 经 HTTPS listener 需要 ALPN 协商 h2，而 Cilium 默认
+#    enable-gateway-api-alpn=false —— 不开的话这条路由会"看起来 Accepted 但客户端连不上"
+#    （旧集群那条 55 天从未生效的 jaeger GRPCRoute，根因之一就是它）。
+#    开启方式：bootstrap/config.env 里 CILIUM_GATEWAY_API_ALPN="true" 后重跑
+#              sudo bash bootstrap/start.sh --only 60-cilium
+#    确认：kubectl -n kube-system get cm cilium-config -o jsonpath='{.data.enable-gateway-api-alpn}'
+#
+# 用法：kubectl apply -f otlp-grpcroute.yaml（hostname 按需改）
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: GRPCRoute
+metadata:
+  name: jaeger-otlp
+  namespace: observability
+spec:
+  parentRefs:
+    - name: cilium-gateway
+      namespace: default
+      sectionName: https
+  hostnames:
+    - "otlp-jaeger.app.com"
+  rules:
+    - backendRefs:
+        - name: jaeger
+          port: 4317
+---
+# OTLP over HTTP（4318）版本
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: jaeger-otlp-http
+  namespace: observability
+spec:
+  parentRefs:
+    - name: cilium-gateway
+      namespace: default
+      sectionName: https
+  hostnames:
+    - "otlp-jaeger.app.com"
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /v1/traces
+      backendRefs:
+        - name: jaeger
+          port: 4318

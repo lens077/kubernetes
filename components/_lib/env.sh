@@ -69,6 +69,19 @@ comp_require_cluster() {
     || die "kubectl 连不上集群(检查 KUBECONFIG 或在节点上执行)"
 }
 
+# --------------------------- 凭据 -------------------------------------------
+# 密码只生成一次, 之后重复执行取同一个值 → 重装不改密码。
+# (原先定义在 80-addons.sh 里, 组件独立执行时取不到, 现在收进公共库)
+get_cred() {  # get_cred <名字>
+  local f="$STATE_DIR/creds/$1"
+  if [[ ! -f $f ]]; then
+    mkdir -p "$STATE_DIR/creds"
+    openssl rand -hex 12 > "$f"
+    chmod 600 "$f"
+  fi
+  cat "$f"
+}
+
 # --------------------------- 组件元数据 -------------------------------------
 # component.env 字段见 components/_template/component.env
 comp_load_meta() {  # comp_load_meta <组件目录>
@@ -92,7 +105,11 @@ ns_ensure() { kctl create namespace "$1" --dry-run=client -o yaml | kctl apply -
 render_tpl() {  # render_tpl <模板> <输出> [额外变量名...]
   local src=$1 out=$2; shift 2
   local vars=(SC_NAME SC_FS_TYPE CLUSTER_DOMAIN TIMEZONE NAMESPACE RELEASE HOSTNAME
-              CILIUM_LB_POOL_START CILIUM_LB_POOL_STOP "$@")
+              CILIUM_LB_POOL_START CILIUM_LB_POOL_STOP
+              # config.env 里各组件的容量/保留期旋钮
+              VM_STORAGE_SIZE LOKI_STORAGE_SIZE LOKI_RETENTION GRAFANA_STORAGE_SIZE
+              MEILI_STORAGE_SIZE MINIO_STORAGE_SIZE JAEGER_STORAGE_SIZE
+              DRAGONFLY_MAXMEMORY DRAGONFLY_PROACTOR_THREADS "$@")
   local sed_args=() v
   for v in "${vars[@]}"; do sed_args+=(-e "s|\${$v}|${!v-}|g"); done
   sed "${sed_args[@]}" "$src" > "$out"

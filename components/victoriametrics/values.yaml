@@ -1,0 +1,21 @@
+server:
+  # OTel 写入的关键一项：让 /opentelemetry/v1/metrics 端点按 Prometheus 命名规则
+  # 转换指标名（否则 OTLP 打进来的指标名带点号，PromQL 查不出来）
+  extraArgs:
+    opentelemetry.usePrometheusNaming: "true"
+
+  persistentVolume:
+    enabled: true
+    storageClassName: ${SC_NAME}
+    size: ${VM_STORAGE_SIZE}
+
+  # 对外只经共享网关（HTTPRoute），集群内组件直接走 ClusterIP
+  service:
+    type: ClusterIP
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 1Gi

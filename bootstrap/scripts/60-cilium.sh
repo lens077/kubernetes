@@ -233,6 +233,9 @@ localRedirectPolicy: $CILIUM_ENABLE_LRP
 
 gatewayAPI:
   enabled: $CILIUM_ENABLE_GATEWAY_API
+  # ALPN: 默认关。关着时 HTTPS listener 不协商 h2 —— GRPCRoute 经 TLS 终结不工作
+  # (旧集群那条 55 天从未生效的 jaeger GRPCRoute, 根因之一就是它)
+  enableAlpn: $CILIUM_GATEWAY_API_ALPN
 ingressController:
   enabled: $CILIUM_ENABLE_INGRESS
 

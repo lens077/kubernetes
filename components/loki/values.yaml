@@ -1,0 +1,46 @@
+# 单体模式（SingleBinary）：单机集群足够，内存占用最小
+deploymentMode: SingleBinary
+
+loki:
+  auth_enabled: false            # 单租户；开了之后每个请求都要带 X-Scope-OrgID
+  commonConfig:
+    replication_factor: 1
+  storage:
+    type: filesystem             # 本地 PVC。要换 S3/MinIO 见 README「上游最佳实践」
+  schemaConfig:
+    configs:
+      - from: "2024-01-01"
+        store: tsdb              # v13 + tsdb 是 Loki 3.x 的推荐组合
+        object_store: filesystem
+        schema: v13
+        index:
+          prefix: index_
+          period: 24h
+  limits_config:
+    retention_period: ${LOKI_RETENTION}
+
+singleBinary:
+  replicas: 1
+  persistence:
+    enabled: true
+    storageClass: ${SC_NAME}
+    size: ${LOKI_STORAGE_SIZE}
+
+# 关掉 SimpleScalable 模式的组件与全部附件：采集端用集群里已有的 fluent-bit，
+# 对外入口用 Cilium 共享网关，缓存在单机上纯属浪费内存
+read:
+  replicas: 0
+write:
+  replicas: 0
+backend:
+  replicas: 0
+gateway:
+  enabled: false                 # chart 自带的 nginx 网关，与 Gateway API 无关
+chunksCache:
+  enabled: false
+resultsCache:
+  enabled: false
+lokiCanary:
+  enabled: false
+test:
+  enabled: false

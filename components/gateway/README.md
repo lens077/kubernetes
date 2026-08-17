@@ -87,4 +87,9 @@ echo | openssl s_client -connect $GW:443 -servername probe.app.com 2>/dev/null \
 - **想用 TCPRoute 但不生效、也没有报错**：TCPRoute CRD 没装的话 Cilium 会**静默关掉**
   该功能。`kubectl get crd tcproutes.gateway.networking.k8s.io` 确认（本集群 v1.6.1
   的 `standard-install.yaml` 已经带上了全部 10 个 CRD）。
+- **GRPCRoute 显示 Accepted，客户端却连不上**：gRPC 要经 HTTPS listener 就得靠 ALPN 协商
+  h2，而 Cilium 默认 `enable-gateway-api-alpn=false`。开启：`bootstrap/config.env` 里
+  `CILIUM_GATEWAY_API_ALPN="true"` 后重跑 `--only 60-cilium`。
+  确认：`kubectl -n kube-system get cm cilium-config -o jsonpath='{.data.enable-gateway-api-alpn}'`。
+  （旧集群那条 55 天从未生效的 jaeger GRPCRoute，根因之一就是它。）
 - **节点上 curl VIP 不通**：L2 通告的 ARP 只应答外部主机，节点自访不走该路径，属已知行为。

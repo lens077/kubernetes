@@ -1,0 +1,30 @@
+# 静态部分。adminPassword 与 datasources 由 install.sh 生成后追加（多一个 -f）：
+# 密码走 creds 机制不进仓库，数据源按集群实际装了哪些后端预置。
+persistence:
+  type: pvc
+  enabled: true
+  storageClassName: ${SC_NAME}
+  size: ${GRAFANA_STORAGE_SIZE}
+
+service:
+  enabled: true
+  type: ClusterIP                # 对外只经共享网关
+  port: 80
+  targetPort: 3000
+
+resources:
+  limits:
+    cpu: 0.5
+    memory: 512Mi
+
+grafana.ini:
+  metrics:
+    enable_metrics_source_cache: true
+    metrics_source_cache_ttl_seconds: 300
+  dataproxy:
+    concurrent_query_count: 20   # 单机后端，放太大只会让 VM/Loki 排队
+
+sidecar:
+  alerts:
+    enabled: true                # 带 grafana_alert 标签的 ConfigMap 会被自动加载为告警规则
+    label: grafana_alert

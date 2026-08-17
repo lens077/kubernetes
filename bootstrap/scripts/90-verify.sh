@@ -195,6 +195,13 @@ EOF
 #   (实测踩过: collector 早于后端启动会刷一屏 connection refused, 靠重试自愈——光看日志分不清
 #    是"已自愈的历史噪声"还是"至今没通")。这里按信号逐条打点再回查, 只校验实际启用的后端。
 OTEL_SMOKE_NS="otel-smoke"
+# 后端回查端点。原先定义在 80-addons.sh 顶部, 该文件停用后这里必须自带一份
+# (否则 set -u 下直接 unbound variable —— 实测踩过)。
+# 与 components/opentelemetry/install.sh 里的取值保持一致。
+VM_SVC="vm-single-victoria-metrics-single-server.victoriametrics.svc.cluster.local:8428"
+LOKI_SVC="loki.logging.svc.cluster.local:3100"
+JAEGER_SVC="jaeger.observability.svc.cluster.local"
+
 # 组件是否在 80 阶段被选中(编排器把选择结果落在 components.selected, 本阶段自带一份判断)
 comp_on() { grep -qx "$1" "$STATE_DIR/components.selected" 2>/dev/null; }
 
