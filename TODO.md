@@ -1,5 +1,62 @@
 # TODO
 
+## 2026-08-17 · GitOps L3 落地:线上 Vault + External Secrets Operator
+
+### 决策
+
+密钥层(L3)定案为**线上 Vault(真相源) + 集群内 ESO(搬运工)**,替代先前倾向的 Sealed Secrets:
+集群处于反复重装期,真相源必须在集群外;VPS 公网可达还让 CI 与 compose 服务未来可共用同一后端。
+集群重装后的恢复动作只有一件:重跑 external-secrets 组件并注入 AppRole 凭据,密钥自动流回。
+
+### 部署事实
+
+| 侧 | 内容 |
+|---|---|
+| VPS(pangolin 机) | `/home/docker/vault/`(docker-deploy 仓 `vault/`):hashicorp/vault:1.21.4,raft 单节点,不发布主机端口,挂 `pangolin_frontend` 网络 |
+| 入口 | `https://vault.apikv.com`:traefik file provider 手写路由(**不挂 badger** —— ESO 是机器客户端,过不了 SSO 登录墙),ZeroSSL 泛证书,80→443 跳转 |
+| Vault 内 | KV v2 @ `secret/`,AppRole `eso`(策略 `eso-read` 只读 `secret/data/*` + `secret/metadata/*`),凭据在 VPS `approle-eso.json`(0600,不入库) |
+| 集群 | `components/external-secrets/`(chart,镜像 v2.9.0):ClusterSecretStore `vault`,roleRef/secretRef 均取自 Secret `vault-approle`(install.sh 从环境变量创建,**Git 里零凭据**);`ADDON_EXTERNAL_SECRETS="true"` 已进 config.env |
+
+认证选 AppRole 而非 kubernetes auth,是反向可达性决定的:后者要 Vault 回连本集群 apiserver,
+集群在 LAN 里公网够不着;AppRole 纯出站,方向与 newt 隧道一致。
+
+### 验证(行为,非配置表面)
+
+- 公网:`/v1/sys/health` initialized:true / sealed:false;http 302→https;证书 `*.apikv.com`(ZeroSSL,至 2026-10-27)
+- 集群:ClusterSecretStore `Valid/ReadWrite/Ready=True`;`examples/externalsecret-demo.yaml` → Secret `demo-hello` 解码 `hello=world`
+- **轮换传播**:Vault 侧 `kv put hello=rotated`(11:44:38Z)→ refreshTime 11:44:56Z → 集群 Secret 变 `rotated`,**18 秒**(refreshInterval=1m 内);注意物化更新不等于 Pod 重启,消费方要热更新需另配 reloader 类工具
+
+### 过程中修掉的三类坑(均已写回文件注释)
+
+1. **`bootstrap/lib/common.sh` 此前兑现不了「Mac 也能跑组件脚本」的承诺**:`getent` 在 macOS 不存在,
+   组件脚本 set -eo pipefail 下 source 时 127 静默死(`2>/dev/null` 又吞了报错,`:-/root` 兜底永远走不到);
+   `uname -m` 的 macOS 拼法 `arm64` 不在 detect_arch 的 case 里。两处已修。
+2. **vault 官方镜像的两个属主坑**:`:ro` 挂载的 config 若是 0600 root,容器内 vault 用户(100:1000)读不了
+   (entrypoint 想 chown 也改不动只读挂载);`/vault/data` 不在 entrypoint 的 chown 名单里(它只管自带的
+   `/vault/file`),raft 的 bolt 文件直接 permission denied。install.sh 现在在宿主机侧 chmod/chown。
+3. **脚本自身三连**:`vault status` 在 sealed 时退出码 2,pipefail 下 `$(v status | jq ... || echo true)`
+   会把兜底值拼进捕获结果("true\ntrue");jq 的 `//` 把 false 当"空"(判 sealed 必须 `tostring`);
+   `docker exec` 不带 `-i` 吃不到 heredoc(policy write 报 "'policy' parameter not supplied")。
+
+### 环境观察
+
+- **`*.nju.edu.cn` 镜像站当天整站 000**(Mac 与节点皆然,quay/ghcr 前缀同灭)——单点,不能当长期依赖。
+- **节点直连 ghcr.io 当天可达**(/v2/ 返回 401 匿名响应,三镜像拉取成功)——上文 08-06「LAN 拉 ghcr
+  必须代理」的结论不恒成立,时好时坏;values.yaml 里已留降级路径注释(NJU mirror / 经 Mac 转推 TCR)。
+
+### 测试级取舍(集群重装期,已知且接受;正式化清单)
+
+- [ ] unseal key 单份 + root token 同存 VPS `init.json`(0600)→ 正式化时 `operator rekey` 分片离机
+- [ ] VPS/容器重启后 vault 回 sealed,需手动跑 `vault/unseal.sh` → 评估 auto-unseal(上游支持阿里云 KMS,无腾讯云)
+- [ ] 无审计日志、无 raft snapshot 备份 → `vault audit enable file` + snapshot 进 cron 异地存
+- [ ] secret_id 永不过期 → 怀疑泄漏即在 Vault 侧吊销重发,集群只需更新 Secret `vault-approle`
+
+### 下一步(与 L4 汇合)
+
+- [ ] **把五处明文迁入 Vault**(MinIO root、loki S3 key、streaming-pipeline 的 ES/DB 密码),清单与轮换
+      runbook 见上方 08-06「需要修复 · 安全(P0)」——迁移顺便完成 runbook 第 8 步「清仓库为占位符」
+- [ ] ExternalSecret CR 随组件清单进 Git,后续由 ArgoCD 同步(L3 与 L4 的汇合点)
+
 ## 2026-08-06 · Kafka/Debezium CDC 链路修复 + Strimzi 与 Kafka 升级
 
 ### 背景

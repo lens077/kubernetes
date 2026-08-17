@@ -61,6 +61,7 @@ README.md       解决方案文档：定位 / 上游最佳实践 / **本集群�
 | [meilisearch](components/meilisearch/) | 商品即时搜索 | `search.app.com` |
 | [minio](components/minio/) | S3 对象存储（pgsty/silo） | `minio-ui` / `s3` |
 | [argo](components/argo/) | ArgoCD (GitOps) | `argocd.app.com` |
+| [external-secrets](components/external-secrets/) | ESO：线上 Vault(`vault.apikv.com`) → k8s Secret（密钥不入 Git/明文） | — |
 | [kured](components/kured/) | 维护窗口内自动重启 | — |
 
 域名后缀由 `bootstrap/config.env` 的 `CLUSTER_DOMAIN` 控制（默认 `app.com`）。

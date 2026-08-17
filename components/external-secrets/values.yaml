@@ -1,0 +1,36 @@
+# external-secrets(ESO)values
+# 镜像:直连 ghcr.io(2026-08-17 实测节点直连可达;当天 *.nju.edu.cn 整站 000,
+# 旧结论「LAN 拉 ghcr 必须代理」不再成立)。若再遇拉取超时,备选:
+#   ① 恢复 ghcr.nju.edu.cn mirror 前缀;② 经 Mac 转推 TCR 并配 imagePullSecret。
+# 三个组件共用同一镜像、不同入参。
+installCRDs: true
+concurrent: 1
+
+image:
+  repository: ghcr.io/external-secrets/external-secrets
+resources:
+  requests:
+    cpu: 10m
+    memory: 32Mi
+  limits:
+    memory: 128Mi
+
+webhook:
+  image:
+    repository: ghcr.io/external-secrets/external-secrets
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      memory: 128Mi
+
+certController:
+  image:
+    repository: ghcr.io/external-secrets/external-secrets
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      memory: 128Mi
