@@ -14,5 +14,5 @@ spec:
     kind: ClusterIssuer
   # 给哪个域名颁发证书
   dnsNames:
-    - "dragonfly.app.com"
+    - "dragonfly.dev.test"
 # kubectl get gateway,httproutes,tlsroutes,secret,certificates,certificaterequests,svc,po

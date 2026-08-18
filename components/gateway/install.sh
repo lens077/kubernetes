@@ -18,7 +18,7 @@ kctl get gatewayclass cilium >/dev/null 2>&1 \
 kctl get clusterissuer global-ca-issuer >/dev/null 2>&1 \
   || die "缺 ClusterIssuer global-ca-issuer —— 先装 cert-manager 组件"
 
-log_step "应用共享网关(域名后缀 ${CLUSTER_DOMAIN:-app.com})"
+log_step "应用共享网关(域名后缀 ${CLUSTER_DOMAIN:-dev.test})"
 tmp=$(mktemp -d)
 while read -r f; do
   [[ -n $f ]] || continue

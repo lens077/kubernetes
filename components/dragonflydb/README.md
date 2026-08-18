@@ -7,12 +7,14 @@ ecommerce 的缓存层。Redis 协议兼容，go-redis 客户端**零改动**即
 
 ## 2. 上游最佳实践
 
-来源：[Dragonfly 文档](https://www.dragonflydb.io/docs)
+来源：[Dragonfly Helm 安装指南](https://www.dragonflydb.io/docs/getting-started/kubernetes) 与
+[运行参数参考](https://www.dragonflydb.io/docs/managing-dragonfly/flags)。
 
 - `--maxmemory` 是硬上限；配 `--cache_mode=true` 后满时按 LRU 淘汰（等价 redis 的 allkeys-lru）。
 - **`maxmemory` 必须 ≥ 256MiB × io 线程数**，否则启动直接拒绝。
 - 线程数默认取 CPU 核数，可用 `--proactor_threads` 显式指定。
 - 持久化（快照）默认关闭；作为纯缓存时不需要开。
+- 容器使用非 root 用户、只读根文件系统、`RuntimeDefault` seccomp，并丢弃全部 Linux capabilities。
 
 ## 3. 本集群取舍
 
@@ -22,6 +24,7 @@ ecommerce 的缓存层。Redis 协议兼容，go-redis 客户端**零改动**即
 | Service `LoadBalancer` | **ClusterIP + TCPRoute** | 旧方案每个 TCP 组件各占一个 LB IP。改走 Gateway 的 TCPRoute 后，暴露方式与 HTTP 组件统一，IP 仍由 Cilium 从池里分配。 |
 | `limits.cpu: 100m` | **只限内存不限 CPU** | 限 CPU 会造成缓存请求限流抖动——缓存的价值就在于稳定的低延迟。 |
 | serviceMonitor | 关闭 | 集群用 VictoriaMetrics + OTel，没有 Prometheus Operator，开了也没人采。 |
+| chart 安全上下文为空 | **按官方示例收紧，并补 `RuntimeDefault` seccomp** | Dragonfly 不需要提权、额外 capabilities 或可写根文件系统。 |
 
 ## 4. 暴露方式
 
@@ -32,6 +35,9 @@ ecommerce 的缓存层。Redis 协议兼容，go-redis 客户端**零改动**即
 
 TCPRoute 没有 hostname 概念，一个 listener 端口 = 一组后端（等价 L4 端口映射），
 所以每个 TCP 组件占一个自己的端口。
+
+当前 TCPRoute 不终结 TLS，密码和缓存流量在局域网内为明文。只在可信网络使用该入口；
+不要把 Gateway VIP 暴露到公网。跨不可信网络访问时，应改用 Dragonfly 原生 TLS。
 
 > **实测结论（2026-08-17）**：Cilium 1.20 的 TCPRoute 可用。从局域网另一台机器直连
 > Gateway VIP `:6379`，走完 `AUTH → PING → SET → GET` 并拿回正确的值。

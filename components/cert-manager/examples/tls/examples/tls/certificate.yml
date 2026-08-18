@@ -13,7 +13,7 @@ spec:
     # ClusterIssuer是集群级别的颁发者， 在全部命名空间生效
     # Issuer是命名空间的颁发者名，应用在哪个命名空间就在哪个命名空间生效，确保该命名空间存在该Issuer颁发者
     kind: Issuer
-  commonName: example-dev.app.com
+  commonName: example-dev.dev.test
   # 给哪个域名颁发证书
   dnsNames:
-    - "example-dev.app.com"
+    - "example-dev.dev.test"

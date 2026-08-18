@@ -1,0 +1,153 @@
+expose:
+  # Cilium Gateway 在集群边界终结 TLS；chart 只创建后端 Service 与 HTTPS HTTPRoute。
+  type: route
+  tls:
+    enabled: false
+  route:
+    parentRefs:
+      - group: gateway.networking.k8s.io
+        kind: Gateway
+        name: cilium-gateway
+        namespace: default
+        sectionName: https
+    hosts:
+      - "${HOSTNAME}"
+
+externalURL: "https://${HOSTNAME}"
+
+persistence:
+  enabled: true
+  resourcePolicy: keep
+  persistentVolumeClaim:
+    registry:
+      storageClass: "${SC_NAME}"
+      accessMode: ReadWriteOnce
+      size: "${HARBOR_REGISTRY_STORAGE_SIZE}"
+    jobservice:
+      jobLog:
+        storageClass: "${SC_NAME}"
+        accessMode: ReadWriteOnce
+        size: "${HARBOR_JOB_STORAGE_SIZE}"
+    database:
+      storageClass: "${SC_NAME}"
+      accessMode: ReadWriteOnce
+      size: "${HARBOR_DATABASE_STORAGE_SIZE}"
+    redis:
+      storageClass: "${SC_NAME}"
+      accessMode: ReadWriteOnce
+      size: "${HARBOR_REDIS_STORAGE_SIZE}"
+    trivy:
+      storageClass: "${SC_NAME}"
+      accessMode: ReadWriteOnce
+      size: "${HARBOR_TRIVY_STORAGE_SIZE}"
+  imageChartStorage:
+    type: filesystem
+    filesystem:
+      rootdirectory: /storage
+
+# 当前 StorageClass 只提供 RWO。Recreate 避免升级时旧 Pod 占卷、新 Pod 永久 Pending。
+updateStrategy:
+  type: Recreate
+
+ipFamily:
+  ipv6:
+    enabled: false
+  ipv4:
+    enabled: true
+
+trivy:
+  enabled: true
+  resources:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+    limits:
+      cpu: 1
+      memory: 1Gi
+
+metrics:
+  enabled: true
+  serviceMonitor:
+    enabled: false
+
+trace:
+  enabled: false
+
+portal:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+
+core:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+jobservice:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+registry:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  controller:
+    resources:
+      requests:
+        cpu: 25m
+        memory: 64Mi
+      limits:
+        cpu: 200m
+        memory: 128Mi
+
+database:
+  type: internal
+  internal:
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+
+redis:
+  type: internal
+  internal:
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        cpu: 300m
+        memory: 256Mi
+
+exporter:
+  resources:
+    requests:
+      cpu: 25m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi

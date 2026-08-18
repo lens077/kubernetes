@@ -1,0 +1,47 @@
+# 字段参考: https://developer.hashicorp.com/consul/docs/reference/k8s/helm
+global:
+  name: consul
+  datacenter: dc1                # ecommerce Kratos 客户端按默认 dc1 连, 别改
+  acls:
+    # 2026-08-18 开启。理由: 8500 经 server.exposeService 暴露在局域网, 不开 ACL 时
+    # default_policy=allow, 任何能到 192.168.3.0/24 的人都能读写服务注册表(注销别人的服务)。
+    # 开启后 default_policy=deny, chart 自动 bootstrap 并把 root token 写进
+    # secret consul-bootstrap-acl-token(键 token) —— 值只在集群里, 不入库。
+    # 客户端(Kratos ConsulRegistry 走 Agent API 注册+TTL)必须带 token, 见 README §7。
+    manageSystemACLs: true
+
+connectInject:
+  enabled: false                 # 不用服务网格; 省 webhook + sidecar, 也不碰 Gateway CRD
+
+ui:
+  enabled: true
+  service:
+    enabled: true
+    type: ClusterIP              # 对外只经共享网关(gateway/httproute.yaml)
+
+server:
+  replicas: 1                    # 单节点集群; 扩到 3 需先加节点并去掉 affinity 覆盖
+  affinity: ""                   # 允许多副本落同一节点(单机必需, 上游默认强制反亲和)
+  storage: ${CONSUL_STORAGE_SIZE}
+  storageClass: ${SC_NAME}
+  # server 离线超过 server_rejoin_age_max(默认 168h)后拒绝启动防脑裂;
+  # homelab 会长时间停机, 放宽到 1 年 —— 不放宽的话超期只能手工清数据目录(实测踩过, 见 README)
+  extraConfig: |
+    {
+      "server_rejoin_age_max": "8760h"
+    }
+  # 局域网开发机直连的纯 HTTP API 入口(svc consul-expose-servers, LB IP 由 Cilium 池分配):
+  # ecommerce 服务本地调试的注册发现走这里, 不经 TLS 网关。
+  # 注意: Consul KV 已于 2026-08-08 退役, 配置来源是 Config Center, 这里只剩注册发现。
+  exposeService:
+    enabled: true
+    type: LoadBalancer
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      memory: 512Mi              # 上游默认 100Mi 限额偏紧(开 ACL 后还多一份 token/policy 状态)
+
+dns:
+  enabled: false                 # 注册发现走 HTTP API(Kratos SDK), 用不上 DNS 接口

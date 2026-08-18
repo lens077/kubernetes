@@ -25,7 +25,7 @@
 | 上游默认/建议 | 本集群 | 原因 |
 |---|---|---|
 | cluster 版（生产推荐） | **single 版** | 两节点、指标量小，cluster 版三件套要多花 1G+ 内存，换不来任何可用性（存储还是本地 LVM 卷，节点挂了一样没数据）。 |
-| Service 默认 ClusterIP | 保持 ClusterIP + HTTPRoute | 集群内组件走 Service，对外只经共享网关（`metrics.app.com`）。不开 LoadBalancer 省一个 LB IP。 |
+| Service 默认 ClusterIP | 保持 ClusterIP + HTTPRoute | 集群内组件走 Service，对外只经共享网关（`metrics.dev.test`）。不开 LoadBalancer 省一个 LB IP。 |
 | 无 resources | `requests 100m/256Mi`，`limits.memory 1Gi` | 只限内存不限 CPU：查询是突发型负载，限 CPU 会让 Grafana 面板卡顿；限内存防止大查询把节点拖垮。 |
 | 存储 8Gi | `${VM_STORAGE_SIZE}`（config.env，默认 8Gi） | OpenEBS LVM 本地卷有**节点绑定**特性——扩容要在同一节点上做。 |
 
@@ -33,7 +33,7 @@
 
 - 集群内写入（OTLP）：`http://vm-single-victoria-metrics-single-server.victoriametrics.svc.cluster.local:8428/opentelemetry/v1/metrics`
 - 集群内查询：同上主机 `:8428`，`/api/v1/query`
-- 对外：`https://metrics.app.com`（共享网关，证书由 global-ca-issuer 签）
+- 对外：`https://metrics.dev.test`（共享网关，证书由 global-ca-issuer 签）
 
 ## 5. 验证
 
@@ -55,7 +55,7 @@ kubectl -n victoriametrics exec $VM -- sh -c \
 经网关（从局域网其他主机）：
 
 ```bash
-curl -sk "https://metrics.app.com/api/v1/query?query=up" --resolve metrics.app.com:443:$GW | head -c 200
+curl -sk "https://metrics.dev.test/api/v1/query?query=up" --resolve metrics.dev.test:443:$GW | head -c 200
 ```
 
 ## 6. 踩坑

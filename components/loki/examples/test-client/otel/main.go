@@ -18,7 +18,7 @@ import (
 
 // OTel Collector 的 OTLP/HTTP 接收器地址
 // 日志、追踪和指标通常使用相同的 HTTP 端点
-const otelHttpEndpoint = "otlp.app.com"
+const otelHttpEndpoint = "otlp.dev.test"
 
 // initLoggerProvider 用于初始化并配置一个 Logger Provider
 // 它负责将日志数据通过 OTLP/HTTP 导出

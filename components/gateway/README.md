@@ -71,10 +71,10 @@ kubectl -n default get certificate global-default-tls-cert   # READY=True
 
 ```bash
 GW=$(kubectl -n default get gateway cilium-gateway -o jsonpath='{.status.addresses[0].value}')
-curl -sk -o /dev/null -w "%{http_code}\n" https://$GW/ -H "Host: probe.app.com"   # 无路由时 404 = 网关活着
-echo | openssl s_client -connect $GW:443 -servername probe.app.com 2>/dev/null \
+curl -sk -o /dev/null -w "%{http_code}\n" https://$GW/ -H "Host: probe.dev.test"   # 无路由时 404 = 网关活着
+echo | openssl s_client -connect $GW:443 -servername probe.dev.test 2>/dev/null \
   | openssl x509 -noout -subject -issuer
-# 期望: subject=O=sumery-mesh-org, CN=app.com / issuer=CN=my-global-root-ca
+# 期望: subject=O=sumery-mesh-org, CN=dev.test / issuer=CN=my-global-root-ca
 ```
 
 ## 6. 踩坑

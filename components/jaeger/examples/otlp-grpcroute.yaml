@@ -23,7 +23,7 @@ spec:
       namespace: default
       sectionName: https
   hostnames:
-    - "otlp-jaeger.app.com"
+    - "otlp-jaeger.dev.test"
   rules:
     - backendRefs:
         - name: jaeger
@@ -41,7 +41,7 @@ spec:
       namespace: default
       sectionName: https
   hostnames:
-    - "otlp-jaeger.app.com"
+    - "otlp-jaeger.dev.test"
   rules:
     - matches:
         - path:

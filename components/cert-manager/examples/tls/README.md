@@ -15,7 +15,7 @@
 1. 自签名工厂 (ClusterIssuer)：作为最初的“种子”，仅用于签发一个根证书。
 2. 根证书 (Root CA)：它拥有 isCA: true 属性，是整个集群的最高信任源。
 3. 命名空间颁发者 (Issuer)：它拿着根证书的“印章”，专门负责在 consul 命名空间内签发具体的业务证书。
-4. 业务证书 (End-Entity)：给 consul.app.com 使用的最终证书。
+4. 业务证书 (End-Entity)：给 consul.dev.test 使用的最终证书。
 
 # 操作步骤
 第0步: 创建集群issuer, 仅需执行一次

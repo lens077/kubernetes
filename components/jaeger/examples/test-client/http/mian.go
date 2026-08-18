@@ -25,10 +25,10 @@ func main() {
 			// 显式协商 HTTP/2，解决可能的 ALPN 问题
 			NextProtos: []string{"h2"},
 		}),
-		// 指向 otlp-http.app.com，网关会将流量路由到 otel-collector 的 4318 端口
-		// otlptracehttp.WithEndpoint("jaeger-http.app.com:443"),
+		// 指向 otlp-http.dev.test，网关会将流量路由到 otel-collector 的 4318 端口
+		// otlptracehttp.WithEndpoint("jaeger-http.dev.test:443"),
 		// otlptracehttp.WithEndpoint("192.168.3.119:4318"),
-		otlptracehttp.WithEndpoint("otlp-http.app.com:443"),
+		otlptracehttp.WithEndpoint("otlp-http.dev.test:443"),
 		// otlptracehttp.WithInsecure(),
 		// 如果网关做了路径重写，可能需要手动指定 URL 路径，这里使用默认的 /v1/traces
 		// otlptracehttp.WithURLPath("/v1/traces"),

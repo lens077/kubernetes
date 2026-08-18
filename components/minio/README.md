@@ -27,8 +27,8 @@
 ## 4. 暴露方式
 
 - S3 API（集群内）：`http://minio-service.minio.svc.cluster.local:9000`
-- S3 API（对外）：`https://s3.app.com`
-- 控制台：`https://minio-ui.app.com`
+- S3 API（对外）：`https://s3.dev.test`
+- 控制台：`https://minio-ui.dev.test`
 - 凭据：用户 `admin`，密码见 `/root/.k8s-installer-credentials`
 
 ## 5. 验证

@@ -51,7 +51,7 @@ spec:
     - name: pg-passthrough-gateway
       sectionName: pg
   hostnames:
-    - "pg.app.com"          # SNI 域名；换一个实例就换一个 hostname
+    - "pg.dev.test"          # SNI 域名；换一个实例就换一个 hostname
   rules:
     - backendRefs:
         - name: pg-main-rw  # CNPG 生成的读写 Service
@@ -80,9 +80,9 @@ v1.20 之前用过 TLSRoute 的集群，要装 experimental 版 CRD，否则**�
 VIP=$(kubectl -n postgresql get gateway pg-passthrough-gateway -o jsonpath='{.status.addresses[0].value}')
 
 # SNI 是否正确分流（看服务端返回的证书是不是这个实例的）
-openssl s_client -connect $VIP:5432 -servername pg.app.com -starttls postgres </dev/null 2>/dev/null \
+openssl s_client -connect $VIP:5432 -servername pg.dev.test -starttls postgres </dev/null 2>/dev/null \
   | openssl x509 -noout -subject
 
 # 真连一次
-PGPASSWORD=xxx psql "host=pg.app.com port=5432 dbname=app user=app sslmode=verify-full" -c 'select 1'
+PGPASSWORD=xxx psql "host=pg.dev.test port=5432 dbname=app user=app sslmode=verify-full" -c 'select 1'
 ```

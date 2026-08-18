@@ -9,7 +9,7 @@ spec:
       sectionName: http # 对应 Gateway 的监听器名称
       namespace: default
   hostnames:
-    - "jaeger-ui.app.com"
+    - "jaeger-ui.dev.test"
   rules:
     - backendRefs:
         - name: jaeger

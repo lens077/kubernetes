@@ -29,7 +29,7 @@ trace 的存储与查询。[opentelemetry](../opentelemetry/) Collector 的 trac
 ## 4. 暴露方式
 
 - 集群内 OTLP 接收：`jaeger.observability.svc.cluster.local:4317`（gRPC）/ `:4318`（HTTP）
-- UI：`https://jaeger.app.com`（共享网关，`gateway/httproute.yaml`）
+- UI：`https://jaeger.dev.test`（共享网关，`gateway/httproute.yaml`）
 - 集群外应用直接上报：见 `examples/otlp-grpcroute.yaml`，**但要先开 Cilium 的 ALPN**（见踩坑）
 
 ## 5. 验证

@@ -8,7 +8,7 @@ spec:
     - name: example-tls-passthrough-gw
       sectionName: example-tls-listener
   hostnames:
-    - "example-dev.app.com"             # SNI 域名
+    - "example-dev.dev.test"             # SNI 域名
   rules:
     - backendRefs:
         - name: example  # 转发到测试库的 Service
@@ -24,7 +24,7 @@ spec:
 #    - name: example-tls-passthrough-gw
 #      sectionName: example-tls-listener
 #  hostnames:
-#    - "example-prod.app.com"             # SNI 域名
+#    - "example-prod.dev.test"             # SNI 域名
 #  rules:
 #    - backendRefs:
 #        - name: example  # 转发到生成环境的 Service

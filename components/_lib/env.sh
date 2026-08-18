@@ -92,7 +92,7 @@ comp_load_meta() {  # comp_load_meta <组件目录>
   # shellcheck disable=SC1090
   source "$dir/component.env"
   [[ -n $ID ]] || die "$dir/component.env 未定义 ID"
-  [[ -n $HOSTNAME ]] || HOSTNAME="$ID.${CLUSTER_DOMAIN:-app.com}"
+  [[ -n $HOSTNAME ]] || HOSTNAME="$ID.${CLUSTER_DOMAIN:-dev.test}"
 }
 
 # 组件目录(供 install.sh 自定位): comp_dir "${BASH_SOURCE[0]}"
@@ -108,7 +108,9 @@ render_tpl() {  # render_tpl <模板> <输出> [额外变量名...]
               CILIUM_LB_POOL_START CILIUM_LB_POOL_STOP
               # config.env 里各组件的容量/保留期旋钮
               VM_STORAGE_SIZE LOKI_STORAGE_SIZE LOKI_RETENTION GRAFANA_STORAGE_SIZE
-              MEILI_STORAGE_SIZE MINIO_STORAGE_SIZE JAEGER_STORAGE_SIZE
+              MEILI_STORAGE_SIZE MINIO_STORAGE_SIZE JAEGER_STORAGE_SIZE CONSUL_STORAGE_SIZE
+              HARBOR_REGISTRY_STORAGE_SIZE HARBOR_JOB_STORAGE_SIZE
+              HARBOR_DATABASE_STORAGE_SIZE HARBOR_REDIS_STORAGE_SIZE HARBOR_TRIVY_STORAGE_SIZE
               DRAGONFLY_MAXMEMORY DRAGONFLY_PROACTOR_THREADS
               KURED_REBOOT_WINDOW_START KURED_REBOOT_WINDOW_END "$@")
   local sed_args=() v

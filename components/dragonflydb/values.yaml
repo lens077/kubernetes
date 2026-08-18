@@ -1,5 +1,21 @@
 replicaCount: 1
 
+# 对齐 Dragonfly 官方 Helm 示例与 Kubernetes Restricted Pod Security：
+# 进程不需要 root、Linux capabilities 或可写根文件系统。
+podSecurityContext:
+  fsGroup: 2000
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 1000
+
 service:
   type: ClusterIP                # 对外走 Gateway 的 TCPRoute，不再各占一个 LB IP
   port: 6379

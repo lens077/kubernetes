@@ -30,7 +30,7 @@
 | pipeline / processors | batch | 不变 |
 | 自身指标 | prometheus `:8888` + pod 注解 | 不变 |
 | 保留期 | esIndexCleaner CronJob,7 天 | badger `ttl.spans: 168h` |
-| UI / 路由 | jaeger-ui.app.com 等 | 不变(路由清单未改动) |
+| UI / 路由 | jaeger-ui.dev.test 等 | 不变(路由清单未改动) |
 
 变化的只有两点,均不影响消费方:
 

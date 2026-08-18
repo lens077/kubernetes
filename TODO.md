@@ -341,7 +341,7 @@ elastic-stack/
 
 otel-collector 的配置**无需功能性改动** —— 它只与 Jaeger 的 Service 通信,不接触存储后端。只改了文件名和一处注释。
 
-`elastic-stack/02-gateway.sh` 除失效外还有三处会造成实际损害:生成 `es-gateway.yml` 却 `apply -f gateway.yml`;创建的 `elasticsearch-route` 与线上同名同命名空间但 parentRef 指向不存在的网关,跑一次就会打断 `es.app.com` 的外部访问;还会把 `es-httproute.yml` / `kibana-httproute.yml` 覆盖写到当前目录。
+`elastic-stack/02-gateway.sh` 除失效外还有三处会造成实际损害:生成 `es-gateway.yml` 却 `apply -f gateway.yml`;创建的 `elasticsearch-route` 与线上同名同命名空间但 parentRef 指向不存在的网关,跑一次就会打断 `es.dev.test` 的外部访问;还会把 `es-httproute.yml` / `kibana-httproute.yml` 覆盖写到当前目录。
 
 ---
 
@@ -362,13 +362,13 @@ otel-collector 的配置**无需功能性改动** —— 它只与 Jaeger 的 Se
 ### 遗留失效配置
 
 - [ ] **`opentelemetry/server/helm/config-otel-collector.sh` 已失效**。它引用 `jaeger-collector.<ns>.svc.cluster.local:4317/4318`,集群中不存在该 Service(只有 `jaeger`)。待修正或删除。
-- [ ] **`jaeger/test/grpc/main.go` 指向不存在的端点**。目标为 `otlp-grpc.app.com:443`,该域名无任何路由。改指 `otel-collector` 的 LoadBalancer(`192.168.3.117:4317`),或补一条路由。
+- [ ] **`jaeger/test/grpc/main.go` 指向不存在的端点**。目标为 `otlp-grpc.dev.test:443`,该域名无任何路由。改指 `otel-collector` 的 LoadBalancer(`192.168.3.117:4317`),或补一条路由。
 - [ ] **`jaeger/gateway/examples/rbac.yml` 位置不当**。内容是 otel-collector 的 ClusterRole/Binding,与 jaeger 无关,宜移至 opentelemetry 目录下。
 
 ### 待决策
 
 - [ ] **ES 集群仍为 yellow**。清理 jaeger 索引后剩 6 个 unassigned,来自 6 个业务索引的副本分片 —— 单节点 ES 无处安放。需决定:把业务索引 `number_of_replicas` 设为 0,或给 ES 加节点。这是 ES 自身的单节点配置问题,与 jaeger 无关。
-- [ ] **elastic-stack 的 TLS 方案已随清理移除**。目前 ES / Kibana 仅通过 `cilium-gateway` 的 HTTP listener 暴露(`es.app.com`、`kibana.app.com`)。若需要 TLS,需重新规划 —— 原先那套 `elastic-gateway` + 自签证书从未生效过,不要直接照抄。
+- [ ] **elastic-stack 的 TLS 方案已随清理移除**。目前 ES / Kibana 仅通过 `cilium-gateway` 的 HTTP listener 暴露(`es.dev.test`、`kibana.dev.test`)。若需要 TLS,需重新规划 —— 原先那套 `elastic-gateway` + 自签证书从未生效过,不要直接照抄。
 
 ### 环境观察
 
@@ -384,8 +384,8 @@ otel-collector 的配置**无需功能性改动** —— 它只与 Jaeger 的 Se
 
 ### 需要修复 · 安全(P0)
 
-- [ ] **fluent-bit 手机号脱敏是空操作 + `Keep_Log On` 保留原始明文(PII 泄漏)**。`fluent-bit/helm/install.sh:73` 的 lua 用 `string.gsub(record["phone"], "(%d{3})%d{4}(%d{4})", ...)`——**Lua 模式不支持 `{n}` 量词**,`{3}` 被当字面字符,匹配不上任何手机号,原样返回。更糟:`:57-58` 的 `Merge_Log On` + `Keep_Log On` 会保留原始 `log` 字符串字段,即使有效的 email 脱敏(`(.+)@`→`***@`)也被绕过——完整未脱敏 JSON 随 `log` 整条进 Loki。改法:`Keep_Log Off` + 手机号换成有效 pattern(如按 `%d%d%d%d%d%d%d%d%d%d%d` 或分段捕获)。
-- [ ] **脱敏只匹配顶层 `email`/`phone` 两个键**(`install.sh:73`),漏掉应用真正写出的敏感字段:payment 服务 dump 的 `form_data`(交易/回调)、RUM 的 `user_id`/`session_id`、debug 日志里的 bearer token。这些键名不同,脱敏看不见。需扩展字段名单或改成按值模式扫描。
+- [x] ~~**fluent-bit 手机号脱敏是空操作 + `Keep_Log On` 保留原始明文(PII 泄漏)**。~~ **2026-08-18 已修复**：正式组件改用 Lua 支持的逐位模式，并配置 `Merge_Log On` + `Keep_Log Off`，不再把未脱敏的原始 `log` 字段一并发送到 Loki。
+- [x] ~~**脱敏只匹配顶层 `email`/`phone` 两个键**。~~ **2026-08-18 已修复已知值模式**：新 Lua 过滤器递归扫描嵌套 table 中的所有字符串值，统一遮蔽邮箱与 11 位手机号。它不是完整的 DLP 方案，bearer token、银行卡号和业务专有标识仍需按数据分类继续补规则。
 - [ ] **对象存储凭据明文入库,违反本仓 `SECURITY.md`**。两处泄漏:①MinIO **root** 凭据明文写在 `minio/yaml/single.yaml:60-63`(`MINIO_ROOT_USER=admin` / `MINIO_ROOT_PASSWORD=<REDACTED-20260817>`,env value);②loki 用的 **S3 access key** 明文散落 4 处——`loki/helm/other/install.sh:43,49,51`、`loki/helm/other/new-values.yaml`、`loki/helm/monolithic mode/install.sh:84-85`、`loki/helm/monolithic mode/examples/minio-values.yml`(值不在此复述)。线上是 `single.yaml` 单副本(minio ns,`deployment/minio`,image `pgsty/minio`,S3 端点 `minio-service.minio.svc:9000`),loki-0 是 monolithic 版、实际用 `install.sh:84-85` 那把 key。按 `SECURITY.md`「凭据泄露处置」——**删文件或补一次「删密码」提交都不足以撤销,旧凭据必须先在 MinIO 侧失效**。执行步骤:
 
   轮换 + 改 Secret 引用 runbook(逐条勾):
@@ -404,10 +404,10 @@ otel-collector 的配置**无需功能性改动** —— 它只与 Jaeger 的 Se
 
 ### 管道缺陷
 
-- [ ] **fluent-bit k8s 标签失效,日志无法按 pod 下钻**。`install.sh:96` 的 `Label_keys $k8s.pod_name, $k8s.namespace_name, $k8s.container_name` 取不到值——上游 `nest` 的 `Nested_under kubernetes` + `Add_prefix k8s.` 把字段拍平成名字带点的扁平 key,record accessor 把 `.` 当嵌套分隔符。实测 Loki 里这三个标签的值就是字面量 `.pod_name`/`.namespace_name`/`.container_name`。改 `$['k8s.pod_name']` 形式。(此为 ecommerce TODO 同一条,配置根因在本仓。)
-- [ ] **fluent-bit 只采日志、不采指标,与文档「采集应用和系统指标」不符**。部署用的 `install.sh` 只有 `tail`+`systemd` 输入和 `loki`+`opentelemetry(logs)` 输出,没有 `node_exporter_metrics` 输入,也没有 `/v1/metrics` 输出。带指标采集的 `examples/otel-fluent-bit-values.yml` 不是实际部署的那份(节点指标其实由 otel-collector 的 `host_metrics` receiver 采)。需澄清文档口径,或明确 fluent-bit 只负责日志。
+- [x] ~~**fluent-bit k8s 标签失效，日志无法按 pod 下钻**。~~ **2026-08-18 已修复**：正式组件直接使用 `$kubernetes['namespace_name']` 等嵌套 record accessor；namespace/container 作为低基数 Loki 标签，pod/node 写入 Loki 3 structured metadata，避免把 pod 名提升为索引标签。
+- [x] ~~**fluent-bit 只采日志、不采指标，与文档「采集应用和系统指标」不符**。~~ **2026-08-18 已澄清职责**：Fluent Bit 仅采集 Kubernetes 容器日志，节点指标继续由既有 OTel Collector `host_metrics` receiver 采集，避免同一指标重复入库。
 - [ ] **collector 自监控无人抓,「遥测有没有半路丢」无法回答**。`opentelemetry/server/helm/collector/examples/configs/jaeger-loki-vm.yml` 里 collector 的 `:8888` self-telemetry 是 Prometheus pull,但没有任何 receiver 采它。补 `prometheus` receiver 自采 `127.0.0.1:8888`,基础设施盘补 accepted/sent/send_failed + 队列深度。(与 ecommerce TODO §234 对应,配置改动在本仓。)
-- [ ] **fluent-bit 在事故时静默丢日志且无丢弃计数**。`install.sh:44` `Skip_Long_Lines On` 丢超长行、`:83-85` `throttle Rate 500/Window 5` 是集群级聚合限流(无 per-stream 公平、无 dead-letter)。节点错误风暴时(如 kafka-connect 曾 484 次重启刷屏),事故自身的长栈和超限日志正是被丢的那批,而 collector 自监控还没人抓,面上没有 ingestion-loss 计数。评估调大/分级限流,并优先做上一条的自监控。
+- [ ] **fluent-bit 在事故时仍可能静默丢弃超长日志**。**2026-08-18 已完成部分缓解**：移除全局 throttle，启用 hostPath 文件系统缓冲、2 GiB 队列和无限输出重试，并暴露 Fluent Bit Prometheus 指标。为防止单行撑爆内存，超过 2 MiB 的日志仍会由 `Skip_Long_Lines On` 跳过；后续需为该边界补告警或 dead-letter，并完成上一条 collector 自监控。
 
 ### 已知风险
 
@@ -417,3 +417,14 @@ otel-collector 的配置**无需功能性改动** —— 它只与 Jaeger 的 Se
 ### 待决策
 
 - [ ] **事件/变更两维目前无采集组件**。集群无 kube-state-metrics、无 k8s event exporter,Kubernetes 事件、Pod 状态、部署变更都进不了数据面。是否在本仓补 `k8s_cluster`/`k8s_events` receiver 或独立 event-exporter,与 ecommerce TODO §235「k8s 视角」一并规划(注意基数控制别带 pod 名、DaemonSet 下 `k8s_cluster` 要配 leader elector)。
+
+---
+
+## 2026-08-18 · Harbor ARM64 发布阻塞
+
+- [ ] **等待 Harbor 官方 v2.16.0 ARM64 release 后再启用组件**。两台节点都是 ARM64；实测官方
+  `v2.15.2` 镜像启动即报 `exec format error`。Harbor 维护者在
+  [#23558](https://github.com/goharbor/harbor/issues/23558) 和
+  [#23674](https://github.com/goharbor/harbor/issues/23674) 确认 ARM64 从 v2.16.0 开始发布。
+  已卸载失败 release、删除外部路由并保留五个 PVC、管理员 Secret、加密 Secret 与节点凭据；
+  `ADDON_HARBOR=false`，安装脚本会在任何集群写操作前检查 chart `appVersion` 和节点架构。

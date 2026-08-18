@@ -24,7 +24,7 @@ Ubuntu 26.04，内核 7.0）、Cilium eBPF 完全替代 kube-proxy、OpenEBS LVM
 ## 4. 暴露方式
 
 - Gateway 资源：`gateway/` 下哪些文件、挂在哪个 Gateway 的哪个 listener
-- 访问地址：`https://<组件>.app.com`
+- 访问地址：`https://<组件>.dev.test`
 - 证书来源：cert-manager 的哪个 Issuer
 - 集群内地址：`<svc>.<ns>.svc.cluster.local:<port>`
 

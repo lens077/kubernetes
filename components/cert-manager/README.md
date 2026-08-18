@@ -22,7 +22,7 @@ PostgreSQL / Dragonfly 的 TLS passthrough 证书。
 
 | 上游默认/建议 | 本集群 | 原因 |
 |---|---|---|
-| ACME/Let's Encrypt | 自签根 CA | 没有公网域名，全部服务跑在 `*.app.com` 内网域名下。要换公网域名时把 `examples/acme-letsencrypt.yaml` 里的 ClusterIssuer 换上去即可，下游组件引用的 issuer 名不变。 |
+| ACME/Let's Encrypt | 自签根 CA | 没有公网域名，全部服务跑在 `*.dev.test` 内网域名下。要换公网域名时把 `examples/acme-letsencrypt.yaml` 里的 ClusterIssuer 换上去即可，下游组件引用的 issuer 名不变。 |
 | 引导 issuer 与最终 issuer 同名（旧方案） | **拆成两个名字** | 同名时只有「分步 apply」才成立：一次性 apply 的话，第三步立刻覆盖引导定义，而根证书还没签出 → 证书等 issuer、issuer 等证书，**死锁**。拆开后 `kubectl apply -f issuers/` 一次搞定。 |
 | 各 Deployment 默认副本 | 全部 1 副本 | 单控制面集群，多副本只是抢内存。 |
 | 根证书默认 90 天 | 10 年（`87600h`） | 内网根证书换一次要重新分发信任链到所有客户端，代价远大于收益。**叶子证书**仍是 90 天 + 提前 15 天自动续期（见 gateway 组件）。 |
@@ -56,8 +56,8 @@ kind: Certificate
 metadata: {name: probe, namespace: default}
 spec:
   secretName: probe-tls
-  commonName: probe.app.com
-  dnsNames: ["probe.app.com"]
+  commonName: probe.dev.test
+  dnsNames: ["probe.dev.test"]
   issuerRef: {name: global-ca-issuer, kind: ClusterIssuer}
 EOF
 kubectl -n default wait --for=condition=Ready certificate/probe --timeout=60s

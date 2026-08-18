@@ -21,13 +21,13 @@ Meilisearch 中文分词开箱可用、还省 1G+ 内存。
 | 上游默认/建议 | 本集群 | 原因 |
 |---|---|---|
 | master key 手工设置 | `get_cred meili-master-key` | 只生成一次存 creds，重装不换 key（换了客户端要同步改）。 |
-| Service 默认 | ClusterIP + HTTPRoute | 对外只经共享网关（`search.app.com`）。 |
+| Service 默认 | ClusterIP + HTTPRoute | 对外只经共享网关（`search.dev.test`）。 |
 | 无 limits | `limits.memory 1Gi` | 索引构建期内存峰值；1Gi 对当前商品量级有余量。 |
 
 ## 4. 暴露方式
 
 - 集群内：`meilisearch.search.svc.cluster.local:7700`
-- 对外：`https://search.app.com`（共享网关）
+- 对外：`https://search.dev.test`（共享网关）
 - 认证：`Authorization: Bearer <master key>`，key 见 `/root/.k8s-installer-credentials`
 
 ## 5. 验证

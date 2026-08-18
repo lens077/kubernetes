@@ -42,5 +42,5 @@ openssl x509 -in tls.crt -noout -text
 提取的证书文件，可根据你的部署方式在 Go 应用中使用：
 
 部署方式	使用场景	推荐方法
-在 Kubernetes 集群内	Pod 需要连接至 dragonfly.app.com	直接挂载 Secret：将 dragonfly-gateway-tls-secret 作为 Volume 挂载到 Pod 的指定路径（如 /etc/tls），应用直接读取该路径下的 tls.crt、tls.key 和 ca.crt 文件。
+在 Kubernetes 集群内	Pod 需要连接至 dragonfly.dev.test	直接挂载 Secret：将 dragonfly-gateway-tls-secret 作为 Volume 挂载到 Pod 的指定路径（如 /etc/tls），应用直接读取该路径下的 tls.crt、tls.key 和 ca.crt 文件。
 在 Kubernetes 集群外	本地开发环境需要连接至集群内的服务	手动下载证书：使用第二步中的 kubectl 命令将证书文件下载到本地，然后在代码中通过 os.ReadFile 等方式加载。

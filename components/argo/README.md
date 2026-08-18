@@ -25,7 +25,7 @@
 
 ## 4. 暴露方式
 
-- 对外：`https://argocd.app.com`（共享网关）
+- 对外：`https://argocd.dev.test`（共享网关）
 - 初始密码：`kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d`
 
 ## 5. 验证
@@ -33,7 +33,7 @@
 ```bash
 kubectl -n argocd get deploy argocd-server                    # READY 1/1
 GW=$(kubectl -n default get gateway cilium-gateway -o jsonpath='{.status.addresses[0].value}')
-curl -sk -o /dev/null -w "%{http_code}\n" https://argocd.app.com/ --resolve argocd.app.com:443:$GW
+curl -sk -o /dev/null -w "%{http_code}\n" https://argocd.dev.test/ --resolve argocd.dev.test:443:$GW
 # 期望 200（登录页）
 ```
 

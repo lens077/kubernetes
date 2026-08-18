@@ -36,7 +36,7 @@
 - OTLP 摄入（集群内）：`http://loki.logging.svc.cluster.local:3100/otlp`
 - push API（fluent-bit）：`loki.logging.svc.cluster.local:3100`，输出配置见 `examples/`
 - 查询（Grafana 数据源）：`http://loki.logging.svc.cluster.local:3100`
-- 对外：`https://logs.app.com`（共享网关）
+- 对外：`https://logs.dev.test`（共享网关）
 
 > [!NOTE]
 > `auth_enabled: false` 意味着**任何能访问该域名的人都能读写日志**。当前只在内网 +

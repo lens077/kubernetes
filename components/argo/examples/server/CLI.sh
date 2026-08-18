@@ -14,7 +14,7 @@ argocd admin initial-<REDACTED-20260817> -n argocd
 # --grpc-web
 #lb_ip=$(kubectl get service example-argocd-server -o=jsonpath='{.status.loadBalancer.ingress[0].ip}' -n $ns)
 
-lb_ip="argocd-server.app.com"
+lb_ip="argocd-server.dev.test"
 argocd login \
 $lb_ip \
 --username admin \

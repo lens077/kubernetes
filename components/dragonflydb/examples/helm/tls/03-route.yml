@@ -8,7 +8,7 @@ spec:
     - name: dragonfly-gateway
       sectionName: https # 对应 Gateway 的监听器名称
   hostnames:
-    - "dragonfly.app.com"
+    - "dragonfly.dev.test"
   rules:
     - backendRefs:
         - name: dragonfly

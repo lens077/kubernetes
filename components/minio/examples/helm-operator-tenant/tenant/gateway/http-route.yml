@@ -9,7 +9,7 @@ spec:
       namespace: default
       sectionName: http # 对应 Gateway 的监听器名称
   hostnames:
-    - "minio.app.com"
+    - "minio.dev.test"
   rules:
     - matches:
         - path:

@@ -1,0 +1,162 @@
+kind: DaemonSet
+
+testFramework:
+  enabled: false
+
+service:
+  type: ClusterIP
+  port: 2020
+
+serviceMonitor:
+  enabled: false                 # 集群未安装 Prometheus Operator
+
+rbac:
+  create: true
+  nodeAccess: false              # Kubernetes filter 通过 apiserver 读取 Pod 元数据
+  eventsAccess: false
+
+podSecurityContext:
+  seccompProfile:
+    type: RuntimeDefault
+
+# 读取宿主机容器日志需要 root；除此之外不允许提权或额外 capabilities。
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+  readOnlyRootFilesystem: true
+  runAsUser: 0
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    memory: 256Mi
+
+tolerations:
+  - operator: Exists             # 控制面节点同样需要采集日志
+
+updateStrategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxUnavailable: 1
+
+terminationGracePeriodSeconds: 30
+
+# tail offset 与待发送 chunk 落宿主盘。Pod 重建后继续消费，Loki 短暂不可用时不只靠内存。
+extraVolumes:
+  - name: fluent-bit-state
+    hostPath:
+      path: /var/lib/fluent-bit
+      type: DirectoryOrCreate
+
+extraVolumeMounts:
+  - name: fluent-bit-state
+    mountPath: /buffers
+
+luaScripts:
+  sanitize.lua: |
+    local function mask_string(value)
+      value = string.gsub(value, "([%w%.%+%-%_]+)@([%w%.%-]+)", "***@%2")
+      value = string.gsub(value, "(%f[%d]%d%d%d)%d%d%d%d(%d%d%d%d)%f[%D]", "%1****%2")
+      return value
+    end
+
+    local function sanitize(value)
+      if type(value) == "string" then
+        return mask_string(value)
+      end
+      if type(value) == "table" then
+        for key, nested in pairs(value) do
+          value[key] = sanitize(nested)
+        end
+      end
+      return value
+    end
+
+    function sanitize_log(tag, timestamp, record)
+      return 2, timestamp, sanitize(record)
+    end
+
+config:
+  service: |
+    [SERVICE]
+        Daemon Off
+        Flush 2
+        Log_Level info
+        Parsers_File /fluent-bit/etc/parsers.conf
+        Parsers_File /fluent-bit/etc/conf/custom_parsers.conf
+        HTTP_Server On
+        HTTP_Listen 0.0.0.0
+        HTTP_Port 2020
+        Health_Check On
+        storage.path /buffers
+        storage.sync normal
+        storage.checksum on
+        storage.backlog.mem_limit 32M
+
+  inputs: |
+    [INPUT]
+        Name tail
+        Path /var/log/containers/*.log
+        Exclude_Path /var/log/containers/fluent-bit*_logging_*.log
+        multiline.parser docker, cri
+        Tag kube.*
+        DB /buffers/tail-containers.db
+        DB.Sync Normal
+        DB.Locking True
+        Read_from_Head Off
+        Refresh_Interval 10
+        Rotate_Wait 30
+        Buffer_Chunk_Size 64KB
+        Buffer_Max_Size 2MB
+        Skip_Long_Lines On
+        storage.type filesystem
+
+  filters: |
+    [FILTER]
+        Name kubernetes
+        Match kube.*
+        Merge_Log On
+        Keep_Log Off
+        Labels Off
+        Annotations Off
+        Kube_URL https://kubernetes.default.svc:443
+        Kube_CA_File /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        Kube_Token_File /var/run/secrets/kubernetes.io/serviceaccount/token
+        Kube_Meta_Cache_TTL 300s
+        Kube_Meta_Namespace_Cache_TTL 900s
+        Buffer_Size 0
+
+    [FILTER]
+        Name lua
+        Match kube.*
+        script /fluent-bit/scripts/sanitize.lua
+        call sanitize_log
+
+  outputs: |
+    [OUTPUT]
+        Name loki
+        Match kube.*
+        Host loki.logging.svc.cluster.local
+        Port 3100
+        Uri /loki/api/v1/push
+        Labels job=kube-logs,namespace=$kubernetes['namespace_name'],container=$kubernetes['container_name']
+        Structured_Metadata pod=$kubernetes['pod_name'],node=$kubernetes['host']
+        Line_Format json
+        Compress gzip
+        Buffer_Size 1MB
+        storage.total_limit_size 2G
+        Retry_Limit False
+        workers 2
+        Tls Off
+
+  customParsers: |
+    [PARSER]
+        Name docker_no_time
+        Format json
+        Time_Keep Off
+        Time_Key time
+        Time_Format %Y-%m-%dT%H:%M:%S.%L

@@ -50,21 +50,21 @@ README.md       解决方案文档：定位 / 上游最佳实践 / **本集群�
 | [metrics-server](components/metrics-server/) | `kubectl top` / HPA 的指标源 | — |
 | [cert-manager](components/cert-manager/) | 自签根 CA + `global-ca-issuer` | — |
 | [gateway](components/gateway/) | 共享 L7 入口 + **全仓路由约定** | 80/443 |
-| [victoriametrics](components/victoriametrics/) | 指标后端 | `metrics.app.com` |
-| [loki](components/loki/) | 日志后端 | `logs.app.com` |
-| [jaeger](components/jaeger/) | 链路追踪（badger 本地卷） | `jaeger.app.com` |
+| [victoriametrics](components/victoriametrics/) | 指标后端 | `metrics.dev.test` |
+| [loki](components/loki/) | 日志后端 | `logs.dev.test` |
+| [jaeger](components/jaeger/) | 链路追踪（badger 本地卷） | `jaeger.dev.test` |
 | [opentelemetry](components/opentelemetry/) | OTLP 统一入口，pipeline 按后端动态生成 | 集群内 |
-| [grafana](components/grafana/) | 观测门面，数据源自动预置 | `grafana.app.com` |
+| [grafana](components/grafana/) | 观测门面，数据源自动预置 | `grafana.dev.test` |
 | [postgres](components/postgres/) | CloudNativePG 算子 | TLS passthrough |
 | [dragonflydb](components/dragonflydb/) | Redis 协议缓存 | TCPRoute `:6379` |
 | [kafka](components/kafka/) | Strimzi 算子 | LoadBalancer（不走网关） |
-| [meilisearch](components/meilisearch/) | 商品即时搜索 | `search.app.com` |
+| [meilisearch](components/meilisearch/) | 商品即时搜索 | `search.dev.test` |
 | [minio](components/minio/) | S3 对象存储（pgsty/silo） | `minio-ui` / `s3` |
-| [argo](components/argo/) | ArgoCD (GitOps) | `argocd.app.com` |
+| [argo](components/argo/) | ArgoCD (GitOps) | `argocd.dev.test` |
 | [external-secrets](components/external-secrets/) | ESO：线上 Vault(`vault.apikv.com`) → k8s Secret（密钥不入 Git/明文） | — |
 | [kured](components/kured/) | 维护窗口内自动重启 | — |
 
-域名后缀由 `bootstrap/config.env` 的 `CLUSTER_DOMAIN` 控制（默认 `app.com`）。
+域名后缀由 `bootstrap/config.env` 的 `CLUSTER_DOMAIN` 控制（默认 `dev.test`）。
 
 ## 集群特性（组件配置的前提）
 

@@ -9,8 +9,8 @@ spec:
       sectionName: http # 对应 Gateway 的监听器名称
       namespace: default
   hostnames:
-    - "kafka-ui.app.com"
-    - "kui.app.com"
+    - "kafka-ui.dev.test"
+    - "kui.dev.test"
   rules:
     - matches:
         - path:

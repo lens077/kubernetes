@@ -10,7 +10,7 @@ spec:
       sectionName: http
       namespace: default
   hostnames:
-    - "grafana.app.com" # <-- 替换成你希望访问 Grafana 的域名
+    - "grafana.dev.test" # <-- 替换成你希望访问 Grafana 的域名
   rules:
     - matches:
         - path:
@@ -22,4 +22,4 @@ spec:
 
 # kubectl get gateway -n observability
 # kubectl get httproute -n observability
-# http://grafana.app.com:15580
+# http://grafana.dev.test:15580

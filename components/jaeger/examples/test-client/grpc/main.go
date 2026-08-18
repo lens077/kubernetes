@@ -31,7 +31,7 @@ func main() {
 		})),
 		// otlptracegrpc.WithEndpoint("192.168.3.119:4317"),
 		// otlptracegrpc.WithInsecure(),
-		otlptracegrpc.WithEndpoint("otlp-grpc.app.com:443"),
+		otlptracegrpc.WithEndpoint("otlp-grpc.dev.test:443"),
 	)
 	if err != nil {
 		log.Fatalf("failed to create exporter: %v", err)
