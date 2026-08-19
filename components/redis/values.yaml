@@ -1,0 +1,47 @@
+# CloudPirates chart: bitnami 式 values, 底层是 docker.io 官方 redis 镜像(digest 固定)。
+# bitnami 2025-08 起镜像 legacy 受限后的社区替代, 选型见 README「上游最佳实践」。
+architecture: standalone
+
+image:
+  pullPolicy: IfNotPresent       # chart 默认 Always; tag 本身带 digest, 每次重拉纯浪费
+
+auth:
+  enabled: true
+  existingSecret: redis-password-secret
+  existingSecretPasswordKey: password
+
+# 原生 TLS: 证书由 cert-manager 的 global-ca-issuer 签(certificate.yaml),
+# 与 dragonflydb 的明文 TCPRoute 入口形成对照 —— 这条入口跨网络也不裸奔。
+# 开启后 chart 只监听 6380(TLS), 6379 明文口自动关闭(port 0), 集群内外一律 TLS。
+tls:
+  enabled: true
+  existingSecret: redis-tls
+  authClients: false             # 服务端 TLS + 密码认证; 要 mTLS 再签客户端证书(见 README)
+
+config:
+  # 数据语义(与 dragonfly 的缓存语义相对): AOF 持久化 + 满时拒写不淘汰
+  content: |
+    bind * -::*
+    appendonly yes
+    appendfsync everysec
+    save 900 1
+    save 300 10
+    maxmemory ${REDIS_MAXMEMORY}
+    maxmemory-policy noeviction
+    loglevel notice
+
+persistence:
+  enabled: true
+  storageClass: ${SC_NAME}
+  size: ${REDIS_STORAGE_SIZE}
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 128Mi
+  # maxmemory 的约 1.5 倍: AOF rewrite 与 RDB fork 需要余量; 只限内存不限 CPU(仓内惯例)
+  limits:
+    memory: 384Mi
+
+metrics:
+  enabled: false                 # 集群用 VictoriaMetrics + OTel, 没有 Prometheus Operator 来采

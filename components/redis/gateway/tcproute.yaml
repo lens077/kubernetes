@@ -1,0 +1,41 @@
+# Redis 原生 TLS 走 TCPRoute: 流量本身就是 TLS(redis 进程终结), 网关只做 L4 转发,
+# 因此不用 TLSRoute 也全程加密 —— 与 dragonflydb 的明文 TCPRoute 是同构不同质。
+# 端口用 Redis 惯例的 6380(TLS 口), 提醒客户端"这里必须 --tls"。
+#
+# TCPRoute 没有 hostname 概念, 一个 listener 端口一组后端; IP 由 Cilium 从 LB 池分配。
+# 若将来多个 TLS TCP 服务想共用一个 IP, 可换 TLSRoute 按 SNI 分流(redis-cli 6.2+ 与
+# go-redis 都发 SNI), 参考 postgres/gateway/README.md。
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: redis-gateway
+  namespace: ${NAMESPACE}
+spec:
+  gatewayClassName: cilium
+  listeners:
+    - name: redis-tls
+      port: 6380
+      protocol: TCP
+      allowedRoutes:
+        kinds:
+          - kind: TCPRoute
+        namespaces:
+          from: Same
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: TCPRoute
+metadata:
+  name: redis
+  namespace: ${NAMESPACE}
+spec:
+  parentRefs:
+    - name: redis-gateway
+      sectionName: redis-tls
+  rules:
+    - backendRefs:
+        - name: redis
+          port: 6379   # ⚠️ 这是 Service 端口: chart 的主 Service 固定叫 6379, TLS 开启时
+                       # 其 targetPort(命名端口 redis)指向容器 6380 的 TLS 口。写 6380 会
+                       # Connection refused —— backendRef 引用的是 Service 端口不是容器端口,
+                       # 而 Cilium 的 ResolvedRefs 只校验 Service 存在, 端口错了照样 True(实测)。

@@ -1,0 +1,36 @@
+# grafana-community/tempo(单体版)。⚠️ 旧 grafana/tempo chart 已 deprecated(app 停 2.9),
+# 单体 chart 2026 年迁到 grafana-community/helm-charts —— 别再 add 旧仓库。
+replicas: 1                      # 单体 + local 存储只能 1 副本, 扩副本要换对象存储后端
+
+tempo:
+  repository: grafana/tempo
+  reportingEnabled: false        # 默认会向 stats.grafana.org 上报用量, 大陆出不去还挂日志
+  memBallastSizeMbs: 0           # 默认 1024 —— Go ballast 老手法, 内存紧的节点纯浪费;
+                                 # 新版 Go runtime 有 GC 自适应, 置 0 实测无碍
+  multitenancyEnabled: false     # 开了连查询都要带 X-Scope-OrgID, 单集群单租户不需要
+  retention: ${TEMPO_RETENTION}  # compactor block_retention; 对齐 jaeger badger 的 7 天
+  metricsGenerator:
+    enabled: false               # 开启前先解决其存储默认在 /tmp 的问题(见 README 踩坑)
+    remoteWriteUrl: ""
+  # 存储: chart 默认就是 local backend(/var/tempo), 数据落盘靠下面的 persistence
+  # 接收器: 只留 OTLP —— chart 默认把 Jaeger 四个口(6831/6832/14250/14268)也全开,
+  # 本集群采集统一走 OTel Collector, 多开的端口只是无谓暴露面
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: "0.0.0.0:4317"
+        http:
+          endpoint: "0.0.0.0:4318"
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    # 只限内存不限 CPU(仓内惯例): 查询/压缩是突发负载
+    limits:
+      memory: 1Gi
+
+persistence:
+  enabled: true                  # 默认 false —— 不开的话重启丢全部 trace
+  storageClassName: ${SC_NAME}
+  size: ${TEMPO_STORAGE_SIZE}

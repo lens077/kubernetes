@@ -1,0 +1,85 @@
+# Pangolin 的隧道客户端。把集群里的服务经 WireGuard 暴露到公网 VPS，
+# 局域网侧**全程只出不进** —— 不监听端口，也不需要路由器做任何端口映射。
+#
+# 单副本：多副本会以同一个 newtId 重复注册同一个站点，Pangolin 侧表现为
+# 连接反复顶替（互相踢下线），不是"高可用"。要冗余得在面板另建站点。
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: newt
+  namespace: ${NAMESPACE}
+  labels:
+    app.kubernetes.io/name: newt
+spec:
+  replicas: 1
+  strategy:
+    # 默认 RollingUpdate 会让新旧两个 Pod 同时用一份凭据连上去互相顶替，
+    # 滚动期间隧道反复断开。Recreate 是"先断后连"，短暂中断但状态干净。
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: newt
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: newt
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: newt
+          # ⚠️ 钉版本, 别用 latest(隧道断了才发现上游换了行为很难查)。
+          # 版本号看着像 1.5 之后就是 1.15 —— 它是 1.15.0, 不是 1.5.0；
+          # 写错成 1.5.0 会得到一个"Pod Running 但只打印 usage"的假象
+          # (老版本没有 -endpoint 这个 flag, 解析失败后打帮助然后退出, 而 restartPolicy
+          #  让它一直重启, kubectl get pod 看着一切正常 —— 实测踩过)。
+          image: docker.io/fosrl/newt:1.15.0
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
+          args:
+            - --endpoint=$(PANGOLIN_ENDPOINT)
+            - --id=$(NEWT_ID)
+            - --secret=$(NEWT_SECRET)
+            - --log-level=INFO
+          env:
+            - name: PANGOLIN_ENDPOINT
+              value: "https://pangolin.apikv.com"
+            # 镜像里没有为 uid 1000 设 HOME, 于是 newt 把配置往 `/.config/` 写(根目录),
+            # 在 readOnlyRootFilesystem 下必然失败:
+            #   ERROR Failed to save config: open /.config/newt-client/config.json: no such file
+            # 这**不影响隧道**(它已经从命令行拿到全部参数), 但每次启动都刷一条 ERROR,
+            # 会让人误以为连接有问题。显式给 HOME 指到可写的 emptyDir。
+            - name: HOME
+              value: /home/newt
+            # 凭据来自 Secret，由 install.sh 从 creds 机制创建，**不入库**
+            - name: NEWT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: newt-credentials
+                  key: id
+            - name: NEWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: newt-credentials
+                  key: secret
+          volumeMounts:
+            # readOnlyRootFilesystem 下 newt 仍要写它的 config.json（默认在 $HOME/.config）
+            - name: config
+              mountPath: /home/newt
+          resources:
+            requests:
+              cpu: 25m
+              memory: 32Mi
+            limits:
+              memory: 128Mi
+      volumes:
+        - name: config
+          emptyDir: {}

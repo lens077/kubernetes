@@ -1,0 +1,23 @@
+# 只装 recommender —— 本集群要的是"推荐值",不要它自动改 Pod。
+# updater(驱逐重建)与 admissionController(改 Pod 规格的 webhook)全关:
+#   - 关掉 admissionController 就没有 webhook, 整个证书链问题(certgen job / cert-manager
+#     签发 / CA 注入)随之消失, 也不会出现"webhook 挂了导致全集群 Pod 创建失败"的经典事故;
+#   - 关掉 updater 就不会有人驱逐 Pod。单控制面集群里, 自动驱逐重建的风险远大于收益。
+# 取推荐值的方式是 kubectl describe vpa, 改 resources 由人手动做(见 README)。
+admissionController:
+  enabled: false
+updater:
+  enabled: false
+
+recommender:
+  enabled: true
+  replicas: 1                    # chart 默认 2 —— 两节点集群里第二个副本只是占内存
+  podDisruptionBudget:
+    enabled: false               # 单副本下 PDB(minAvailable:1) 会挡住节点排空,
+                                 # 与 kured 的自动重启窗口直接打架
+  resources:
+    requests:
+      cpu: 50m
+      memory: 200Mi              # recommender 在内存里为每个容器建直方图模型, Pod 越多越涨
+    limits:
+      memory: 500Mi

@@ -1,0 +1,48 @@
+# Okteto Manifest 示例（v2 语法）。放在**你的项目仓库根目录**，不是这个仓库。
+#
+# dev: 下的 key **必须与集群里的工作负载名逐字一致**，否则 okteto 找不到目标：
+#   kubectl -n <ns> get deploy
+---
+dev:
+  my-service:                  # ← = kubectl get deploy 里的名字
+    image: golang:1.26.5       # 带工具链的镜像，不是生产镜像（你要在里面编译）
+    command: bash              # alpine 系只有 sh
+    workdir: /workspace
+    sync:
+      - .:/workspace           # 本地 : 容器内；单模块/monorepo 要同步到能编译的最小根目录
+
+    persistentVolume:
+      enabled: true            # 依赖缓存持久化；关掉的话每次 up 都重新下载
+      storageClass: openebs-lvm
+      size: 5Gi
+
+    forward:
+      - 8080:8080              # 本地 : 容器；调试器端口也写这里
+    # reverse:
+    #   - 9000:9000            # 容器 → 本机的反向转发（让集群里的服务回调你本机）
+
+    environment:
+      # 官方语言镜像的默认 HOME 常是 /root，Pod 强制非 root 时写不进去 —— 指到可写位置
+      - HOME=/go               # golang 镜像的 GOPATH 是 1777，任何 uid 可写
+      - GOCACHE=/go/.cache/go-build
+      # 若工作负载把自签 CA 整目录挂到 /etc/ssl/certs，系统 CA 会被遮蔽，
+      # 容器内所有公网 HTTPS 验不过证书。Debian 系的原始证书还在这里：
+      # - SSL_CERT_DIR=/usr/share/ca-certificates/mozilla
+
+    securityContext:
+      # okteto 的 init 容器需要 root（拷贝二进制、chown 卷），与工作负载的
+      # runAsNonRoot: true 冲突时 kubelet 直接拒绝。这里放行 init，
+      # 但**保住"你的代码仍以非 root 跑"**这个关键性质：
+      runAsUser: 1000
+      runAsGroup: 1000
+      fsGroup: 1000
+      runAsNonRoot: false      # 仅为放行 okteto 的 init 插件
+      # ⚠️ 别偷懒直接 runAsUser: 0 —— 保留原 uid 正是为了让「Secret 读不到」
+      #    「目录写不进去」这类问题当场暴露；跑成 root 等于把要验的东西关掉了
+
+    resources:
+      requests:
+        cpu: 200m
+        memory: 512Mi
+      limits:
+        memory: 2Gi            # 编译比运行吃内存得多，别照抄生产 limits

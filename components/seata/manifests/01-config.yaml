@@ -1,0 +1,38 @@
+# seata-server 2.6.0 的完整 application.yml（覆盖镜像内自带的那份）。
+#
+# ⚠️ 官方 K8s 文档页仍是 2.3 时代的示例（7091 端口 + console），照抄会困惑：
+#    2.5 起 console web UI 已从 seata-server 移除、2.6 默认 web-application-type: none，
+#    server 本体**只有 8091（Netty TC 端口）**。console 现为独立模块（要 JDK25 + namingserver），
+#    单副本验证不装。
+#
+# 只改上游默认的三处：store.mode 的注释保持 file、日志路径指向可写目录、显式写死 service-port。
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: seata-server-config
+  namespace: ${NAMESPACE}
+data:
+  application.yml: |
+    server:
+      port: 8091
+    spring:
+      application:
+        name: seata-server
+      main:
+        web-application-type: none      # 2.6 默认值；server 本体无 HTTP 端点
+    logging:
+      config: classpath:logback-spring.xml
+      file:
+        path: /seata-server/logs        # 镜像内 $HOME 未必可写，显式指到工作目录
+    seata:
+      config:
+        type: file                      # 单副本不接 Nacos/Consul：配置就是这份 ConfigMap
+      registry:
+        type: file                      # 客户端直接连 Service DNS，不做服务发现
+      store:
+        mode: file                      # 事务日志落 PVC；换 db 模式见 README「本集群取舍」
+        file:
+          dir: /seata-server/sessionStore
+      server:
+        service-port: 8091              # 不写的话默认是 ${server.port}+1000 = 9091，
+                                        # 客户端按 8091 连就会连不上（易踩）

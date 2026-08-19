@@ -1,0 +1,19 @@
+# Redis 服务端 TLS 证书(cert-manager 签, install.sh 在 helm 之前渲染并 apply —— Pod
+# 启动就要挂 secret redis-tls)。客户端用 global-root-ca 的 ca.crt 校验(见 README「验证」)。
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: redis-tls
+  namespace: ${NAMESPACE}
+spec:
+  secretName: redis-tls
+  issuerRef:
+    name: global-ca-issuer
+    kind: ClusterIssuer
+  duration: 2160h                # 90d
+  renewBefore: 360h              # 15d
+  dnsNames:
+    - ${HOSTNAME}                # 局域网经 Gateway 访问用这个名做证书校验
+    - redis.redis.svc.cluster.local
+    - redis.redis.svc
+    - redis

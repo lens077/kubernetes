@@ -1,0 +1,59 @@
+# VPA CR 示例：只观察、不改动（updateMode: Off）。
+#   kubectl apply -f vpa-off-mode.yaml
+#   kubectl -n <ns> describe vpa <name>      # 看 Recommendation 段
+#
+# updateMode 取值（本集群只用 Off —— updater/admissionController 都没装，其余模式无效）：
+#   Off              只算推荐值，不改任何东西          ← 本仓唯一使用的模式
+#   Initial          只在 Pod 创建时套用推荐值
+#   Recreate         驱逐重建 Pod 套用（风险最大）
+#   InPlaceOrRecreate  K8s 1.35 起 in-place resize 已 GA、VPA 1.6 起该模式 GA，
+#                    但仍需装 updater + admissionController
+#   ⚠️ Auto 自 VPA 1.5 起已 deprecated，别再照旧文档写
+#
+# 推荐值要"养"：recommender 按滑动窗口建直方图，**至少跑满一天**才有参考价值，
+# 一周以上更稳。刚 apply 完就看多半是空的（status 里没有 recommendation 段）。
+---
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: grafana
+  namespace: observability
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: grafana
+  updatePolicy:
+    updateMode: "Off"
+  resourcePolicy:
+    containerPolicies:
+      - containerName: "*"
+        controlledResources: ["cpu", "memory"]
+        # 只看推荐时这些边界不生效，但写上能让推荐值落在合理区间内，
+        # 免得把一条离群峰值直接推成 4Gi
+        minAllowed:
+          cpu: 25m
+          memory: 64Mi
+        maxAllowed:
+          cpu: "1"
+          memory: 1Gi
+---
+# CloudNativePG 的 Cluster 也能直接当 targetRef（CRD 带 scale subresource）。
+# ⚠️ 官方明令：CNPG 只允许 updateMode: Off —— 算子视 spec.resources 为真相源，
+# VPA 改了会被顶回；驱逐又会被 primary 的 PDB 挡住导致 stall。
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: pg-main
+  namespace: postgresql
+spec:
+  targetRef:
+    apiVersion: postgresql.cnpg.io/v1
+    kind: Cluster
+    name: pg-main
+  updatePolicy:
+    updateMode: "Off"
+  resourcePolicy:
+    containerPolicies:
+      - containerName: postgres
+        controlledResources: ["cpu", "memory"]

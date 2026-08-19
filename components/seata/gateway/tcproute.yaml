@@ -1,0 +1,39 @@
+# Seata TC 的 8091 是 **Netty 私有二进制协议**，不是 HTTP —— 挂共享网关的 http/https
+# listener 是无效的（archive 里的旧 install.sh 就写成了 HTTPRoute + sectionName: http，
+# 那条路由永远不会工作：Envoy 按 HTTP 解析私有协议帧必然失败）。只能走 L4 的 TCPRoute。
+#
+# 端口沿用 8091，IP 由 Cilium 从 LB 池自动分配。
+# 注意这条入口是**明文**：Seata 客户端不支持在 TC 连接上做 TLS（无原生 TLS 配置项），
+# 只在可信局域网内使用；跨网络需自行加 mTLS 隧道（如 Cilium 节点间加密）。
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: seata-gateway
+  namespace: ${NAMESPACE}
+spec:
+  gatewayClassName: cilium
+  listeners:
+    - name: tc
+      port: 8091
+      protocol: TCP
+      allowedRoutes:
+        kinds:
+          - kind: TCPRoute
+        namespaces:
+          from: Same
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: TCPRoute
+metadata:
+  name: seata
+  namespace: ${NAMESPACE}
+spec:
+  parentRefs:
+    - name: seata-gateway
+      sectionName: tc
+  rules:
+    - backendRefs:
+        - name: seata-server
+          port: 8091          # Service 端口（不是容器端口）；写错照样 ResolvedRefs=True，
+                              # 但连接会 refused —— 见 redis 组件 README 的同款踩坑
