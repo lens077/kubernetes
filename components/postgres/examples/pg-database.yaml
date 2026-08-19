@@ -1,0 +1,22 @@
+# 在既有 Cluster 里声明式建库（CNPG 1.25+ 的 Database CRD）。
+#   kubectl apply -f pg-database.yaml
+#   kubectl -n postgresql get database
+#
+# 为什么用 CR 而不是 `psql -c 'CREATE DATABASE'`：手敲的库不在任何声明里，
+# 集群重建后没人记得建过它——业务起来才发现连不上（本仓踩过同类问题）。
+#
+# ⚠️ `spec.name` 一旦创建不可改；删 CR 默认**不删库**（reclaimPolicy 默认 retain），
+#    要连库一起删得显式写 `spec.databaseReclaimPolicy: delete`。
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata:
+  name: ecommerce
+  namespace: postgresql
+spec:
+  name: ecommerce
+  owner: app                 # 复用 Cluster 自带的 app 角色，口令在 secret pg-main-app
+  cluster:
+    name: pg-main
+  # 业务库建议显式钉排序规则，避免跟随 initdb 的环境默认值漂移
+  encoding: UTF8

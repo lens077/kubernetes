@@ -10,12 +10,25 @@ metadata:
   namespace: postgresql
 spec:
   instances: 1                       # 两节点集群，多副本的价值有限；要 HA 先加节点
+  certificates:
+    serverAltDNSNames:
+      - pg.dev.test                  # 对外域名进服务端证书 SAN。CNPG 默认只签各 Service 的
+                                     # 内部 DNS 名，经网关用 sslmode=verify-full 连必须加这条，
+                                     # 否则主机名校验失败（实测踩过）
   storage:
     size: 10Gi
     storageClass: ${SC_NAME}
+  # 官方推荐 requests=limits(Guaranteed QoS, operator 会配合调 OOM 优先级保 postmaster)。
+  # 本集群内存偏紧, 取 1Gi 顶格; CPU 特意不限 —— 查询是突发负载(与 VM/dragonfly 同理)。
+  # CPU 不限则 QoS 只到 Burstable, 是"省内存 vs 干净关机"的主动取舍。
+  resources:
+    requests:
+      memory: 1Gi
+    limits:
+      memory: 1Gi
   postgresql:
     parameters:
-      shared_buffers: 512MB
+      shared_buffers: 256MB          # 官方起点 = 容器内存的 25%; 改它会滚动重启, 单实例即停机窗口
       max_connections: "200"
       random_page_cost: "1.1"        # SSD/NVMe
       effective_io_concurrency: "200"

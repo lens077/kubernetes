@@ -74,15 +74,30 @@ kubectl get crd tlsroutes.gateway.networking.k8s.io \
 旧文件仍是 `v1alpha2`，直接 apply 会失败。Cilium 文档也专门警告：
 v1.20 之前用过 TLSRoute 的集群，要装 experimental 版 CRD，否则**存量记录 apiserver 读不出来**。
 
+## ⚠️ 客户端必须用直接 TLS（sslnegotiation=direct）
+
+实测（2026-08-18）：passthrough 网关的 Envoy listener 只认**第一个包就是 ClientHello**
+的连接。PostgreSQL 传统协商（先发 8 字节明文 `SSLRequest`、等服务端回 `S` 再握手）
+在这里握不了手——`openssl -starttls postgres` 和默认参数的 psql 都会失败。
+
+- psql/libpq ≥17：连接串加 `sslnegotiation=direct`（PG 17+ 服务端接受直接握手）
+- openssl 验证：**不要**加 `-starttls postgres`，直接 TLS 即可
+- 老客户端（libpq <17、各语言老驱动）走不了这条路——要么升驱动，要么放弃 SNI 改用
+  TCPRoute（一实例一端口）
+
+同理，证书要过 `verify-full`，需在 Cluster CR 的 `spec.certificates.serverAltDNSNames`
+里加上对外域名（CNPG 默认只签内部 Service DNS 名），见 `../examples/pg-cluster.yaml`。
+
 ## 验证
 
 ```bash
 VIP=$(kubectl -n postgresql get gateway pg-passthrough-gateway -o jsonpath='{.status.addresses[0].value}')
 
-# SNI 是否正确分流（看服务端返回的证书是不是这个实例的）
-openssl s_client -connect $VIP:5432 -servername pg.dev.test -starttls postgres </dev/null 2>/dev/null \
-  | openssl x509 -noout -subject
+# SNI 是否正确分流（看服务端返回的证书是不是这个实例的；注意没有 -starttls）
+openssl s_client -connect $VIP:5432 -servername pg.dev.test </dev/null 2>/dev/null \
+  | openssl x509 -noout -subject -ext subjectAltName
 
-# 真连一次
-PGPASSWORD=xxx psql "host=pg.dev.test port=5432 dbname=app user=app sslmode=verify-full" -c 'select 1'
+# 真连一次（libpq ≥17）
+PGPASSWORD=xxx psql "host=pg.dev.test hostaddr=$VIP dbname=app user=app \
+  sslmode=verify-full sslnegotiation=direct sslrootcert=<pg-main-ca 的 ca.crt>" -c 'select 1'
 ```

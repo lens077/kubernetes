@@ -1,0 +1,41 @@
+# pg-main 的对外暴露(TLS passthrough + SNI 分流),与 pg-cluster.yaml 配套:
+#   kubectl apply -f pg-gateway.yaml
+# 模板与选型说明见 ../gateway/README.md(为什么是 TLSRoute 而不是 TCPRoute)。
+# 实例按需创建,所以这份清单不进自动 apply 的 gateway/ 目录 —— 算子刚装完时
+# pg-main-rw Service 还不存在,路由会一直 ResolvedRefs=False。
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: pg-passthrough-gateway
+  namespace: postgresql
+spec:
+  gatewayClassName: cilium
+  # 不写 addresses: IP 由 Cilium 从 LB 池自动分配, kubectl get gateway -o wide 查看
+  listeners:
+    - name: pg
+      port: 5432
+      protocol: TLS        # 必须是 TLS,不是 TCP/HTTPS
+      tls:
+        mode: Passthrough  # 网关不解密,原样透传给 PostgreSQL
+      allowedRoutes:
+        kinds:
+          - kind: TLSRoute
+        namespaces:
+          from: Same
+---
+apiVersion: gateway.networking.k8s.io/v1   # ⚠️ 必须 v1: 本集群 CRD 只 served v1
+kind: TLSRoute
+metadata:
+  name: pg-main
+  namespace: postgresql
+spec:
+  parentRefs:
+    - name: pg-passthrough-gateway
+      sectionName: pg
+  hostnames:
+    - "pg.dev.test"          # SNI 域名;再加实例就再加一条 TLSRoute 换 hostname
+  rules:
+    - backendRefs:
+        - name: pg-main-rw   # CNPG 生成的读写 Service
+          port: 5432

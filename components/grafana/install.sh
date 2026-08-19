@@ -36,6 +36,14 @@ if comp_installed observability jaeger; then
 "
   sources+=(Jaeger)
 fi
+if comp_installed tempo tempo; then
+  # 评估期与 Jaeger 并存(ADDON_TEMPO 默认 false); TraceQL 查询走 3200
+  ds+="      - name: Tempo
+        type: tempo
+        url: http://tempo.tempo.svc.cluster.local:3200
+"
+  sources+=(Tempo)
+fi
 
 log_step "安装 $ID → 命名空间 $NAMESPACE (数据源: ${sources[*]:-无})"
 
