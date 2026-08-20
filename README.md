@@ -69,8 +69,21 @@ README.md       解决方案文档：定位 / 上游最佳实践 / **本集群�
 | [tempo](components/tempo/) | Grafana Tempo 链路后端（评估期，与 jaeger 并存） | `tempo.dev.test` |
 | [seata](components/seata/) | 事务协调器 TC（技术验证；ecommerce 走 Outbox+Saga 不依赖它） | TCPRoute `:8091` |
 | [okteto](components/okteto/) | 内环开发 CLI —— **本机组件，不往集群装东西** | — |
+| [nats](components/nats/) | NATS JetStream 事件底座（ecommerce 选型定稿 §1；meta R3，交易 R3/埋点 R1） | 集群内 `:4222` |
+| [victoria-logs](components/victoria-logs/) | VictoriaLogs 日志后端（拍板替 loki，双写过渡期并存） | 集群内 `:9428` |
+| [vector](components/vector/) | 容器日志采集 + VRL PII 脱敏（替 fluent-bit，双写期并存） | — |
+| [clickhouse](components/clickhouse/) | 埋点 OLAP 单节点（官方镜像 StatefulSet，内存帽 1.2G） | 集群内 `:8123/:9000` |
+| [openfga](components/openfga/) | ReBAC 授权（store=CNPG pg-main 独立库） | 集群内 `:8080` |
+| [openbao](components/openbao/) | 凭据后端（ESO 同步；**重启需手工 unseal**） | 集群内 `:8200` |
+| [trust-manager](components/trust-manager/) | CA bundle 分发（global-root-ca → 各 ns ConfigMap） | — |
+| [kyverno](components/kyverno/) | 准入 policy（audit 先行 14 天零误报再 enforce） | — |
+| [keda](components/keda/) | 事件驱动扩缩（cron/prometheus scaler 先行） | — |
+| [argo-rollouts](components/argo-rollouts/) | 金丝雀控制器（流量切分待服务发现改造） | — |
+| [spegel](components/spegel/) | 节点间 P2P 镜像缓存（实测 8.8s→102ms 命中） | NodePort `:30021` |
+| [kruise](components/kruise/) | OpenKruise ImagePullJob —— **❌ 2026-08-20 实测否决已卸载**（webhook 冻结集群） | — |
 
 域名后缀由 `bootstrap/config.env` 的 `CLUSTER_DOMAIN` 控制（默认 `dev.test`）。
+2026-08-20 选型定稿新增 12 组件的部署验证记录与坑册见 [`DEPLOY-RECORD-2026-08-20.md`](DEPLOY-RECORD-2026-08-20.md)。
 
 ## 集群特性（组件配置的前提）
 
