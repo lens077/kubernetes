@@ -1,0 +1,20 @@
+# Dragonfly 服务端 TLS 证书(cert-manager 签, install.sh 在 helm 之前渲染并 apply)。
+# 客户端用 global-root-ca 的 ca.crt 校验 —— 与 redis 组件同链同构, 服务侧 bootstrap 的
+# ca_pem 不需要变更; SAN 必须含 dragonfly.dragonfly.svc(服务端 insecure_skip_verify=false)。
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: dragonfly-tls
+  namespace: ${NAMESPACE}
+spec:
+  secretName: dragonfly-tls
+  issuerRef:
+    name: global-ca-issuer
+    kind: ClusterIssuer
+  duration: 2160h                # 90d
+  renewBefore: 360h              # 15d
+  dnsNames:
+    - ${HOSTNAME}                # redis.dev.test —— 局域网经 Gateway 访问用
+    - dragonfly.dragonfly.svc.cluster.local
+    - dragonfly.dragonfly.svc
+    - dragonfly

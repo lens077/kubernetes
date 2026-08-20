@@ -46,3 +46,12 @@ resources:
   # 原部署 limits.cpu=100m 会造成缓存限流抖动，特意只限内存不限 CPU
   limits:
     memory: 512Mi
+
+# 原生 TLS(2026-08-20, 与 redis 组件同构): 证书由 cert-manager global-ca-issuer 签
+# (certificate.yaml), 6379 单口直接 TLS —— 客户端连 rediss://dragonfly.dragonfly.svc:6379,
+# 与此前 redis.redis.svc:6379 仅 host 不同。历史注: 旧集群曾出现"客户端配了 TLS 而服务端
+# 没开"的死路(cart pre.yml 注释可考), 本次让它成真。
+tls:
+  enabled: true
+  createCerts: false             # 证书自管(SAN 要含 svc 域名), 不用 chart 的 cert-manager 集成
+  existing_secret: dragonfly-tls

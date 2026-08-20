@@ -72,3 +72,18 @@ printf 'AUTH %s\r\nSET probe hello\r\nGET probe\r\nQUIT\r\n' "$PASS" | nc -w 5 $
   `helm upgrade` 必须带 `--version`。install.sh 里会自动解析最新版并锁进 `versions.lock`。
 - **go-redis 连不上但集群内 telnet 通**：检查密码。chart 的 `passwordFromSecret` 指向的
   Secret 若不存在，Pod 会起不来；若密码不匹配，客户端会在 AUTH 阶段失败。
+
+## 原生 TLS（2026-08-20）
+
+- 证书：cert-manager `global-ca-issuer` 签 `dragonfly-tls`（certificate.yaml），SAN 含
+  `redis.dev.test` 与 `dragonfly.dragonfly.svc(.cluster.local)` —— 服务端 bootstrap 是
+  `insecure_skip_verify: false` + 内联 `ca_pem`，SAN 缺了直接握手失败。
+- 6379 单口 TLS-only（明文连接报 `Bad TLS header`）；网关外露 TCP `6380` 直通（TLS 由
+  dragonfly 进程终结，网关只做 L4）——替换掉历史上"客户端配了 TLS 服务端没开"的死路。
+- **密码与 redis 组件同值**（creds/dragonfly-password 由 redis-password-secret 同步而来），
+  使十个服务与 Config Center 的切换只需替换 host；`--user default` AUTH 已实测兼容。
+- 验证：`redis-cli --tls --cacert <global-root-ca 的 ca.crt> -h dragonfly.dragonfly.svc --user default PING`
+  （CA 可直接用 trust-manager 分发到各 ns 的 cm/global-root-ca）；反证=不带 --tls 必须被拒。
+- ⚠️ 消费者盘点三查（切换实测教训）：config.entry 扫描 + config-center 自举 Secret + 网关四键
+  —— Config Center 自己也是缓存消费者，漏了它会在下一次全量重启时全线炸（见 ecommerce 仓
+  config 域 experience: config-center-self-bootstrap-blindspot）。

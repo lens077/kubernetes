@@ -56,7 +56,7 @@ README.md       解决方案文档：定位 / 上游最佳实践 / **本集群�
 | [opentelemetry](components/opentelemetry/) | OTLP 统一入口，pipeline 按后端动态生成 | 集群内 |
 | [grafana](components/grafana/) | 观测门面，数据源自动预置 | `grafana.dev.test` |
 | [postgres](components/postgres/) | CloudNativePG 算子 | TLS passthrough |
-| [dragonflydb](components/dragonflydb/) | Redis 协议缓存 | TCPRoute `:6379` |
+| [dragonflydb](components/dragonflydb/) | Redis 协议缓存主力（**原生 TLS**，2026-08-20 起证书 cert-manager 签） | TCPRoute `:6380`(TLS) |
 | [kafka](components/kafka/) | Strimzi 算子 | LoadBalancer（不走网关） |
 | [meilisearch](components/meilisearch/) | 商品即时搜索 | `search.dev.test` |
 | [minio](components/minio/) | S3 对象存储（pgsty/silo） | `minio-ui` / `s3` |
@@ -65,7 +65,7 @@ README.md       解决方案文档：定位 / 上游最佳实践 / **本集群�
 | [kured](components/kured/) | 维护窗口内自动重启 | — |
 | [vpa](components/vpa/) | 只装 recommender：出 `resources` 推荐值，不自动改 Pod | — |
 | [newt](components/newt/) | Pangolin 隧道客户端，把集群服务暴露到 `*.apikv.com` | 纯出站 |
-| [redis](components/redis/) | 官方 OSS Redis + 原生 TLS（技术验证；缓存主力仍是 dragonflydb） | TCPRoute `:6380` |
+| [redis](components/redis/) | 官方 OSS Redis + 原生 TLS（技术验证；**2026-08-20 已 scale 0 关停留备**，缓存主力回 dragonflydb） | TCPRoute `:6380` |
 | [tempo](components/tempo/) | Grafana Tempo 链路后端（评估期，与 jaeger 并存） | `tempo.dev.test` |
 | [seata](components/seata/) | 事务协调器 TC（技术验证；ecommerce 走 Outbox+Saga 不依赖它） | TCPRoute `:8091` |
 | [okteto](components/okteto/) | 内环开发 CLI —— **本机组件，不往集群装东西** | — |

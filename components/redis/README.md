@@ -1,5 +1,8 @@
 # redis —— 官方 OSS Redis 单机（原生 TLS）
 
+> **2026-08-20 已 scale 0 关停留备**：缓存主力切回 dragonflydb（原生 TLS，密码与本组件同值）。
+> PVC/证书/Secret 保留，回滚=`kubectl -n redis scale sts redis --replicas=1` + 服务侧 host 换回。
+
 ## 1. 定位
 
 **技术验证组件，默认不装**（`ADDON_REDIS=false`）。集群的缓存主力是
