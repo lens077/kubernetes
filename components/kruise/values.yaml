@@ -1,0 +1,13 @@
+# OpenKruise —— 2026-08-20 选型定稿 §7：仅启用 ImagePullJob（大促镜像预热），
+# CloneSet 原地升级为可选试点，不迁移工作负载语义
+featureGates: "ImagePullJobGate=true"
+manager:
+  replicas: 1
+  resources:
+    requests: { cpu: 100m, memory: 128Mi }
+    limits: { cpu: 500m, memory: 512Mi }   # 200m 节流曾致 leader lease 5s 超时 CrashLoop(fail-closed webhook 阻塞全集群), 2026-08-20 实测
+daemon:
+  enablePprof: false
+  resources:
+    requests: { cpu: 10m, memory: 32Mi }
+    limits: { cpu: 100m, memory: 128Mi }

@@ -1,0 +1,10 @@
+# Argo Rollouts —— 2026-08-20 选型定稿 §9（金丝雀；流量切分待 Consul 退役后生效）
+installCRDs: true
+controller:
+  replicas: 1
+  resources:
+    requests: { cpu: 25m, memory: 64Mi }
+    limits: { cpu: 200m, memory: 256Mi }
+  metrics: { enabled: true }
+dashboard:
+  enabled: false

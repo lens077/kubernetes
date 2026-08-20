@@ -1,0 +1,22 @@
+# 最小金丝雀演示（纯副本权重，不依赖网格/网关）
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata: { name: rollouts-demo, namespace: default }
+spec:
+  replicas: 2
+  strategy:
+    canary:
+      steps:
+        - setWeight: 50
+        - pause: { duration: 10s }
+  selector: { matchLabels: { app: rollouts-demo } }
+  template:
+    metadata: { labels: { app: rollouts-demo } }
+    spec:
+      containers:
+        - name: main
+          image: busybox
+          command: [sleep, "3600"]
+          resources:
+            requests: { cpu: 5m, memory: 8Mi }
+            limits: { cpu: 20m, memory: 32Mi }

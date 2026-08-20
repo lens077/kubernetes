@@ -1,0 +1,36 @@
+# 首批 audit 策略(观察 14 天零误报后才逐条转 Enforce)
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata: { name: require-requests-limits }
+spec:
+  validationFailureAction: Audit
+  failurePolicy: Ignore
+  background: true
+  rules:
+    - name: require-requests-limits
+      match: { any: [ { resources: { kinds: [Pod] } } ] }
+      validate:
+        message: "containers must define CPU/memory requests and limits"
+        pattern:
+          spec:
+            containers:
+              - resources:
+                  requests: { cpu: "?*", memory: "?*" }
+                  limits: { memory: "?*" }
+---
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata: { name: disallow-latest-tag }
+spec:
+  validationFailureAction: Audit
+  failurePolicy: Ignore
+  background: true
+  rules:
+    - name: disallow-latest-tag
+      match: { any: [ { resources: { kinds: [Pod] } } ] }
+      validate:
+        message: "latest tag is prohibited"
+        pattern:
+          spec:
+            containers:
+              - image: "!*:latest"

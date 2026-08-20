@@ -1,0 +1,70 @@
+# ClickHouse 单节点 —— 2026-08-20 选型定稿 §3（用户拍板：单节点，内存顶格 2G）
+# 官方镜像多架构; NATS 表引擎为 server 内建能力（接 JetStream 时直接建表用）
+apiVersion: v1
+kind: ConfigMap
+metadata: { name: clickhouse-config, namespace: clickhouse }
+data:
+  01-memory.xml: |
+    <clickhouse>
+      <max_server_memory_usage>1288490188</max_server_memory_usage><!-- 1.2GiB; node2 与控制面同节点, 爆炸半径钉死 -->
+      <mark_cache_size>268435456</mark_cache_size>
+    </clickhouse>
+  02-listen.xml: |
+    <clickhouse>
+      <listen_host>0.0.0.0</listen_host>
+    </clickhouse>
+---
+apiVersion: v1
+kind: Service
+metadata: { name: clickhouse, namespace: clickhouse }
+spec:
+  clusterIP: None
+  selector: { app: clickhouse }
+  ports:
+    - { name: http, port: 8123 }
+    - { name: native, port: 9000 }
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata: { name: clickhouse, namespace: clickhouse }
+spec:
+  serviceName: clickhouse
+  replicas: 1
+  selector: { matchLabels: { app: clickhouse } }
+  template:
+    metadata: { labels: { app: clickhouse } }
+    spec:
+      containers:
+        - name: clickhouse
+          image: clickhouse/clickhouse-server:26.6
+          ports:
+            - { containerPort: 8123 }
+            - { containerPort: 9000 }
+          env:
+            - { name: CLICKHOUSE_USER, value: app }
+            - name: CLICKHOUSE_PASSWORD
+              valueFrom: { secretKeyRef: { name: clickhouse-app, key: password } }
+            - { name: CLICKHOUSE_DB, value: analytics }
+          volumeMounts:
+            - { name: data, mountPath: /var/lib/clickhouse }
+            - { name: config, mountPath: /etc/clickhouse-server/config.d }
+          resources:
+            requests: { cpu: 300m, memory: 512Mi }
+            limits: { cpu: "2", memory: 1536Mi }  # 2026-08-20 实测调低: 与控制面同居 node2, 防 etcd 受挤
+          readinessProbe:
+            httpGet: { path: /ping, port: 8123 }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /ping, port: 8123 }
+            initialDelaySeconds: 30
+            periodSeconds: 20
+      volumes:
+        - name: config
+          configMap: { name: clickhouse-config }
+  volumeClaimTemplates:
+    - metadata: { name: data }
+      spec:
+        accessModes: [ReadWriteOnce]
+        storageClassName: ${SC_NAME}
+        resources: { requests: { storage: 10Gi } }

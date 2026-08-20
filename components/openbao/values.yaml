@@ -1,0 +1,24 @@
+# OpenBao —— 2026-08-20 选型定稿 §4（凭据后端, 替 BSL 的 Vault; ESO 从它同步）
+server:
+  standalone:
+    enabled: true
+    config: |
+      ui = false
+      listener "tcp" {
+        tls_disable = 1
+        address = "[::]:8200"
+        cluster_address = "[::]:8201"
+      }
+      storage "file" {
+        path = "/openbao/data"
+      }
+  dataStorage:
+    enabled: true
+    size: 1Gi
+    storageClass: ${SC_NAME}
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { memory: 256Mi }
+ui: { enabled: false }
+injector: { enabled: false }
+csi: { enabled: false }

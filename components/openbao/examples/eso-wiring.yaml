@@ -1,0 +1,28 @@
+# ESO ↔ OpenBao 接线: ClusterSecretStore(token auth, eso-read 只读) + 演示 ExternalSecret
+apiVersion: external-secrets.io/v1
+kind: ClusterSecretStore
+metadata: { name: openbao }
+spec:
+  provider:
+    vault:
+      server: "http://openbao.openbao.svc:8200"
+      path: secret
+      version: v2
+      auth:
+        tokenSecretRef:
+          name: openbao-eso-token
+          namespace: external-secrets
+          key: token
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata: { name: demo-from-openbao, namespace: default }
+spec:
+  refreshInterval: 1h
+  secretStoreRef: { name: openbao, kind: ClusterSecretStore }
+  target: { name: demo-from-openbao, creationPolicy: Owner }
+  data:
+    - secretKey: username
+      remoteRef: { key: demo, property: username }
+    - secretKey: password
+      remoteRef: { key: demo, property: password }

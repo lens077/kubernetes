@@ -1,0 +1,23 @@
+# OpenFGA —— 2026-08-20 选型定稿 §4（用户拍板; 形态=对抗第2轮 T5）
+replicaCount: 2
+playground: { enabled: false }
+postgresql: { enabled: false }        # 不用 chart 内嵌 PG, 指向 CNPG pg-main
+datastore:
+  engine: postgres
+  uriSecret: openfga-datastore        # install.sh 生成(含独立库 openfga 的 URI)
+  applyMigrations: true
+  waitForMigrations: true
+  migrationType: job
+  maxOpenConns: 10
+  maxIdleConns: 5
+resources:
+  requests: { cpu: 50m, memory: 128Mi }
+  limits: { cpu: 500m, memory: 256Mi }
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          topologyKey: kubernetes.io/hostname
+          labelSelector:
+            matchLabels: { app.kubernetes.io/name: openfga }

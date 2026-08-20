@@ -1,0 +1,35 @@
+# Vector Agent —— 2026-08-20 选型定稿 §8（替 fluent-bit；VRL PII 脱敏可单测）
+# 双写期与 fluent-bit 并行：Vector→VictoriaLogs，fluent-bit→Loki，互不影响
+role: Agent
+resources:
+  requests: { cpu: 50m, memory: 128Mi }
+  limits: { cpu: 250m, memory: 256Mi }
+persistence:
+  hostPath:
+    enabled: true
+    path: /var/lib/vector      # kubernetes_logs checkpoint，重启续读
+customConfig:
+  data_dir: /var/lib/vector
+  api: { enabled: true, address: 127.0.0.1:8686 }
+  sources:
+    kubernetes:
+      type: kubernetes_logs
+      auto_partial_merge: true
+      read_from: end           # 并行验证期不回灌历史日志
+      max_line_bytes: 32768
+  transforms:
+    pii_redact:
+      type: remap
+      inputs: [kubernetes]
+      source: |
+        .message = replace(to_string!(.message), r'\b1[3-9]\d{9}\b', "[PHONE_REDACTED]")
+        .message = replace(.message, r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b', "[EMAIL_REDACTED]")
+  sinks:
+    victorialogs:
+      type: http
+      inputs: [pii_redact]
+      uri: "http://vl-victoria-logs-single-server.logging.svc.cluster.local:9428/insert/jsonline?_stream_fields=kubernetes.pod_namespace,kubernetes.pod_node_name,kubernetes.pod_name,kubernetes.container_name&_msg_field=message&_time_field=timestamp"
+      compression: gzip
+      encoding: { codec: json }
+      framing: { method: newline_delimited }
+      healthcheck: { enabled: false }

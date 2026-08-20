@@ -1,0 +1,9 @@
+# 两节点预拉 busybox；期望 status.succeeded == 节点数
+apiVersion: apps.kruise.io/v1alpha1
+kind: ImagePullJob
+metadata: { name: busybox-prepull, namespace: default }
+spec:
+  image: busybox:1.37
+  completionPolicy: { type: Always }
+  parallelism: 2
+  selector: { matchLabels: {} }

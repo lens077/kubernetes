@@ -1,0 +1,28 @@
+# 大促预热 cron scaler 演示：应用后 keda-cron 副本应扩到 2（窗口=全天，便于验证）
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: keda-cron, namespace: default }
+spec:
+  replicas: 0
+  selector: { matchLabels: { app: keda-cron } }
+  template:
+    metadata: { labels: { app: keda-cron } }
+    spec:
+      containers:
+        - name: sleep
+          image: busybox
+          command: [sleep, "3600"]
+          resources:
+            requests: { cpu: 5m, memory: 8Mi }
+            limits: { cpu: 20m, memory: 32Mi }
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata: { name: keda-cron, namespace: default }
+spec:
+  scaleTargetRef: { name: keda-cron }
+  minReplicaCount: 0
+  maxReplicaCount: 2
+  triggers:
+    - type: cron
+      metadata: { timezone: UTC, start: "0 0 * * *", end: "59 23 * * *", desiredReplicas: "2" }

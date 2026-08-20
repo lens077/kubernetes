@@ -1,0 +1,33 @@
+# Kyverno —— 2026-08-20 选型定稿 §11: audit 14 天零误报 → enforce;
+# enforce 前必须处理「签名纪元」(存量镜像补签+删pod重建演练, 对抗第3轮 C1 补丁)
+admissionController:
+  replicas: 1
+  resources:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits: { memory: 256Mi }
+backgroundController:
+  replicas: 1
+  resources:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits: { memory: 256Mi }
+cleanupController:
+  replicas: 1
+  resources:
+    requests: { cpu: 25m, memory: 48Mi }
+    limits: { memory: 128Mi }
+reportsController:
+  replicas: 1
+  resources:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits: { memory: 256Mi }
+features:
+  backgroundScan:
+    backgroundScanInterval: 24h
+    backgroundScanWorkers: 1
+config:
+  webhooks:
+    namespaceSelector:
+      matchExpressions:
+        - key: kubernetes.io/metadata.name
+          operator: NotIn
+          values: [kube-system, argocd]

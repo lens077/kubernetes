@@ -1,0 +1,13 @@
+# trust-manager —— 2026-08-20 选型定稿 §4（用户拍板）: CA bundle 标准化分发,
+# 正面解决「library chart 整卷挂载 /etc/ssl/certs 遮蔽系统 CA」坑(ecommerce TODO L32)
+replicaCount: 1
+app:
+  trust:
+    namespace: cert-manager     # Bundle 的 source Secret 必须在这个 ns
+resources:
+  requests: { cpu: 25m, memory: 64Mi }
+  limits: { memory: 128Mi }
+defaultPackage:
+  enabled: false
+secretTargets:
+  enabled: false                # 只出 ConfigMap; 开 Secret target 会给跨集群 Secret 读权限

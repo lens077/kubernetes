@@ -1,0 +1,23 @@
+# KEDA —— 2026-08-20 选型定稿 §7（cron/prometheus scaler 先行，不等 NATS）
+operator:
+  replicaCount: 1
+metricsServer:
+  replicaCount: 1
+webhooks:
+  enabled: true
+  replicaCount: 1
+  failurePolicy: Ignore
+resources:
+  operator:
+    requests: { cpu: 25m, memory: 64Mi }
+    limits: { cpu: 200m, memory: 256Mi }
+  metricServer:
+    requests: { cpu: 25m, memory: 64Mi }
+    limits: { cpu: 200m, memory: 256Mi }
+  webhooks:
+    requests: { cpu: 25m, memory: 64Mi }
+    limits: { cpu: 200m, memory: 256Mi }
+prometheus:
+  metricServer: { enabled: false }
+  operator: { enabled: false }
+  webhooks: { enabled: false }

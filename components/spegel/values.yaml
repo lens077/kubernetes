@@ -1,0 +1,10 @@
+# Spegel —— 2026-08-20 选型定稿 §9(试装): 节点间 P2P 镜像缓存
+# 前提已核查: 两节点 containerd 2.3 的 config_path=/etc/containerd/certs.d ✓
+# ✅ 2026-08-20 实测: containerd 2.3.4 + use_local_image_pull=false 下 mirror 正常命中
+#   (node1 首拉 8.8s → node2 102ms, hit 计数器实证), 无需改节点; 详见 README
+resources:
+  requests: { cpu: 25m, memory: 64Mi }
+  limits: { memory: 128Mi }
+spegel:
+  containerdRegistryConfigPath: /etc/containerd/certs.d
+  containerdMirrorAdd: true

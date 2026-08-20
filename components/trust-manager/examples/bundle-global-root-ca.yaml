@@ -1,0 +1,11 @@
+# 把 global-root-ca 分发为所有命名空间的 ConfigMap global-root-ca(key: ca.crt)
+# 业务容器用 subPath 或 SSL_CERT_DIR 指向它, 不再整卷遮蔽 /etc/ssl/certs
+apiVersion: trust.cert-manager.io/v1alpha1
+kind: Bundle
+metadata: { name: global-root-ca }
+spec:
+  sources:
+    - secret: { name: global-root-ca-secret, key: tls.crt }
+  target:
+    configMap: { key: ca.crt }
+    namespaceSelector: {}

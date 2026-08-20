@@ -1,0 +1,11 @@
+# VictoriaLogs 单机版 —— 2026-08-20 选型定稿 §8（拍板替 Loki；≤72h 有界双写期与 Loki 并行）
+server:
+  replicaCount: 1
+  retentionPeriod: 7d          # 验证期保留 7 天；切主后按容量重估
+  persistentVolume:
+    enabled: true
+    storageClassName: ${SC_NAME}
+    size: 5Gi
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { cpu: 500m, memory: 1Gi }

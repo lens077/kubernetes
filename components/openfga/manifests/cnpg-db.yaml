@@ -1,0 +1,21 @@
+# OpenFGA 的独立库/角色 —— CNPG 声明式（对抗第 2 轮 T5 定稿: store=pg-main 内独立库+独立 role+连接池上限）
+apiVersion: postgresql.cnpg.io/v1
+kind: DatabaseRole
+metadata: { name: openfga, namespace: postgresql }
+spec:
+  cluster: { name: pg-main }
+  name: openfga
+  login: true
+  passwordSecret: { name: openfga-db }
+  connectionLimit: 20
+  databaseRoleReclaimPolicy: retain
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata: { name: openfga, namespace: postgresql }
+spec:
+  cluster: { name: pg-main }
+  name: openfga
+  owner: openfga
+  encoding: UTF8
+  databaseReclaimPolicy: retain

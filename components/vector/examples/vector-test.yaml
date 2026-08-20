@@ -1,0 +1,14 @@
+# PII 脱敏单测（vector test）：故意未脱敏样本必须被拦截 —— 进 CI 的形状
+tests:
+  - name: redact_phone_and_email
+    inputs:
+      - insert_at: pii_redact
+        type: log
+        log_fields:
+          message: "phone=13800138000 mail=a@example.com"
+    outputs:
+      - extract_from: pii_redact
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.message, "phone=[PHONE_REDACTED] mail=[EMAIL_REDACTED]")
