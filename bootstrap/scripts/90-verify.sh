@@ -61,6 +61,17 @@ check_tuning() {
   log_info "系统调优抽检通过(BBR/转发/THP/Swap)"
 }
 
+check_graceful_node_shutdown() {
+  local budget total critical
+  budget=$(node_shutdown_budget_seconds \
+    "$KUBELET_SHUTDOWN_GRACE" "$KUBELET_SHUTDOWN_GRACE_CRITICAL") \
+    || die "GracefulNodeShutdown 预算配置无效"
+  verify_graceful_node_shutdown_config \
+    || die "GracefulNodeShutdown 配置不一致(config.env/kubelet/logind)"
+  read -r total critical <<<"$budget"
+  log_info "GracefulNodeShutdown 一致性通过: 总预算=${total}s, 关键 Pod=${critical}s, logind=${total}s"
+}
+
 # --- 4. 存储冒烟(PVC 创建→写→读→清理) ------------------------------------------------------
 smoke_storage() {
   if [[ $VERIFY_PVC_SMOKE_TEST != true ]]; then
@@ -437,15 +448,17 @@ EOF
 main() {
   stage_begin "90-verify" "全局验收"
   if is_worker; then
-    add_step tuning  "系统调优抽检"                    check_tuning
-    add_step runtime "运行时与加入状态检查"            check_worker_runtime
-    add_step cni     "Cilium agent 到位检查(软性)"     check_worker_cilium
-    add_step report  "生成加入报告"                    write_worker_report
+    add_step tuning   "系统调优抽检"                    check_tuning
+    add_step shutdown "GracefulNodeShutdown 一致性检查" check_graceful_node_shutdown
+    add_step runtime  "运行时与加入状态检查"            check_worker_runtime
+    add_step cni      "Cilium agent 到位检查(软性)"     check_worker_cilium
+    add_step report   "生成加入报告"                    write_worker_report
   else
-    add_step cp      "控制面与节点健康检查"        check_control_plane
-    add_step nokp    "kube-proxy 替代确认(eBPF)"   check_kube_proxy_free
-    add_step tuning  "系统调优抽检"                check_tuning
-    add_step pvc     "存储冒烟测试"                smoke_storage
+    add_step cp       "控制面与节点健康检查"            check_control_plane
+    add_step nokp     "kube-proxy 替代确认(eBPF)"       check_kube_proxy_free
+    add_step tuning   "系统调优抽检"                    check_tuning
+    add_step shutdown "GracefulNodeShutdown 一致性检查" check_graceful_node_shutdown
+    add_step pvc      "存储冒烟测试"                    smoke_storage
     add_step lb      "LoadBalancer 冒烟测试(可选)" smoke_loadbalancer
     add_step otel    "可观测链路冒烟测试(可选)"    smoke_observability
     add_step report  "生成安装报告"                write_report

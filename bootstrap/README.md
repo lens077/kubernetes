@@ -21,6 +21,8 @@ kubernetes/bootstrap/
 │   ├── 80-components.sh        # 组件编排器(扫描 ../components/*/component.env,
 │   │                           #   拓扑排序后并行调用各 install.sh; 不含任何 values)
 │   └── 90-verify.sh            # 全局验收+冒烟测试+报告
+├── tests/
+│   └── test-node-shutdown.sh   # GracefulNodeShutdown 时长、运行值与一致性回归
 └── files/                      # 运行时生成: kubeadm.yml / cilium-values.yaml / 示例
 ```
 
@@ -127,6 +129,38 @@ token 过期重join：控制面重新生成命令，worker 上 `sudo bash start.
 - **LoadBalancer 可用**：L2 通告 + `CiliumLoadBalancerIPPool`（`CILIUM_LB_POOL_START`/`STOP` 显式 IP 范围，预检拒绝覆盖节点 IP 的范围），局域网内直接访问 LoadBalancer 服务。
 - **存储面向数据库**：xfs + WaitForFirstConsumer；宿主机侧 THP=never、IO 调度(none/mq-deadline)、`vm.dirty_*` 平滑刷盘、`fs.aio-max-nr`、`vm.max_map_count`(ES 硬性要求)、`vm.overcommit_memory=1`(Redis/PG fork)。
 - **国内网络（四条独立通道）**：① `PROXY_URL` 按需代理——每次执行前 TCP 探活，代理没开自动降级直连，"要用就开、不用就关"无需改配置；只作用于脚本自身下载（GitHub 工件/helm 仓库/版本解析），从不污染 apt 与集群流量。② `GITHUB_PROXY` URL 前缀加速，是没有本地代理时的替代品，与 ① 二选一。③ containerd 拉镜像走 certs.d registry mirror——**支持原样导入你自己维护的完整 certs.d 目录**（`CONTAINERD_CERTS_SRC` 指定路径，或直接放到安装器 `files/certs.d/`，优先级高于 `USE_CN_MIRRORS` 自动生成的 DaoCloud 系）。④ `K8S_IMAGE_REPO` 独立指定 kubeadm 镜像仓库（如阿里云），与 mirror 通道解耦。另有 `PREPULL_VIA_PROXY=auto`：kubeadm init 前的预拉阶段若代理在线，临时给 containerd 挂代理、**拉完即撤**（中断残留会在重跑时自动清理），不留常驻代理配置。
+
+## 节点优雅关机（GracefulNodeShutdown）
+
+`KUBELET_SHUTDOWN_GRACE` 是唯一的总预算入口，支持整数 `h/m/s` 组合，例如 `90s`、
+`1m30s` 或 `2m`。50 阶段把它换算成秒，并自动生成：
+
+```ini
+# /etc/systemd/logind.conf.d/zzz-kubelet.conf
+[Login]
+InhibitDelayMaxSec=90
+```
+
+不能只改 kubelet 而保留固定的 logind 上限。安装器在写配置前校验：
+
+```text
+InhibitDelayMaxSec = KUBELET_SHUTDOWN_GRACE
+KUBELET_SHUTDOWN_GRACE_CRITICAL <= KUBELET_SHUTDOWN_GRACE
+```
+
+50 阶段的步骤校验和 90 阶段的全局验收还会比对 `config.env`、logind drop-in、通过
+login1 D-Bus 读取的运行时值，以及已有的 `/var/lib/kubelet/config.yaml`。任意一处漂移都会失败，不会带着不一致
+配置继续安装。已运行节点若只改 `config.env` 而 kubelet 仍是旧预算，50 阶段会在改写 logind
+之前停止；先按计划更新 kubelet 或重建节点，再重跑本阶段。`zzz-` 前缀用于覆盖
+unattended-upgrades 自带的 30 秒 logind drop-in。
+
+正常执行 `shutdown now` 或 `systemctl reboot` 时，systemd-logind 最多允许 kubelet 使用总预算
+停止 Pod 和卸载卷；提前完成可以提前关机，超时后系统继续关机。该机制不覆盖断电、宿主机崩溃
+或虚拟机强制停止。回归检查：
+
+```bash
+bash tests/test-node-shutdown.sh
+```
 
 ## etcd 维护(45 阶段 + defrag 定时器)
 

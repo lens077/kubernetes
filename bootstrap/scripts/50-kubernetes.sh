@@ -54,18 +54,52 @@ verify_apt_repo() {
 install_k8s_packages() {
   pkg_install kubelet kubeadm kubectl
   apt-mark hold kubelet kubeadm kubectl
-  # GracefulNodeShutdown 配套: 放开 logind 抑制时长上限到 90s。
-  # 文件名必须用 zzz- 前缀: unattended-upgrades 自带 drop-in(InhibitDelayMaxSec=30,
-  # 文件名 u 开头)按字典序排在 99-* 之后会反压回 30 —— node2 实测踩坑
-  mkdir -p /etc/systemd/logind.conf.d
-  rm -f /etc/systemd/logind.conf.d/99-kubelet.conf
-  printf '[Login]\nInhibitDelayMaxSec=90\n' > /etc/systemd/logind.conf.d/zzz-kubelet.conf
-  systemctl restart systemd-logind
   systemctl enable --now kubelet   # init 前 crashloop 属正常现象
 }
 verify_k8s_packages() {
   has_cmd kubeadm && has_cmd kubectl \
     && apt-mark showhold | grep -q kubeadm
+}
+
+configure_graceful_node_shutdown() {
+  local budget total critical runtime_budget runtime_total runtime_critical
+  local file desired changed=false
+  budget=$(node_shutdown_budget_seconds \
+    "$KUBELET_SHUTDOWN_GRACE" "$KUBELET_SHUTDOWN_GRACE_CRITICAL") \
+    || die "GracefulNodeShutdown 预算配置无效"
+  read -r total critical <<<"$budget"
+
+  # 已运行节点先检查 kubelet,避免先改 logind 后才发现两边预算不一致。
+  if [[ -f /var/lib/kubelet/config.yaml ]]; then
+    runtime_budget=$(kubelet_shutdown_budget_seconds) \
+      || die "kubelet 运行配置缺少或无法解析 shutdownGracePeriod 字段"
+    if [[ $runtime_budget != "$budget" ]]; then
+      read -r runtime_total runtime_critical <<<"$runtime_budget"
+      die "config.env 预算(${total}s/${critical}s)与 kubelet 运行预算(${runtime_total}s/${runtime_critical}s)不一致;先更新 kubelet 配置"
+    fi
+  fi
+
+  # unattended-upgrades 自带 InhibitDelayMaxSec=30。文件名必须用 zzz- 前缀,
+  # 确保 systemd 按字典序合并 drop-in 时,安装器派生的值最后生效。
+  file=/etc/systemd/logind.conf.d/zzz-kubelet.conf
+  desired=$(printf '[Login]\nInhibitDelayMaxSec=%s' "$total")
+  install -d -m 755 "$(dirname "$file")"
+  if [[ -e /etc/systemd/logind.conf.d/99-kubelet.conf ]]; then
+    rm -f /etc/systemd/logind.conf.d/99-kubelet.conf
+    changed=true
+  fi
+  if [[ ! -f $file || $(<"$file") != "$desired" ]]; then
+    printf '%s\n' "$desired" > "$file"
+    chmod 644 "$file"
+    changed=true
+  fi
+  if [[ $changed == true ]]; then
+    systemctl restart systemd-logind
+    log_info "已更新 logind 优雅关机上限: InhibitDelayMaxSec=${total}s"
+  else
+    log_info "logind 优雅关机上限已匹配: InhibitDelayMaxSec=${total}s"
+  fi
+  log_info "GracefulNodeShutdown 预算: 普通 Pod=$(( total - critical ))s, 关键 Pod=${critical}s"
 }
 
 # --- 3. sandbox(pause) 镜像与 kubeadm 对齐 ------------------------------------------
@@ -390,14 +424,22 @@ complete -o default -F __start_kubectl k'
 }
 
 main() {
-  local title="Kubernetes 控制面"
+  local title="Kubernetes 控制面" budget shutdown_total shutdown_critical
   is_worker && title="Kubernetes 工作节点加入"
   stage_begin "50-kubernetes" "$title"
+  budget=$(node_shutdown_budget_seconds \
+    "$KUBELET_SHUTDOWN_GRACE" "$KUBELET_SHUTDOWN_GRACE_CRITICAL") \
+    || die "GracefulNodeShutdown 预算配置无效"
+  read -r shutdown_total shutdown_critical <<<"$budget"
+  log_info "GracefulNodeShutdown 配置校验通过: ${shutdown_total}s/${shutdown_critical}s"
 
-  # 两种角色共用: 仓库/软件包/pause 对齐/端口预检
-  add_step repo    "配置 pkgs.k8s.io v$K8S_MINOR_V 仓库"     setup_apt_repo       verify_apt_repo
-  add_step pkgs    "安装 kubelet/kubeadm/kubectl 并 hold"    install_k8s_packages verify_k8s_packages
-  add_step pause   "对齐 sandbox(pause) 镜像"                align_pause_image    verify_pause_image
+  # 两种角色共用: 仓库/软件包/节点关机预算/pause 对齐/端口预检。
+  # 预算进入 step key: config.env 改值后会自动产生新步骤,不被旧状态标记跳过。
+  add_step repo     "配置 pkgs.k8s.io v$K8S_MINOR_V 仓库"     setup_apt_repo       verify_apt_repo
+  add_step pkgs     "安装 kubelet/kubeadm/kubectl 并 hold"    install_k8s_packages verify_k8s_packages
+  add_step "shutdown-${shutdown_total}-${shutdown_critical}" "配置并校验 GracefulNodeShutdown 预算" \
+    configure_graceful_node_shutdown verify_graceful_node_shutdown_config
+  add_step pause    "对齐 sandbox(pause) 镜像"                align_pause_image    verify_pause_image
 
   if is_worker; then
     add_step joincfg "生成 kubeadm-join.yml(含加入参数)"     gen_join_config      verify_join_config

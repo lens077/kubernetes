@@ -428,3 +428,12 @@ otel-collector 的配置**无需功能性改动** —— 它只与 Jaeger 的 Se
   [#23674](https://github.com/goharbor/harbor/issues/23674) 确认 ARM64 从 v2.16.0 开始发布。
   已卸载失败 release、删除外部路由并保留五个 PVC、管理员 Secret、加密 Secret 与节点凭据；
   `ADDON_HARBOR=false`，安装脚本会在任何集群写操作前检查 chart `appVersion` 和节点架构。
+
+---
+
+## 2026-08-21 · GracefulNodeShutdown 预算一致性
+
+- [x] `KUBELET_SHUTDOWN_GRACE` 成为 logind 总预算的唯一配置入口。50 阶段将整数
+      `h/m/s` 组合换算为秒，生成 `InhibitDelayMaxSec`，并在写入前校验关键 Pod 预算和
+      已运行的 kubelet 配置。步骤校验与 90 阶段验收还会比对 drop-in、login1 D-Bus
+      运行值和 `/var/lib/kubelet/config.yaml`；回归测试覆盖合法值、非法值和漂移场景。

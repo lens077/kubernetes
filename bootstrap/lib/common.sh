@@ -102,6 +102,115 @@ detect_default_iface() { ip -4 route show default 2>/dev/null | awk '{print $5; 
 is_control_plane() { [[ ${NODE_ROLE:-control-plane} == control-plane ]]; }
 is_worker()        { [[ ${NODE_ROLE:-control-plane} == worker ]]; }
 
+# GracefulNodeShutdown 时长只接受 Go duration 的整数字段组合(h/m/s),
+# 例如 90s、1m30s、2h。关机预算不需要亚秒精度,主动拒绝小数和裸数字。
+duration_to_seconds() {
+  local rest=$1 total=0 amount unit
+  local full_re='^((0|[1-9][0-9]*)(h|m|s))+$'
+  local token_re='^([0-9]+)(h|m|s)(.*)$'
+  [[ $rest =~ $full_re ]] || return 1
+  while [[ -n $rest ]]; do
+    [[ $rest =~ $token_re ]] || return 1
+    amount=${BASH_REMATCH[1]}
+    unit=${BASH_REMATCH[2]}
+    rest=${BASH_REMATCH[3]}
+    case $unit in
+      h) total=$(( total + amount * 3600 )) ;;
+      m) total=$(( total + amount * 60 )) ;;
+      s) total=$(( total + amount )) ;;
+    esac
+  done
+  printf '%s\n' "$total"
+}
+
+# 输出「总预算秒数 关键 Pod 预算秒数」;失败时给出可直接修 config.env 的原因。
+node_shutdown_budget_seconds() {
+  local total_value=$1 critical_value=$2 total critical
+  total=$(duration_to_seconds "$total_value") || {
+    printf 'KUBELET_SHUTDOWN_GRACE=%q 格式无效;仅支持整数 h/m/s 组合(如 90s、1m30s)\n' \
+      "$total_value" >&2
+    return 1
+  }
+  critical=$(duration_to_seconds "$critical_value") || {
+    printf 'KUBELET_SHUTDOWN_GRACE_CRITICAL=%q 格式无效;仅支持整数 h/m/s 组合(如 30s、1m)\n' \
+      "$critical_value" >&2
+    return 1
+  }
+  if (( critical > total )); then
+    printf '关键 Pod 预算(%ss)不能大于优雅关机总预算(%ss)\n' "$critical" "$total" >&2
+    return 1
+  fi
+  printf '%s %s\n' "$total" "$critical"
+}
+
+# 读取 kubelet 已落盘的运行预算,输出同样的「总秒数 关键 Pod 秒数」。
+kubelet_shutdown_budget_seconds() {
+  local file=${1:-/var/lib/kubelet/config.yaml} values total_value critical_value
+  [[ -f $file ]] || return 1
+  values=$(awk '
+    $1 == "shutdownGracePeriod:" { total=$2 }
+    $1 == "shutdownGracePeriodCriticalPods:" { critical=$2 }
+    END { if (total != "" && critical != "") print total, critical }
+  ' "$file")
+  [[ -n $values ]] || return 1
+  read -r total_value critical_value <<<"$values"
+  node_shutdown_budget_seconds "$total_value" "$critical_value"
+}
+
+# 通过 login1 D-Bus 读取正在运行的 systemd-logind 值,不是只看磁盘上的 drop-in。
+logind_effective_inhibit_seconds() {
+  local output signature usec
+  output=$(busctl get-property org.freedesktop.login1 /org/freedesktop/login1 \
+    org.freedesktop.login1.Manager InhibitDelayMaxUSec 2>/dev/null) || return 1
+  read -r signature usec <<<"$output"
+  [[ $signature == t && $usec =~ ^[0-9]+$ ]] || return 1
+  (( usec % 1000000 == 0 )) || return 1
+  printf '%s\n' "$(( usec / 1000000 ))"
+}
+
+# 同时检查配置入口、安装器托管的 logind drop-in、systemd 生效值；已有 kubelet
+# 运行配置时再与它比对,避免「模板改了但节点仍在跑旧预算」。
+verify_graceful_node_shutdown_config() {
+  local budget expected_total expected_critical file_value effective
+  local runtime_budget runtime_total runtime_critical
+  local dropin=${NODE_SHUTDOWN_LOGIND_DROPIN:-/etc/systemd/logind.conf.d/zzz-kubelet.conf}
+  local kubelet_config=${NODE_SHUTDOWN_KUBELET_CONFIG:-/var/lib/kubelet/config.yaml}
+  budget=$(node_shutdown_budget_seconds \
+    "$KUBELET_SHUTDOWN_GRACE" "$KUBELET_SHUTDOWN_GRACE_CRITICAL") || return 1
+  read -r expected_total expected_critical <<<"$budget"
+
+  [[ -f $dropin ]] || { log_error "缺少 GracefulNodeShutdown logind 配置: $dropin"; return 1; }
+  file_value=$(awk -F= '
+    $1 ~ /^[[:space:]]*InhibitDelayMaxSec[[:space:]]*$/ { value=$2 }
+    END { gsub(/[[:space:]]/, "", value); print value }
+  ' "$dropin")
+  [[ $file_value == "$expected_total" ]] || {
+    log_error "logind drop-in 与 KUBELET_SHUTDOWN_GRACE 不一致: want=${expected_total}s got=${file_value:-<empty>}"
+    return 1
+  }
+
+  effective=$(logind_effective_inhibit_seconds) || {
+    log_error "无法解析 systemd-logind 的有效 InhibitDelayMaxSec"
+    return 1
+  }
+  [[ $effective == "$expected_total" ]] || {
+    log_error "logind 有效上限与 KUBELET_SHUTDOWN_GRACE 不一致: want=${expected_total}s got=${effective}s"
+    return 1
+  }
+
+  if [[ -f $kubelet_config ]]; then
+    runtime_budget=$(kubelet_shutdown_budget_seconds "$kubelet_config") || {
+      log_error "kubelet 运行配置缺少或无法解析 shutdownGracePeriod 字段"
+      return 1
+    }
+    read -r runtime_total runtime_critical <<<"$runtime_budget"
+    [[ $runtime_total == "$expected_total" && $runtime_critical == "$expected_critical" ]] || {
+      log_error "kubelet 运行预算与 config.env 不一致: want=${expected_total}s/${expected_critical}s got=${runtime_total}s/${runtime_critical}s"
+      return 1
+    }
+  fi
+}
+
 # 从整条 `kubeadm join <ep> --token <t> --discovery-token-ca-cert-hash <h>` 命令
 # 解析出三个参数并写入 JOIN_* 全局(worker 交互模式粘贴用)
 parse_join_cmd() {
