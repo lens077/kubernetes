@@ -8,3 +8,5 @@ resources:
 spegel:
   containerdRegistryConfigPath: /etc/containerd/certs.d
   containerdMirrorAdd: true
+  # 标签仍由上游解析，Spegel 只按 digest 命中本地缓存，避免冷镜像被误报为 NotFound。
+  resolveTags: false

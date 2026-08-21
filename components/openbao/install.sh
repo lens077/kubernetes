@@ -10,7 +10,11 @@ log_step "安装 $ID → 命名空间 $NAMESPACE (standalone + file 存储)"
 ns_ensure "$NAMESPACE"
 helm_install_component "$DIR" --version 0.29.2
 kctl -n "$NAMESPACE" wait --for=condition=PodScheduled pod/openbao-0 --timeout=120s
-sleep 5
+openbao_container_started() {
+  [[ -n $(kctl -n "$NAMESPACE" get pod openbao-0 \
+    -o jsonpath='{.status.containerStatuses[?(@.name=="openbao")].state.running.startedAt}' 2>/dev/null) ]]
+}
+wait_for "OpenBao 容器启动" 300 openbao_container_started
 
 bao_exec() { kctl -n "$NAMESPACE" exec -i openbao-0 -- "$@"; }
 init_file="$STATE_DIR/creds/openbao-init"

@@ -363,7 +363,7 @@ EOF
 write_report() {
   local kver hubble_hint="" addons=""
   kver=$(kubeadm version -o short 2>/dev/null || echo "?")
-  [[ -f $STATE_DIR/addons.selected ]] && addons=$(tr '\n' ' ' < "$STATE_DIR/addons.selected")
+  [[ -f $STATE_DIR/components.selected ]] && addons=$(tr '\n' ' ' < "$STATE_DIR/components.selected")
   [[ $CILIUM_ENABLE_HUBBLE_UI == true ]] && hubble_hint="cilium hubble ui   # 打开流量观测界面(自动端口转发)"
 
   cat > "$REPORT" <<EOF

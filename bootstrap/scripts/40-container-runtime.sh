@@ -94,6 +94,13 @@ verify_containerd_config() {
 # --- 4. registry 配置(certs.d 目录式, 每个上游一个 hosts.toml) -----------------------
 #   优先级: 用户自带完整目录(CONTAINERD_CERTS_SRC / files/certs.d) > USE_CN_MIRRORS 生成 > 不配置
 write_registry_mirrors() {
+  # Spegel 已接管 _default 时保留其动态节点地址；重新复制静态目录会绕过 P2P 配置。
+  local spegel_hosts=/etc/containerd/certs.d/_default/hosts.toml
+  if [[ -f $spegel_hosts ]] && grep -qE "30020|30021" "$spegel_hosts"; then
+    log_info "检测到 Spegel 已接管 certs.d，保留现有 registry 配置"
+    return 0
+  fi
+
   # 路线一: 原样安装用户自带的 certs.d 目录(宿主机维护的一份完整 registry 配置)
   local src=$CONTAINERD_CERTS_SRC
   [[ -z $src && -d $K8S_BASE_DIR/files/certs.d ]] && src="$K8S_BASE_DIR/files/certs.d"
@@ -165,7 +172,8 @@ verify_containerd_running() {
   # restart 返回后 gRPC socket 就绪还需一拍, 轮询等待而不是瞬时判负
   local i
   for ((i = 0; i < 10; i++)); do
-    if svc_active containerd && /usr/local/bin/ctr version 2>/dev/null | grep -qi 'server'; then
+    # 不用 grep -q：在 pipefail 下提前关闭管道会让 ctr 收到 SIGPIPE，造成健康服务误判失败。
+    if svc_active containerd && /usr/local/bin/ctr version 2>/dev/null | grep -i 'server' >/dev/null; then
       return 0
     fi
     sleep 2
@@ -203,6 +211,7 @@ main() {
   rm -f "$STATE_DIR/state/40-container-runtime:ctrd-cfg.done" \
         "$STATE_DIR/state/40-container-runtime:mirrors.done" \
         "$STATE_DIR/state/40-container-runtime:proxy.done" \
+        "$STATE_DIR/state/40-container-runtime:start.done" \
         "$STATE_DIR/state/40-container-runtime:takeover.done"
   add_step takeover  "既有安装评估(版本接管策略)"           assess_existing_runtime
   add_step runc      "安装 runc $RUNC_V"                    install_runc            verify_runc

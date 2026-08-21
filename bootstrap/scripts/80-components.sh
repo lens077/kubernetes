@@ -163,7 +163,9 @@ topo_layers() {
   while read -r id; do [[ -n $id ]] && remaining[$id]=1; done < "$SELECTED_FILE"
 
   local guard=0
-  while (( ${#remaining[@]} > 0 )); do
+  # 判断放在 OR 条件链中，避免 process substitution 继承 ERR trap 后把正常退出误报为失败。
+  while :; do
+    [[ ${#remaining[@]} -gt 0 ]] || break
     local layer=() dep ready
     for id in "${!remaining[@]}"; do
       ready=1
