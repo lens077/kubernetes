@@ -32,6 +32,6 @@
 - **Spegel 节点确认项——已消解（2026-08-20 补验）**：containerd 2.3.4 实测 `use_local_image_pull=false` 下 hosts.toml mirror 依然生效（P2P 命中实证），无需改节点配置；若未来 containerd 升级后命中掉 0，再查该开关（`components/spegel/README.md`）。
 - **OpenBao 重启后需手工解封**：`components/openbao/examples/unseal.sh`（file 存储；init 材料在 creds/openbao-init）。测试期 1-share/1-threshold，生产化清单见其 README。
 - **VL 直插小悬案**：`/insert/jsonline` 手工 curl 的行未检索到（生产路径 Vector→VL 已验证无碍）；接 SDK 前按官方示例复核 `_time` 格式与 Content-Type。
-- Vector `kubernetes_logs` 文件发现默认约 60s 间隔 + `read_from: end`：**短命 pod 的最早几行会错过**，常驻服务无影响。
+- ~~Vector `kubernetes_logs` 文件发现默认约 60s 间隔 + `read_from: end`：短命 pod 的最早几行会错过~~（✅ 2026-08-21 已修：cooldown 10s + `read_from: beginning`，与 VM 官方 log-collectors-benchmark 互证；功能级回归待新集群补验，手法见 vector README）。
 - kyverno webhook 已排除 kube-system/argocd；audit 观察 14 天零误报再逐条 Enforce（enforce 前先做签名纪元处理，见 ecommerce 对抗第 3 轮 R3-C）。
 - 第 3 台 VM（A9 预算内）加入后：NATS 反亲和自动摊开、Spegel 触发条件真正成立、CH/VL 可迁离控制面节点。

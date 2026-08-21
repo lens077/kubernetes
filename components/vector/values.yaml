@@ -15,7 +15,13 @@ customConfig:
     kubernetes:
       type: kubernetes_logs
       auto_partial_merge: true
-      read_from: end           # 并行验证期不回灌历史日志
+      # 2026-08-21 加固(VM 官方 log-collectors-benchmark 与本集群 08-20 实测互证):
+      # ① 文件发现间隔默认 60s → 新 Pod 头 60s 日志静默丢失, 收紧到 10s(与 Fluent Bit 默认对齐)
+      # ② read_from 由 end 改回 beginning: end 会让「发现晚于首行」的新文件永远丢头几行;
+      #    当初设 end 只为部署首日不回灌历史, 现 checkpoint 已在 hostPath 落盘,
+      #    旧文件按 checkpoint 续读不会重灌, beginning 才兜得住短命 Pod 的完整日志
+      glob_minimum_cooldown_ms: 10000
+      read_from: beginning
       max_line_bytes: 32768
   transforms:
     pii_redact:

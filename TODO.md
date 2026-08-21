@@ -1,5 +1,52 @@
 # TODO
 
+## 2026-08-21 · 与代码对账 + 重装准备(组件数据不保留)
+
+> 本文件自 08-18 后停更,期间仓库完成整形重构与四天组件工作;本段先补账,再为即将执行的集群重装固定「什么会自动重建、什么需要手动」。下方 08-06/08-17 各段引用的旧目录(`kafka/strimzi-kafka/`、`jaeger/`、`minio/yaml/`、`loki/helm/`、`victoriametrics/single/`、`opentelemetry/server/helm/`)已不存在——或按组件契约重写为 `components/<组件>/`,或删除;`archive/` 冻结的是历史清单(原 cloud-native-deploy 资产与本仓旧存档),不再部署。
+
+### 补账:08-17 重构 → 08-20(按提交序)
+
+| 日期 | 内容 |
+|---|---|
+| 08-17 | **仓库定形**:原 `kubernetes`(安装器)与 `cloud-native-deploy`(组件资产)合并为「安装器 + 组件库」单仓——`bootstrap/`(11 阶段:预检→系统→内核→下载→运行时→etcd 盘→kubeadm→Cilium→存储→组件→验收;`config.env` 唯一配置入口;断点续跑/离线包/`--reset-cluster`)+ `components/`(一目录一组件,统一契约 component.env/install.sh/values.yaml/README/examples;`80-components.sh` 只做扫描→选择(依赖补选)→拓扑分层并行)+ `infra/` + `archive/`。metrics-server、cert-manager/gateway、观测五件、数据面七件先后迁入契约 |
+| 08-18 | 对外域名后缀 `app.com`→`dev.test`(RFC 6761 保留域,公网永不解析);泛域名证书重签 CN/SAN,17 条 HTTPRoute 已 patch;archive 与 legacy 不改 |
+| 08-19 | postgres 组件:CNPG 算子 + 实例经网关 TLS passthrough 直连打通、`Database` CR 声明式建库;新增 redis/tempo/seata/vpa/okteto/newt 六组件并登记 config.env 开关 |
+| 08-20 | **选型定稿栈 12 组件按契约落地**(nats/victoria-logs/vector/clickhouse/openfga/openbao/trust-manager/kyverno/keda/argo-rollouts/spegel 11 项验证通过;**kruise 实测否决并卸载**——fail-closed 全局 pod webhook 在单副本 manager 崩溃期冻结全集群 Pod 创建),验证证据与坑册见 [`DEPLOY-RECORD-2026-08-20.md`](DEPLOY-RECORD-2026-08-20.md)(含「宿主 Mac 睡眠冻结客户机」对控制面重启风暴的定性,测试期建议 caffeinate);dragonflydb 原生 TLS 化(cert-manager 签发/6380 TCPRoute 直通/密码与 redis 同源),redis 组件 scale 0 关停留备;**重建复现性修缮**:`ADDON_CNPG` 勾选即全自动「算子→pg-main→ecommerce 库」(现集群幂等实测),openfga/dragonflydb 依赖修正,`ADDON_STRIMZI=false`(**Kafka 全家桶定稿退役**,NATS JetStream 替代,见 ecommerce TECH-RADAR §1)、`ADDON_MINIO=false`(集群内 minio 残留清除,定稿迁 SeaweedFS),config.env 补「重建须知」 |
+
+### 重装准备:自动重建清单(对照代码核过,非自报)
+
+拍板:**组件数据(本地 LVM 卷上的 PVC)不保留**;部署脚本与配置以本仓为唯一真相源。节点上写过的自定义配置均已入库脚本化,重装即自动重建:
+
+| 节点文件/状态 | 重建来源 | 说明 |
+|---|---|---|
+| `/etc/containerd/certs.d/` | `bootstrap/files/certs.d/`(13 个 registry 的 hosts.toml)| `CONTAINERD_CERTS_SRC` 指向仓内目录,40 阶段整目录 `cp -a` 安装;同一脚本把 `config_path = '/etc/containerd/certs.d'` 写进 containerd config。08-06 段「其余 12 个 registry mirror 未生效」不再适用;重装后要复核仍按老段落的坑用 `crictl pull` + `ss -tnp`(`ctr` 默认不读 certs.d)。quay.io 保留 nju 镜像回退 |
+| `/var/lib/kubelet/config.yaml` | 50 阶段 kubeadm init 生成的 `KubeletConfiguration`(maxPods=110、GracefulNodeShutdown 90s/30s) | worker join 后由集群自动下发,无需本地重复;设计与验证见 ecommerce `context/team/node-graceful-shutdown.md` |
+| `/etc/systemd/logind.conf.d/zzz-kubelet.conf` | 50 阶段写 drop-in(`InhibitDelayMaxSec=90`) | `zzz-` 前缀保证字典序压过 unattended-upgrades 自带的 30s |
+| runc/containerd/crictl/cilium/helm 等版本 | `config.env` 显式钉版 + `versions.lock` | 重复执行结果一致,离线包可携带 |
+| sysctl/内核模块/limits/THP/IO 调度/静态 IP/hosts/chrony/sshd | 10/20 阶段幂等托管块 | 静态 IP 写独立 `/etc/netplan/99-k8s-static.yaml`,回滚只删该文件 |
+
+重装前逐条过 `bootstrap/config.env` 尾部「重建须知」;其中两条已随本次对账订正:**#2 建库不再是手工步骤**(`PG_CREATE_MAIN_CLUSTER=true` 时 install.sh 自动 apply pg-cluster+pg-database,08-20 当日晚些的提交已自动化,注释此前未同步)、**#4 时序前置已解除**(ecommerce 的 goose migrations 体系已提交 `92be852`,重建灌库走其 `make migrate-cnpg-up`)。
+
+- [ ] **重装前最后一步:节点现状 ↔ 仓库生成物 diff 一遍**(`/etc/containerd/certs.d/` ↔ `files/certs.d/`、`/var/lib/kubelet/config.yaml` ↔ 50 阶段模板),若节点上有过仓库外的手改,先回填 `config.env`/`files/` 再重装,防止手术痕迹随重装蒸发
+
+### 重装后仅存的手动动作(非 git 状态,已知且接受)
+
+- [ ] 先把 STATE_DIR `creds/` 整目录带走(节点 `/var/lib/k8s-installer/creds/`,Mac 回退 `~/.local/state/k8s-installer/creds/`)——尤其 `dragonfly-password`,ecommerce 十份 bootstrap 与 config-center 自举配置写的是它(重建须知 #1)
+- [ ] external-secrets 装好后**注入 AppRole 凭据**→密钥自动流回(Vault 在 VPS,真相源本就在集群外——这正是 08-17 L3 设计的兑现点)
+- [ ] OpenBao 数据随集群亡:重新 init/unseal,`creds/openbao-init` 作废重生成(components/openbao README)
+- [ ] `ADDON_NEWT` 如启用:Pangolin 面板站点凭据重配(组件 README)
+- [ ] 应用层接回不归本安装器:沿用 ecommerce TODO「2026-08-19 集群重建后 GitOps 重新接线」runbook(config source Secret/tcr-pull-secret/pg-ca-cert → ArgoCD apply)+ `make migrate-cnpg-up` 建表 + config-center `scripts/deploy-k8s.sh` 与 bootstrap SQL 直灌
+
+### 旧待办对账(下方各段条目,状态被后续事实改变;原文保留不改)
+
+- **08-06 三段(Kafka/Debezium、Jaeger、可观测底座)的集群状态类条目整体作废**:所写集群已于 08-16 重建亡故,且 Strimzi/Kafka/Debezium 栈 08-20 定稿退役(`ADDON_STRIMZI=false`)——Connect 构建加速、build pod 资源、VPA 校准、Debezium 换 Final、metadataVersion 风险、broker PVC 钉节点、node1 untaint、entity-operator 重启排查等不再有载体;streaming-pipeline 仓随 Kafka 退役失去载体(其 GOIMAGE/namespace/明文密码三条同废,ecommerce TODO 搜索小节已记),替代实现为 ecommerce `pkg/outbox` + `pkg/searchindex` + NATS JetStream
+- **minio/loki 凭据轮换 9 步 runbook 整段不再执行**:老集群 loki S3 key 已随集群死亡(08-17 段已记),MinIO root 08-17 已迁线上 Vault 经 ESO 物化,集群内 minio 08-20 定稿移除;日志侧现为 loki 组件 + victoria-logs/vector 双写过渡
+- **ES/elastic-stack 全部条目作废**(索引 yellow、TLS 待决策、docker.elastic.co 加速):ES 已退役,搜索定稿 Meilisearch(components/meilisearch),应用侧迁移在 ecommerce TODO
+- 「缺文件 vs 集群对账机制」→ 应用侧已由 ArgoCD GitOps 覆盖;组件侧靠 install.sh 幂等 + `90-verify` 验收,imperative 残余风险知情保留
+- 「collector 自监控无人抓」仍成立,载体变更:components/opentelemetry 按后端动态生成 pipelines,自采配置应改该组件
+- 「遥测端点是否匿名可达」仍成立,范围以 components/gateway 路由约定 + 各组件 README 为准
+- 仍有效不变:VPS msdnmm 家族口令逐个轮换、vault audit 轮转与 raft snapshot 进 cron、P1-D(vault UI 拆 router)、cloud-native-deploy/pipeline 仓 git 历史明文的重写决策(cloud-native-deploy 已并入本仓,其独立仓的去留一并决策)、Harbor 等待 v2.16.0 ARM64(文末 08-18 段,`ADDON_HARBOR=false` 且脚本有架构拦截)
+
 ## 2026-08-17(第二批) · L3 硬化 + 明文迁移:审查建议落地
 
 同日下方「GitOps L3 落地」的续篇:四人审查团(改动清单/性能/安全/产品影响)给出的建议按用户拍板执行。
