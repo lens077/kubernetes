@@ -489,3 +489,6 @@ otel-collector 的配置**无需功能性改动** —— 它只与 Jaeger 的 Se
       只定向修改 live ClusterConfiguration 的对应 extraArg，中途失败同时回滚。50/90 阶段
       硬校验持久配置、运行参数和 Ready，终态数量仅作有界观察，避免活跃集群误报。
       `0` 和负数会关闭 GC，安装器直接拒绝，避免为隐藏终态 Pod 而关闭优雅关机或 PodGC。
+- [x] 部署后 90 阶段曾被 2026-08-21 的 VPA `Failed/Terminated` 历史 Pod 误挡。健康检查
+      改为只阻断未在删除中且仍应活动的 Pending、Unknown 或 Running/NotReady Pod；终态历史
+      继续交给 PodGC，不再把 `Error` 展示状态误判为当前控制面故障。

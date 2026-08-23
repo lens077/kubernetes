@@ -209,6 +209,22 @@ fi
 [[ $(cksum "$missing_extra") == "$before" ]] \
   || fail "expected failed ClusterConfiguration update to leave source untouched"
 
+health_json='{"items":[
+  {"metadata":{"name":"ready","deletionTimestamp":null},"status":{"phase":"Running","conditions":[{"type":"Ready","status":"True"}]}},
+  {"metadata":{"name":"crashloop","deletionTimestamp":null},"status":{"phase":"Running","reason":"CrashLoopBackOff","conditions":[{"type":"Ready","status":"False"}]}},
+  {"metadata":{"name":"pending","deletionTimestamp":null},"status":{"phase":"Pending","reason":"Unschedulable","conditions":[]}},
+  {"metadata":{"name":"historical-error","deletionTimestamp":null},"status":{"phase":"Failed","reason":"Terminated","conditions":[]}},
+  {"metadata":{"name":"terminating","deletionTimestamp":"2026-08-21T00:00:00Z"},"status":{"phase":"Running","conditions":[{"type":"Ready","status":"False"}]}}
+]}'
+health_bad=$(active_unhealthy_pods_from_json <<<"$health_json")
+grep -q '^crashloop(Running/CrashLoopBackOff)$' <<<"$health_bad" \
+  || fail "expected running unready Pod to fail active health"
+grep -q '^pending(Pending/Unschedulable)$' <<<"$health_bad" \
+  || fail "expected pending Pod to fail active health"
+if grep -qE 'ready|historical-error|terminating' <<<"$health_bad"; then
+  fail "expected ready, terminal and deleting Pods to be excluded from active health failures"
+fi
+
 export KCM_TERMINATED_POD_GC_THRESHOLD=100
 export KCM_STATIC_POD_MANIFEST="$controller_manifest"
 export FAKE_TERMINAL_PODS_JSON='{"items":[{"metadata":{"deletionTimestamp":null},"status":{"phase":"Succeeded"}},{"metadata":{"deletionTimestamp":null},"status":{"phase":"Failed"}},{"metadata":{"deletionTimestamp":null},"status":{"phase":"Failed"}},{"metadata":{"deletionTimestamp":"2026-08-21T00:00:00Z"},"status":{"phase":"Failed"}}]}'

@@ -25,11 +25,10 @@ check_control_plane() {
   not_ready=$(kctl get nodes --no-headers | awk '$2 != "Ready" {print $1}')
   [[ -z $not_ready ]] || die "存在未就绪节点: $not_ready"
 
-  # 核心命名空间不允许有异常 Pod
+  # 终态 Pod 是历史记录；只阻断未处于删除中且仍应活动的异常 Pod。
   local bad
-  bad=$(kctl get pods -n kube-system --no-headers 2>/dev/null \
-        | awk '$3 != "Running" && $3 != "Completed" {print $1"("$3")"}')
-  [[ -z $bad ]] || die "kube-system 存在异常 Pod: $bad"
+  bad=$(kctl get pods -n kube-system -o json 2>/dev/null | active_unhealthy_pods_from_json)
+  [[ -z $bad ]] || die "kube-system 存在活动异常 Pod: $bad"
   log_info "控制面健康, 节点全部 Ready"
 }
 

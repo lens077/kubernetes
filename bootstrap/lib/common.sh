@@ -487,6 +487,17 @@ controller_manager_ready() {
   (( pod_count == 1 )) && [[ $ready == true ]]
 }
 
+active_unhealthy_pods_from_json() {
+  jq -r '
+    .items[]
+    | ([.status.conditions[]? | select(.type == "Ready") | .status][0] // "False") as $ready
+    | select(.metadata.deletionTimestamp == null)
+    | select(.status.phase != "Succeeded" and .status.phase != "Failed")
+    | select(.status.phase != "Running" or $ready != "True")
+    | "\(.metadata.name)(\(.status.phase)/\(.status.reason // "no-reason"))"
+  '
+}
+
 terminal_pod_count() {
   kctl get pods -A -o json 2>/dev/null | jq -r '
     [.items[]
