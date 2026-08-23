@@ -491,4 +491,6 @@ otel-collector 的配置**无需功能性改动** —— 它只与 Jaeger 的 Se
       `0` 和负数会关闭 GC，安装器直接拒绝，避免为隐藏终态 Pod 而关闭优雅关机或 PodGC。
 - [x] 部署后 90 阶段曾被 2026-08-21 的 VPA `Failed/Terminated` 历史 Pod 误挡。健康检查
       改为只阻断未在删除中且仍应活动的 Pending、Unknown 或 Running/NotReady Pod；终态历史
-      继续交给 PodGC，不再把 `Error` 展示状态误判为当前控制面故障。
+      继续交给 PodGC，不再把 `Error` 展示状态误判为当前控制面故障。修复后 node101 全量
+      90 阶段在 85 秒内通过控制面、Cilium、系统调优、90s/30s、PodGC、PVC、LoadBalancer 和
+      metrics/logs/traces 冒烟，终态 Pod 保持 `100/100`。
