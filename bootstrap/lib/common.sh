@@ -211,6 +211,160 @@ verify_graceful_node_shutdown_config() {
   fi
 }
 
+# PodGC 的 kube-controller-manager 参数是 int32；0 和负数会直接关闭终态 Pod GC。
+validate_terminated_pod_gc_threshold() {
+  local value=$1 max=2147483647
+  [[ $value =~ ^[1-9][0-9]*$ ]] || {
+    printf 'KCM_TERMINATED_POD_GC_THRESHOLD=%q 无效;必须是正整数,0 会关闭终态 Pod GC\n' \
+      "$value" >&2
+    return 1
+  }
+  if (( ${#value} > ${#max} )) \
+    || (( ${#value} == ${#max} && 10#$value > max )); then
+    printf 'KCM_TERMINATED_POD_GC_THRESHOLD=%s 超出 int32 上限 %s\n' "$value" "$max" >&2
+    return 1
+  fi
+}
+
+# 原子更新 kubeadm 托管的静态 Pod command 参数。存在旧值时替换并去重；不存在时
+# 插入到目标可执行文件之后。输出 changed/unchanged，便于调用方决定是否等待 Pod 重建。
+ensure_static_pod_command_arg() {
+  local manifest=$1 executable=$2 flag=$3 value=$4
+  local prefix="--${flag}=" desired="--${flag}=${value}"
+  local existing_count exact_count dir base tmp staged
+  [[ -f $manifest ]] || return 1
+
+  existing_count=$(awk -v prefix="$prefix" '
+    { line=$0; sub(/^[[:space:]]*/, "", line); if (index(line, "- " prefix) == 1) count++ }
+    END { print count + 0 }
+  ' "$manifest")
+  exact_count=$(awk -v desired="$desired" '
+    { line=$0; sub(/^[[:space:]]*/, "", line); if (line == "- " desired) count++ }
+    END { print count + 0 }
+  ' "$manifest")
+  if (( existing_count == 1 && exact_count == 1 )); then
+    printf 'unchanged\n'
+    return 0
+  fi
+
+  dir=$(dirname "$manifest")
+  base=$(basename "$manifest")
+  # kubelet 会扫描 staticPodPath 下的普通文件；临时文件必须以点开头，避免被当成第二份清单。
+  tmp=$(mktemp "${dir}/.${base}.tmp.XXXXXX") || return 1
+  staged="${tmp}.staged"
+  if ! cp -p "$manifest" "$staged"; then
+    rm -f "$tmp" "$staged"
+    return 1
+  fi
+
+  if (( existing_count > 0 )); then
+    if ! awk -v prefix="$prefix" -v desired="$desired" '
+      {
+        line=$0
+        sub(/^[[:space:]]*/, "", line)
+        if (index(line, "- " prefix) == 1) {
+          if (!done) {
+            match($0, /^[[:space:]]*/)
+            print substr($0, RSTART, RLENGTH) "- " desired
+            done=1
+          }
+          next
+        }
+        print
+      }
+      END { if (!done) exit 2 }
+    ' "$manifest" > "$tmp"; then
+      rm -f "$tmp" "$staged"
+      return 1
+    fi
+  else
+    if ! awk -v executable="$executable" -v desired="$desired" '
+      {
+        print
+        line=$0
+        sub(/^[[:space:]]*/, "", line)
+        if (!done && line == "- " executable) {
+          match($0, /^[[:space:]]*/)
+          print substr($0, RSTART, RLENGTH) "- " desired
+          done=1
+        }
+      }
+      END { if (!done) exit 2 }
+    ' "$manifest" > "$tmp"; then
+      rm -f "$tmp" "$staged"
+      return 1
+    fi
+  fi
+
+  if ! cat "$tmp" > "$staged" || ! mv -f "$staged" "$manifest"; then
+    rm -f "$tmp" "$staged"
+    return 1
+  fi
+  rm -f "$tmp"
+  printf 'changed\n'
+}
+
+verify_terminated_pod_gc_config() {
+  local expected=${KCM_TERMINATED_POD_GC_THRESHOLD:-}
+  local manifest=${KCM_STATIC_POD_MANIFEST:-/etc/kubernetes/manifests/kube-controller-manager.yaml}
+  local manifest_count cluster_config config_count pods pod_count
+  local commands prefix_count expected_count ready ready_count
+  validate_terminated_pod_gc_threshold "$expected" || return 1
+  [[ -f $manifest ]] || return 1
+
+  manifest_count=$(awk -v expected="--terminated-pod-gc-threshold=${expected}" '
+    { line=$0; sub(/^[[:space:]]*/, "", line); if (line == "- " expected) count++ }
+    END { print count + 0 }
+  ' "$manifest")
+  (( manifest_count == 1 )) || return 1
+
+  cluster_config=$(kctl -n kube-system get configmap kubeadm-config \
+    -o jsonpath='{.data.ClusterConfiguration}' 2>/dev/null) || return 1
+  config_count=$(awk -v expected="$expected" '
+    $1 == "-" && $2 == "name:" && $3 == "terminated-pod-gc-threshold" { want=1; next }
+    want && $1 == "value:" {
+      value=$2
+      gsub(/^"|"$/, "", value)
+      if (value == expected) count++
+      want=0
+    }
+    END { print count + 0 }
+  ' <<<"$cluster_config")
+  (( config_count == 1 )) || return 1
+
+  pods=$(kctl -n kube-system get pods -l component=kube-controller-manager -o name 2>/dev/null) \
+    || return 1
+  pod_count=$(awk 'NF { count++ } END { print count + 0 }' <<<"$pods")
+  (( pod_count > 0 )) || return 1
+  commands=$(kctl -n kube-system get pods -l component=kube-controller-manager \
+    -o jsonpath='{range .items[*]}{range .spec.containers[*].command[*]}{.}{"\n"}{end}{end}' \
+    2>/dev/null) || return 1
+  prefix_count=$(grep -Fc -- '--terminated-pod-gc-threshold=' <<<"$commands" || true)
+  expected_count=$(grep -Fxc -- "--terminated-pod-gc-threshold=${expected}" <<<"$commands" || true)
+  (( prefix_count == pod_count && expected_count == pod_count )) || return 1
+
+  ready=$(kctl -n kube-system get pods -l component=kube-controller-manager \
+    -o jsonpath='{range .items[*]}{.status.containerStatuses[0].ready}{"\n"}{end}' 2>/dev/null) \
+    || return 1
+  ready_count=$(grep -c '^true$' <<<"$ready" || true)
+  (( ready_count == pod_count ))
+}
+
+terminal_pod_count() {
+  local succeeded failed
+  succeeded=$(kctl get pods -A --field-selector=status.phase=Succeeded -o name 2>/dev/null) \
+    || return 1
+  failed=$(kctl get pods -A --field-selector=status.phase=Failed -o name 2>/dev/null) \
+    || return 1
+  awk 'NF { count++ } END { print count + 0 }' <<<"${succeeded}"$'\n'"${failed}"
+}
+
+terminated_pod_gc_converged() {
+  local count
+  count=$(terminal_pod_count) || return 1
+  (( count <= KCM_TERMINATED_POD_GC_THRESHOLD ))
+}
+
 # 从整条 `kubeadm join <ep> --token <t> --discovery-token-ca-cert-hash <h>` 命令
 # 解析出三个参数并写入 JOIN_* 全局(worker 交互模式粘贴用)
 parse_join_cmd() {

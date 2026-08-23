@@ -178,6 +178,8 @@ controllerManager:
   extraArgs:
     - name: allocate-node-cidrs
       value: "true"
+    - name: terminated-pod-gc-threshold
+      value: "$KCM_TERMINATED_POD_GC_THRESHOLD"
 etcd:
   local:
     dataDir: /var/lib/etcd
@@ -202,6 +204,30 @@ shutdownGracePeriodCriticalPods: $KUBELET_SHUTDOWN_GRACE_CRITICAL
 EOF
 }
 verify_kubeadm_config() { kubeadm config validate --config "$KUBEADM_YML"; }
+
+configure_terminated_pod_gc() {
+  local manifest=/etc/kubernetes/manifests/kube-controller-manager.yaml result count
+  validate_terminated_pod_gc_threshold "$KCM_TERMINATED_POD_GC_THRESHOLD" \
+    || die "终态 Pod GC 阈值配置无效"
+  kubeadm init phase upload-config kubeadm --config "$KUBEADM_YML" >/dev/null \
+    || die "无法把 PodGC 阈值写入 kubeadm-config ConfigMap"
+  backup_once "$manifest"
+  result=$(ensure_static_pod_command_arg "$manifest" kube-controller-manager \
+    terminated-pod-gc-threshold "$KCM_TERMINATED_POD_GC_THRESHOLD") \
+    || die "无法更新 kube-controller-manager 的终态 Pod GC 参数"
+  if [[ $result == changed ]]; then
+    log_info "已更新终态 Pod GC 阈值: $KCM_TERMINATED_POD_GC_THRESHOLD;等待控制器重建"
+    wait_for "kube-controller-manager 使用新 PodGC 阈值并恢复 Ready" 180 \
+      verify_terminated_pod_gc_config \
+      || die "kube-controller-manager 更新 PodGC 阈值后未恢复"
+  else
+    log_info "终态 Pod GC 阈值已匹配: $KCM_TERMINATED_POD_GC_THRESHOLD"
+  fi
+  wait_for "终态 Pod 数量收敛到 GC 阈值以内" 180 terminated_pod_gc_converged \
+    || die "终态 Pod 数量未在 180 秒内收敛到 $KCM_TERMINATED_POD_GC_THRESHOLD 以内"
+  count=$(terminal_pod_count) || die "无法统计终态 Pod"
+  log_info "终态 Pod GC 已收敛: count=$count threshold=$KCM_TERMINATED_POD_GC_THRESHOLD"
+}
 
 # --- 5. 端口占用预检(已有集群/已加入则交给幂等逻辑) --------------------------------------
 check_ports() {
@@ -432,6 +458,11 @@ main() {
     || die "GracefulNodeShutdown 预算配置无效"
   read -r shutdown_total shutdown_critical <<<"$budget"
   log_info "GracefulNodeShutdown 配置校验通过: ${shutdown_total}s/${shutdown_critical}s"
+  if is_control_plane; then
+    validate_terminated_pod_gc_threshold "$KCM_TERMINATED_POD_GC_THRESHOLD" \
+      || die "终态 Pod GC 阈值配置无效"
+    log_info "终态 Pod GC 阈值校验通过: $KCM_TERMINATED_POD_GC_THRESHOLD"
+  fi
 
   # 两种角色共用: 仓库/软件包/节点关机预算/pause 对齐/端口预检。
   # 预算进入 step key: config.env 改值后会自动产生新步骤,不被旧状态标记跳过。
@@ -446,10 +477,13 @@ main() {
     add_step ports   "kubelet 端口占用预检"                  check_ports
     add_step join    "kubeadm join 加入集群"                 run_kubeadm_join     verify_joined
   else
-    add_step cfg     "生成 kubeadm.yml"                      gen_kubeadm_config   verify_kubeadm_config
+    add_step "cfg-podgc-${KCM_TERMINATED_POD_GC_THRESHOLD}" "生成 kubeadm.yml" \
+      gen_kubeadm_config verify_kubeadm_config
     add_step ports   "控制面端口占用预检"                    check_ports
     add_step images  "预拉控制面镜像"                        pull_images          verify_images
     add_step init    "kubeadm init(跳过 kube-proxy)"         run_kubeadm_init     verify_cluster_up
+    add_step "podgc-${KCM_TERMINATED_POD_GC_THRESHOLD}" "配置终态 Pod GC 阈值" \
+      configure_terminated_pod_gc verify_terminated_pod_gc_config
     add_step noproxy "清除 kube-proxy 残留"                  purge_kube_proxy     verify_no_kube_proxy
     add_step defrag  "etcd 碎片整理定时器"                   setup_etcd_defrag    verify_etcd_defrag
     add_step alias   "kubectl 补全与 k 别名"                 setup_kubectl_alias

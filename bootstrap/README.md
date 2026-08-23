@@ -22,7 +22,7 @@ kubernetes/bootstrap/
 │   │                           #   拓扑排序后并行调用各 install.sh; 不含任何 values)
 │   └── 90-verify.sh            # 全局验收+冒烟测试+报告
 ├── tests/
-│   └── test-node-shutdown.sh   # GracefulNodeShutdown 时长、运行值与一致性回归
+│   └── test-node-shutdown.sh   # 节点关机预算与终态 Pod GC 一致性回归
 └── files/                      # 运行时生成: kubeadm.yml / cilium-values.yaml / 示例
 ```
 
@@ -156,7 +156,23 @@ unattended-upgrades 自带的 30 秒 logind drop-in。
 
 正常执行 `shutdown now` 或 `systemctl reboot` 时，systemd-logind 最多允许 kubelet 使用总预算
 停止 Pod 和卸载卷；提前完成可以提前关机，超时后系统继续关机。该机制不覆盖断电、宿主机崩溃
-或虚拟机强制停止。回归检查：
+或虚拟机强制停止。
+
+### 终态 Pod GC
+
+`KCM_TERMINATED_POD_GC_THRESHOLD` 控制集群最多保留多少个 `Succeeded/Failed` Pod，默认值为
+`100`。该值必须是正整数；`0` 和负数会关闭终态 Pod GC，因此安装器直接拒绝。新建控制面时，
+50 阶段通过 kubeadm 写入 `--terminated-pod-gc-threshold`；已有控制面先更新
+`kube-system/kubeadm-config`，避免后续 kubeadm upgrade 把参数覆盖回默认值，再原子更新
+`/etc/kubernetes/manifests/kube-controller-manager.yaml`。安装器等待控制器恢复 Ready，并确认
+终态 Pod 数量在 180 秒内收敛到阈值以内。90 阶段会再次检查 kubeadm-config、静态 Pod 清单、
+运行中控制器参数和终态数量。
+
+该参数是全局数量阈值，不是按 Pod 计时的 TTL。超过阈值后，控制器会删除较旧的终态 Pod，
+其中可能包含已完成 Job 的 Pod 和对应容器日志，但不会因此删除 Job 对象。需要更长排障窗口时，
+提高正整数阈值；不要把 `shutdownGracePeriod` 改为 `0s`，也不要把 PodGC 阈值设为 `0`。
+
+回归检查：
 
 ```bash
 bash tests/test-node-shutdown.sh

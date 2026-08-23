@@ -72,6 +72,18 @@ check_graceful_node_shutdown() {
   log_info "GracefulNodeShutdown 一致性通过: 总预算=${total}s, 关键 Pod=${critical}s, logind=${total}s"
 }
 
+check_terminated_pod_gc() {
+  local count
+  validate_terminated_pod_gc_threshold "$KCM_TERMINATED_POD_GC_THRESHOLD" \
+    || die "终态 Pod GC 阈值配置无效"
+  verify_terminated_pod_gc_config \
+    || die "kube-controller-manager 的终态 Pod GC 参数未生效"
+  terminated_pod_gc_converged \
+    || die "终态 Pod 数量仍高于 GC 阈值 $KCM_TERMINATED_POD_GC_THRESHOLD"
+  count=$(terminal_pod_count) || die "无法统计终态 Pod"
+  log_info "终态 Pod GC 验收通过: count=$count threshold=$KCM_TERMINATED_POD_GC_THRESHOLD"
+}
+
 # --- 4. 存储冒烟(PVC 创建→写→读→清理) ------------------------------------------------------
 smoke_storage() {
   if [[ $VERIFY_PVC_SMOKE_TEST != true ]]; then
@@ -458,6 +470,7 @@ main() {
     add_step nokp     "kube-proxy 替代确认(eBPF)"       check_kube_proxy_free
     add_step tuning   "系统调优抽检"                    check_tuning
     add_step shutdown "GracefulNodeShutdown 一致性检查" check_graceful_node_shutdown
+    add_step podgc    "终态 Pod GC 一致性检查"          check_terminated_pod_gc
     add_step pvc      "存储冒烟测试"                    smoke_storage
     add_step lb      "LoadBalancer 冒烟测试(可选)" smoke_loadbalancer
     add_step otel    "可观测链路冒烟测试(可选)"    smoke_observability
