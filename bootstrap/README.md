@@ -162,15 +162,21 @@ unattended-upgrades 自带的 30 秒 logind drop-in。
 
 `KCM_TERMINATED_POD_GC_THRESHOLD` 控制集群最多保留多少个 `Succeeded/Failed` Pod，默认值为
 `100`。该值必须是正整数；`0` 和负数会关闭终态 Pod GC，因此安装器直接拒绝。新建控制面时，
-50 阶段通过 kubeadm 写入 `--terminated-pod-gc-threshold`；已有控制面先更新
-`kube-system/kubeadm-config`，避免后续 kubeadm upgrade 把参数覆盖回默认值，再原子更新
-`/etc/kubernetes/manifests/kube-controller-manager.yaml`。安装器等待控制器恢复 Ready，并确认
-终态 Pod 数量在 180 秒内收敛到阈值以内。90 阶段会再次检查 kubeadm-config、静态 Pod 清单、
-运行中控制器参数和终态数量。
+50 阶段通过 kubeadm 写入 `--terminated-pod-gc-threshold`。已有控制面每次执行都会重新调和：
+先为 live ClusterConfiguration 和静态 Pod 清单创建本次快照，再原子替换
+`/etc/kubernetes/manifests/kube-controller-manager.yaml`，等待本节点具名控制器恢复 Ready，最后只
+定向更新 `kube-system/kubeadm-config` 中的 controller-manager 参数。升级或人工维护产生的其他
+ClusterConfiguration 字段保持不变；中途失败会同时回滚运行清单和持久配置。快照保存在
+`/var/lib/k8s-installer/backups/podgc/<UTC时间>-<PID>/`。
+
+安装器最多观察 180 秒的终态 Pod 数量。数量仍高于阈值时只告警，不把活跃集群中新终态 Pod
+持续产生误判为配置失败；90 阶段对 kubeadm-config、静态清单、本节点运行参数和 Ready 状态做
+硬校验，对数量只报告当前观察值。计数不包含已经带 `deletionTimestamp` 的 Pod。
 
 该参数是全局数量阈值，不是按 Pod 计时的 TTL。超过阈值后，控制器会删除较旧的终态 Pod，
-其中可能包含已完成 Job 的 Pod 和对应容器日志，但不会因此删除 Job 对象。需要更长排障窗口时，
-提高正整数阈值；不要把 `shutdownGracePeriod` 改为 `0s`，也不要把 PodGC 阈值设为 `0`。
+其中可能包含已完成 Job 的 Pod 和对应容器日志，但不会因此删除 Job 对象。恢复配置快照也无法
+找回已经被 PodGC 删除的 Pod、容器日志或现场状态。需要更长排障窗口时，提高正整数阈值；不要
+把 `shutdownGracePeriod` 改为 `0s`，也不要把 PodGC 阈值设为 `0`。
 
 回归检查：
 
@@ -219,6 +225,7 @@ Alloy/Promtail 只是"采集端"，你已有 fluent-bit 就**不需要**再装�
 | 静态 IP | 删除 `/etc/netplan/99-k8s-static.yaml` 后 `netplan apply` |
 | sysctl/limits/sshd/GRUB | 删除对应 `99-k8s*` 托管文件 |
 | 被修改的系统文件 | 从 `/var/lib/k8s-installer/backups/` 拷回 |
+| PodGC 控制器配置 | 50 阶段失败会自动恢复本次 `backups/podgc/` 快照；人工恢复需同时还原静态清单和 `ClusterConfiguration.before.yaml`，已删除的 Pod/日志不可恢复 |
 | LVM 卷组 | `vgremove openebs-vg`（会丢数据，自行确认） |
 | etcd 专用盘 | 删 fstab 托管块 + 数据拷回根盘（迁移备份在 `/var/lib/etcd.pre-migration`） |
 | defrag/自动更新 | `systemctl disable --now k8s-etcd-defrag.timer` / 删 `52-k8s-unattended.conf` |

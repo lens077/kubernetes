@@ -132,26 +132,109 @@ fi
 [[ $(cksum "$bad_manifest") == "$before" ]] \
   || fail "expected failed manifest update to leave source untouched"
 
+split_manifest="$tmp_dir/split-controller.yaml"
+cat > "$split_manifest" <<'EOF'
+spec:
+  containers:
+  - command:
+    - kube-controller-manager
+    - --terminated-pod-gc-threshold
+    - "200"
+EOF
+before=$(cksum "$split_manifest")
+if ensure_static_pod_command_arg "$split_manifest" kube-controller-manager \
+     terminated-pod-gc-threshold 100 >/dev/null 2>&1; then
+  fail "expected split-form PodGC flag to fail instead of leaving conflicting args"
+fi
+[[ $(cksum "$split_manifest") == "$before" ]] \
+  || fail "expected split-form rejection to leave manifest untouched"
+
+ambiguous_manifest="$tmp_dir/ambiguous-controller.yaml"
+cat > "$ambiguous_manifest" <<'EOF'
+spec:
+  containers:
+  - command:
+    - kube-controller-manager
+  example:
+    - kube-controller-manager
+EOF
+before=$(cksum "$ambiguous_manifest")
+if ensure_static_pod_command_arg "$ambiguous_manifest" kube-controller-manager \
+     terminated-pod-gc-threshold 100 >/dev/null 2>&1; then
+  fail "expected ambiguous kube-controller-manager anchor to fail"
+fi
+[[ $(cksum "$ambiguous_manifest") == "$before" ]] \
+  || fail "expected ambiguous anchor rejection to leave manifest untouched"
+
+cluster_config="$tmp_dir/ClusterConfiguration.yaml"
+cat > "$cluster_config" <<'EOF'
+apiVersion: kubeadm.k8s.io/v1beta4
+kind: ClusterConfiguration
+controlPlaneEndpoint: 192.168.3.250:6443
+controllerManager:
+  extraArgs:
+  - name: allocate-node-cidrs
+    value: "true"
+  - name: terminated-pod-gc-threshold
+    value: "200"
+  - name: terminated-pod-gc-threshold
+    value: "300"
+featureGates:
+  SomeFutureGate: true
+dns: {}
+EOF
+[[ $(ensure_kubeadm_controller_manager_arg_file "$cluster_config" \
+      terminated-pod-gc-threshold 100) == changed ]] \
+  || fail "expected live ClusterConfiguration target arg to change"
+[[ $(grep -c 'name: terminated-pod-gc-threshold' "$cluster_config") == 1 ]] \
+  || fail "expected duplicate ClusterConfiguration args to be normalized"
+grep -q 'value: "100"' "$cluster_config" \
+  || fail "expected ClusterConfiguration PodGC value to become 100"
+grep -q '^controlPlaneEndpoint: 192.168.3.250:6443$' "$cluster_config" \
+  || fail "expected unrelated controlPlaneEndpoint to be preserved"
+grep -q '^  SomeFutureGate: true$' "$cluster_config" \
+  || fail "expected unrelated feature gate to be preserved"
+[[ $(ensure_kubeadm_controller_manager_arg_file "$cluster_config" \
+      terminated-pod-gc-threshold 100) == unchanged ]] \
+  || fail "expected matching live ClusterConfiguration to remain unchanged"
+
+missing_extra="$tmp_dir/missing-extra.yaml"
+printf 'apiVersion: kubeadm.k8s.io/v1beta4\nkind: ClusterConfiguration\ncontrollerManager: {}\n' \
+  > "$missing_extra"
+before=$(cksum "$missing_extra")
+if ensure_kubeadm_controller_manager_arg_file "$missing_extra" \
+     terminated-pod-gc-threshold 100 >/dev/null 2>&1; then
+  fail "expected unsupported ClusterConfiguration shape to fail closed"
+fi
+[[ $(cksum "$missing_extra") == "$before" ]] \
+  || fail "expected failed ClusterConfiguration update to leave source untouched"
+
 export KCM_TERMINATED_POD_GC_THRESHOLD=100
 export KCM_STATIC_POD_MANIFEST="$controller_manifest"
+export FAKE_TERMINAL_PODS_JSON='{"items":[{"metadata":{"deletionTimestamp":null},"status":{"phase":"Succeeded"}},{"metadata":{"deletionTimestamp":null},"status":{"phase":"Failed"}},{"metadata":{"deletionTimestamp":null},"status":{"phase":"Failed"}},{"metadata":{"deletionTimestamp":"2026-08-21T00:00:00Z"},"status":{"phase":"Failed"}}]}'
 kctl() {
   case " $* " in
-    *" get configmap kubeadm-config "*)              printf '%s\n' 'controllerManager:' '  extraArgs:' '  - name: terminated-pod-gc-threshold' '    value: "100"' ;;
-    *" --field-selector=status.phase=Succeeded "*)   printf 'pod/a\npod/b\n' ;;
-    *" --field-selector=status.phase=Failed "*)      printf 'pod/c\n' ;;
-    *" -o name "*)                                   printf 'pod/kube-controller-manager-node101\n' ;;
-    *"containers[*].command"*)                      printf '%s\n' kube-controller-manager --allocate-node-cidrs=true --terminated-pod-gc-threshold=100 ;;
-    *"containerStatuses[0].ready"*)                  printf 'true\n' ;;
+    *" get configmap kubeadm-config "*) printf '%s\n' 'controllerManager:' '  extraArgs:' '  - name: terminated-pod-gc-threshold' '    value: "100"' ;;
+    *" get pods -A -o json "*)          printf '%s\n' "$FAKE_TERMINAL_PODS_JSON" ;;
+    *" get pods -l component=kube-controller-manager "*)
+      printf '%s\n' '{"items":[{"spec":{"containers":[{"name":"kube-controller-manager","command":["kube-controller-manager","--allocate-node-cidrs=true","--terminated-pod-gc-threshold=100"]}]},"status":{"containerStatuses":[{"name":"kube-controller-manager","ready":true}]}}]}'
+      ;;
     *) return 1 ;;
   esac
 }
 verify_terminated_pod_gc_config \
   || fail "expected manifest and controller-manager PodGC values to match"
-[[ $(terminal_pod_count) == 3 ]] || fail "expected terminal Pod counter to return 3"
+[[ $(terminal_pod_count) == 3 ]] \
+  || fail "expected terminal Pod counter to exclude deletionTimestamp and return 3"
 terminated_pod_gc_converged || fail "expected terminal Pod count to be below threshold"
-export KCM_TERMINATED_POD_GC_THRESHOLD=2
+
+FAKE_TERMINAL_PODS_JSON=$(jq -nc \
+  '{items: [range(0;112) | {metadata:{deletionTimestamp:null},status:{phase:"Failed"}}]}')
 if terminated_pod_gc_converged; then
-  fail "expected terminal Pod count above threshold to fail convergence"
+  fail "expected 112 terminal Pods to exceed threshold 100"
 fi
+FAKE_TERMINAL_PODS_JSON=$(jq -nc \
+  '{items: [range(0;100) | {metadata:{deletionTimestamp:null},status:{phase:"Failed"}}]}')
+terminated_pod_gc_converged || fail "expected terminal Pod count 100 to satisfy threshold 100"
 
 printf 'PASS: node shutdown and terminal Pod GC validation\n'

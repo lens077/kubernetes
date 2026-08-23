@@ -205,28 +205,109 @@ EOF
 }
 verify_kubeadm_config() { kubeadm config validate --config "$KUBEADM_YML"; }
 
+patch_kubeadm_cluster_configuration() {
+  local config_file=$1 payload
+  payload=$(jq -n --rawfile config "$config_file" '{data:{ClusterConfiguration:$config}}') \
+    || return 1
+  kctl -n kube-system patch configmap kubeadm-config --type merge -p "$payload" >/dev/null
+}
+
+restore_pod_gc_snapshot() {
+  local snapshot_dir=$1 restore_config=${2:-true}
+  local manifest=/etc/kubernetes/manifests/kube-controller-manager.yaml staged rc=0
+  log_warn "PodGC 变更失败,开始回滚: $snapshot_dir"
+  if [[ $restore_config == true ]]; then
+    patch_kubeadm_cluster_configuration "$snapshot_dir/ClusterConfiguration.before.yaml" || rc=1
+  fi
+  staged=$(mktemp "/etc/kubernetes/manifests/.kube-controller-manager.rollback.XXXXXX") || rc=1
+  if [[ -n ${staged:-} ]]; then
+    rm -f "$staged"
+    cp -a "$snapshot_dir/kube-controller-manager.before.yaml" "$staged" || rc=1
+    mv -f "$staged" "$manifest" || rc=1
+  fi
+  wait_for "kube-controller-manager 回滚后恢复 Ready" 180 controller_manager_ready || rc=1
+  if (( rc == 0 )); then
+    if [[ $restore_config == true ]]; then
+      log_info "PodGC 运行配置和 kubeadm-config 已回滚"
+    else
+      log_info "PodGC 运行配置已回滚;未改动 kubeadm-config"
+    fi
+  fi
+  return "$rc"
+}
+
 configure_terminated_pod_gc() {
-  local manifest=/etc/kubernetes/manifests/kube-controller-manager.yaml result count
+  local manifest=/etc/kubernetes/manifests/kube-controller-manager.yaml
+  local snapshot_dir current_config desired_config live_check result before_count count waited=0
   validate_terminated_pod_gc_threshold "$KCM_TERMINATED_POD_GC_THRESHOLD" \
     || die "终态 Pod GC 阈值配置无效"
-  kubeadm init phase upload-config kubeadm --config "$KUBEADM_YML" >/dev/null \
-    || die "无法把 PodGC 阈值写入 kubeadm-config ConfigMap"
-  backup_once "$manifest"
+  verify_cluster_up || die "控制面未就绪,不能修改 kube-controller-manager"
+  [[ -f $manifest ]] || die "缺少 kube-controller-manager 静态 Pod 清单: $manifest"
+  before_count=$(terminal_pod_count) || die "无法统计变更前的终态 Pod"
+
+  if verify_terminated_pod_gc_config; then
+    log_info "终态 Pod GC 配置已匹配: threshold=$KCM_TERMINATED_POD_GC_THRESHOLD count=$before_count"
+    return 0
+  fi
+
+  snapshot_dir="$BACKUP_DIR/podgc/$(date -u +%Y%m%dT%H%M%SZ)-$$"
+  mkdir -p "$snapshot_dir"
+  cp -a "$manifest" "$snapshot_dir/kube-controller-manager.before.yaml" \
+    || die "无法备份 kube-controller-manager 静态 Pod 清单"
+  current_config="$snapshot_dir/ClusterConfiguration.before.yaml"
+  desired_config="$snapshot_dir/ClusterConfiguration.desired.yaml"
+  kctl -n kube-system get configmap kubeadm-config \
+    -o jsonpath='{.data.ClusterConfiguration}' > "$current_config" \
+    || die "无法备份 kubeadm-config ClusterConfiguration"
+  [[ -s $current_config ]] || die "kubeadm-config ClusterConfiguration 为空"
+  cp -p "$current_config" "$desired_config"
+  ensure_kubeadm_controller_manager_arg_file "$desired_config" \
+    terminated-pod-gc-threshold "$KCM_TERMINATED_POD_GC_THRESHOLD" >/dev/null \
+    || die "无法在 live ClusterConfiguration 中定向更新 PodGC 参数"
+
   result=$(ensure_static_pod_command_arg "$manifest" kube-controller-manager \
     terminated-pod-gc-threshold "$KCM_TERMINATED_POD_GC_THRESHOLD") \
-    || die "无法更新 kube-controller-manager 的终态 Pod GC 参数"
+    || die "无法更新 kube-controller-manager 的终态 Pod GC 参数;备份位于 $snapshot_dir"
   if [[ $result == changed ]]; then
-    log_info "已更新终态 Pod GC 阈值: $KCM_TERMINATED_POD_GC_THRESHOLD;等待控制器重建"
-    wait_for "kube-controller-manager 使用新 PodGC 阈值并恢复 Ready" 180 \
-      verify_terminated_pod_gc_config \
-      || die "kube-controller-manager 更新 PodGC 阈值后未恢复"
-  else
-    log_info "终态 Pod GC 阈值已匹配: $KCM_TERMINATED_POD_GC_THRESHOLD"
+    log_info "已更新终态 Pod GC 阈值: $KCM_TERMINATED_POD_GC_THRESHOLD;等待本节点控制器重建"
   fi
-  wait_for "终态 Pod 数量收敛到 GC 阈值以内" 180 terminated_pod_gc_converged \
-    || die "终态 Pod 数量未在 180 秒内收敛到 $KCM_TERMINATED_POD_GC_THRESHOLD 以内"
-  count=$(terminal_pod_count) || die "无法统计终态 Pod"
-  log_info "终态 Pod GC 已收敛: count=$count threshold=$KCM_TERMINATED_POD_GC_THRESHOLD"
+  if ! wait_for "本节点 kube-controller-manager 使用新 PodGC 阈值并恢复 Ready" 180 \
+    verify_terminated_pod_gc_runtime; then
+    restore_pod_gc_snapshot "$snapshot_dir" false || true
+    die "kube-controller-manager 更新 PodGC 阈值后未恢复"
+  fi
+
+  # 静态 Pod 已验证后再定向替换 ConfigMap 的单个 data 键，保留 live 配置中的其他字段。
+  live_check="$snapshot_dir/ClusterConfiguration.prepatch.yaml"
+  kctl -n kube-system get configmap kubeadm-config \
+    -o jsonpath='{.data.ClusterConfiguration}' > "$live_check" \
+    || { restore_pod_gc_snapshot "$snapshot_dir" false || true; die "无法复核 live ClusterConfiguration"; }
+  if ! cmp -s "$current_config" "$live_check"; then
+    restore_pod_gc_snapshot "$snapshot_dir" false || true
+    die "PodGC 变更期间 live ClusterConfiguration 被其他操作修改,已停止并回滚"
+  fi
+  if ! patch_kubeadm_cluster_configuration "$desired_config"; then
+    restore_pod_gc_snapshot "$snapshot_dir" || true
+    die "无法持久化 kubeadm-config PodGC 参数"
+  fi
+  if ! verify_terminated_pod_gc_config; then
+    restore_pod_gc_snapshot "$snapshot_dir" || true
+    die "PodGC 运行配置与 kubeadm-config 未能保持一致"
+  fi
+
+  if (( before_count > KCM_TERMINATED_POD_GC_THRESHOLD )); then
+    while ! terminated_pod_gc_converged && (( waited < 180 )); do
+      sleep 5
+      (( waited += 5 ))
+    done
+  fi
+  count=$(terminal_pod_count) || die "无法统计变更后的终态 Pod"
+  if (( count <= KCM_TERMINATED_POD_GC_THRESHOLD )); then
+    log_info "终态 Pod 数量已在阈值内: before=$before_count after=$count threshold=$KCM_TERMINATED_POD_GC_THRESHOLD"
+  else
+    log_warn "PodGC 参数已生效,但终态 Pod 尚未收敛: before=$before_count after=$count threshold=$KCM_TERMINATED_POD_GC_THRESHOLD"
+  fi
+  log_info "本次变更前快照: $snapshot_dir"
 }
 
 # --- 5. 端口占用预检(已有集群/已加入则交给幂等逻辑) --------------------------------------
@@ -477,13 +558,14 @@ main() {
     add_step ports   "kubelet 端口占用预检"                  check_ports
     add_step join    "kubeadm join 加入集群"                 run_kubeadm_join     verify_joined
   else
-    add_step "cfg-podgc-${KCM_TERMINATED_POD_GC_THRESHOLD}" "生成 kubeadm.yml" \
-      gen_kubeadm_config verify_kubeadm_config
+    # 这两步是调和器而不是一次性任务：每次运行都重验，避免 100→200→100 命中旧 done 标记。
+    rm -f "$STATE_DIR/state/${STAGE_ID}:cfg-podgc"*.done \
+      "$STATE_DIR/state/${STAGE_ID}:podgc"*.done 2>/dev/null || true
+    add_step cfg-podgc "生成 kubeadm.yml"                    gen_kubeadm_config   verify_kubeadm_config
     add_step ports   "控制面端口占用预检"                    check_ports
     add_step images  "预拉控制面镜像"                        pull_images          verify_images
     add_step init    "kubeadm init(跳过 kube-proxy)"         run_kubeadm_init     verify_cluster_up
-    add_step "podgc-${KCM_TERMINATED_POD_GC_THRESHOLD}" "配置终态 Pod GC 阈值" \
-      configure_terminated_pod_gc verify_terminated_pod_gc_config
+    add_step podgc   "配置终态 Pod GC 阈值"                  configure_terminated_pod_gc verify_terminated_pod_gc_config
     add_step noproxy "清除 kube-proxy 残留"                  purge_kube_proxy     verify_no_kube_proxy
     add_step defrag  "etcd 碎片整理定时器"                   setup_etcd_defrag    verify_etcd_defrag
     add_step alias   "kubectl 补全与 k 别名"                 setup_kubectl_alias

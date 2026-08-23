@@ -231,17 +231,48 @@ validate_terminated_pod_gc_threshold() {
 ensure_static_pod_command_arg() {
   local manifest=$1 executable=$2 flag=$3 value=$4
   local prefix="--${flag}=" desired="--${flag}=${value}"
-  local existing_count exact_count dir base tmp staged
+  local anchor_stats executable_count anchor_count command_indent_width
+  local flag_stats all_flag_count existing_count exact_count split_count
+  local dir base tmp staged
   [[ -f $manifest ]] || return 1
 
-  existing_count=$(awk -v prefix="$prefix" '
-    { line=$0; sub(/^[[:space:]]*/, "", line); if (index(line, "- " prefix) == 1) count++ }
-    END { print count + 0 }
+  anchor_stats=$(awk -v executable="$executable" '
+    {
+      line=$0
+      sub(/^[[:space:]]*/, "", line)
+      if (line == "- " executable) {
+        executable_count++
+        if (previous == "- command:" || previous == "command:") {
+          match($0, /^[[:space:]]*/)
+          anchor_count++
+          width=RLENGTH
+        }
+      }
+      previous=line
+    }
+    END { print executable_count + 0, anchor_count + 0, width + 0 }
   ' "$manifest")
-  exact_count=$(awk -v desired="$desired" '
-    { line=$0; sub(/^[[:space:]]*/, "", line); if (line == "- " desired) count++ }
-    END { print count + 0 }
+  read -r executable_count anchor_count command_indent_width <<<"$anchor_stats"
+  (( executable_count == 1 && anchor_count == 1 )) || return 1
+
+  flag_stats=$(awk -v flag="$flag" -v desired="$desired" -v width="$command_indent_width" '
+    {
+      match($0, /^[[:space:]]*/)
+      indent=RLENGTH
+      line=$0
+      sub(/^[[:space:]]*/, "", line)
+      if (line == "- --" flag || index(line, "- --" flag "=") == 1) {
+        all_count++
+        if (line == "- --" flag) split_count++
+        if (indent == width && index(line, "- --" flag "=") == 1) equal_count++
+        if (indent == width && line == "- " desired) exact_count++
+      }
+    }
+    END { print all_count + 0, equal_count + 0, exact_count + 0, split_count + 0 }
   ' "$manifest")
+  read -r all_flag_count existing_count exact_count split_count <<<"$flag_stats"
+  # 拒绝 `--flag value` 和出现在其他 YAML 位置的同名参数，避免静默保留冲突值。
+  (( split_count == 0 && all_flag_count == existing_count )) || return 1
   if (( existing_count == 1 && exact_count == 1 )); then
     printf 'unchanged\n'
     return 0
@@ -258,13 +289,14 @@ ensure_static_pod_command_arg() {
   fi
 
   if (( existing_count > 0 )); then
-    if ! awk -v prefix="$prefix" -v desired="$desired" '
+    if ! awk -v prefix="$prefix" -v desired="$desired" -v width="$command_indent_width" '
       {
+        match($0, /^[[:space:]]*/)
+        indent=RLENGTH
         line=$0
         sub(/^[[:space:]]*/, "", line)
-        if (index(line, "- " prefix) == 1) {
+        if (indent == width && index(line, "- " prefix) == 1) {
           if (!done) {
-            match($0, /^[[:space:]]*/)
             print substr($0, RSTART, RLENGTH) "- " desired
             done=1
           }
@@ -278,13 +310,14 @@ ensure_static_pod_command_arg() {
       return 1
     fi
   else
-    if ! awk -v executable="$executable" -v desired="$desired" '
+    if ! awk -v executable="$executable" -v desired="$desired" -v width="$command_indent_width" '
       {
         print
+        match($0, /^[[:space:]]*/)
+        indent=RLENGTH
         line=$0
         sub(/^[[:space:]]*/, "", line)
-        if (!done && line == "- " executable) {
-          match($0, /^[[:space:]]*/)
+        if (!done && indent == width && line == "- " executable) {
           print substr($0, RSTART, RLENGTH) "- " desired
           done=1
         }
@@ -304,59 +337,165 @@ ensure_static_pod_command_arg() {
   printf 'changed\n'
 }
 
-verify_terminated_pod_gc_config() {
+# 只改 live ClusterConfiguration 的 controllerManager.extraArgs，保留升级或人工维护的其他字段。
+ensure_kubeadm_controller_manager_arg_file() {
+  local config_file=$1 flag=$2 value=$3 dir base tmp staged
+  [[ -f $config_file ]] || return 1
+  dir=$(dirname "$config_file")
+  base=$(basename "$config_file")
+  tmp=$(mktemp "${dir}/.${base}.tmp.XXXXXX") || return 1
+  staged="${tmp}.staged"
+  if ! cp -p "$config_file" "$staged"; then
+    rm -f "$tmp" "$staged"
+    return 1
+  fi
+
+  if ! awk -v flag="$flag" -v value="$value" '
+    function emit_target() {
+      print "  - name: " flag
+      print "    value: \"" value "\""
+      inserted=1
+    }
+    {
+      line=$0
+      if (in_extra && (line ~ /^  [^[:space:]-][^:]*:/ || line ~ /^[^[:space:]#]/)) {
+        if (!inserted) emit_target()
+        in_extra=0
+      }
+      if (line == "controllerManager:") {
+        seen_component=1
+        in_component=1
+      } else if (line ~ /^[^[:space:]#][^:]*:/) {
+        in_component=0
+      }
+      if (in_component && line == "  extraArgs:") {
+        print
+        seen_extra=1
+        in_extra=1
+        next
+      }
+      if (in_extra && line == "  - name: " flag) {
+        if (!inserted) emit_target()
+        skip_value=1
+        next
+      }
+      if (skip_value) {
+        if (line ~ /^    value:/) {
+          skip_value=0
+          next
+        }
+        exit 2
+      }
+      print
+    }
+    END {
+      if (skip_value) exit 2
+      if (in_extra && !inserted) emit_target()
+      if (!seen_component || !seen_extra) exit 2
+    }
+  ' "$config_file" > "$tmp"; then
+    rm -f "$tmp" "$staged"
+    return 1
+  fi
+
+  if cmp -s "$config_file" "$tmp"; then
+    rm -f "$tmp" "$staged"
+    printf 'unchanged\n'
+    return 0
+  fi
+  if ! cat "$tmp" > "$staged" || ! mv -f "$staged" "$config_file"; then
+    rm -f "$tmp" "$staged"
+    return 1
+  fi
+  rm -f "$tmp"
+  printf 'changed\n'
+}
+
+verify_terminated_pod_gc_runtime() {
   local expected=${KCM_TERMINATED_POD_GC_THRESHOLD:-}
   local manifest=${KCM_STATIC_POD_MANIFEST:-/etc/kubernetes/manifests/kube-controller-manager.yaml}
-  local manifest_count cluster_config config_count pods pod_count
-  local commands prefix_count expected_count ready ready_count
+  local manifest_stats manifest_all manifest_exact manifest_split controller_json pod_count container_count
+  local commands prefix_count expected_count split_count ready
   validate_terminated_pod_gc_threshold "$expected" || return 1
   [[ -f $manifest ]] || return 1
 
-  manifest_count=$(awk -v expected="--terminated-pod-gc-threshold=${expected}" '
-    { line=$0; sub(/^[[:space:]]*/, "", line); if (line == "- " expected) count++ }
-    END { print count + 0 }
+  manifest_stats=$(awk -v flag=terminated-pod-gc-threshold \
+    -v expected="--terminated-pod-gc-threshold=${expected}" '
+    {
+      line=$0
+      sub(/^[[:space:]]*/, "", line)
+      if (line == "- --" flag || index(line, "- --" flag "=") == 1) all_count++
+      if (line == "- --" flag) split_count++
+      if (line == "- " expected) exact_count++
+    }
+    END { print all_count + 0, exact_count + 0, split_count + 0 }
   ' "$manifest")
-  (( manifest_count == 1 )) || return 1
+  read -r manifest_all manifest_exact manifest_split <<<"$manifest_stats"
+  (( manifest_all == 1 && manifest_exact == 1 && manifest_split == 0 )) || return 1
 
+  controller_json=$(kctl -n kube-system get pods -l component=kube-controller-manager \
+    --field-selector="spec.nodeName=$NODE_NAME" -o json 2>/dev/null) || return 1
+  pod_count=$(jq -r '.items | length' <<<"$controller_json") || return 1
+  container_count=$(jq -r '[.items[].spec.containers[] | select(.name == "kube-controller-manager")] | length' \
+    <<<"$controller_json") || return 1
+  (( pod_count == 1 && container_count == 1 )) || return 1
+  commands=$(jq -r '.items[].spec.containers[] | select(.name == "kube-controller-manager") | .command[]' \
+    <<<"$controller_json") || return 1
+  prefix_count=$(grep -Fc -- '--terminated-pod-gc-threshold=' <<<"$commands" || true)
+  expected_count=$(grep -Fxc -- "--terminated-pod-gc-threshold=${expected}" <<<"$commands" || true)
+  split_count=$(grep -Fxc -- '--terminated-pod-gc-threshold' <<<"$commands" || true)
+  (( prefix_count == 1 && expected_count == 1 && split_count == 0 )) || return 1
+
+  ready=$(jq -r '.items[].status.containerStatuses[] | select(.name == "kube-controller-manager") | .ready' \
+    <<<"$controller_json") || return 1
+  [[ $ready == true ]]
+}
+
+verify_terminated_pod_gc_persisted_config() {
+  local expected=${KCM_TERMINATED_POD_GC_THRESHOLD:-} cluster_config stats entries matches
   cluster_config=$(kctl -n kube-system get configmap kubeadm-config \
     -o jsonpath='{.data.ClusterConfiguration}' 2>/dev/null) || return 1
-  config_count=$(awk -v expected="$expected" '
-    $1 == "-" && $2 == "name:" && $3 == "terminated-pod-gc-threshold" { want=1; next }
+  stats=$(awk -v expected="$expected" '
+    $1 == "-" && $2 == "name:" && $3 == "terminated-pod-gc-threshold" {
+      entries++
+      want=1
+      next
+    }
     want && $1 == "value:" {
       value=$2
       gsub(/^"|"$/, "", value)
-      if (value == expected) count++
+      if (value == expected) matches++
       want=0
     }
-    END { print count + 0 }
+    END { print entries + 0, matches + 0 }
   ' <<<"$cluster_config")
-  (( config_count == 1 )) || return 1
+  read -r entries matches <<<"$stats"
+  (( entries == 1 && matches == 1 ))
+}
 
-  pods=$(kctl -n kube-system get pods -l component=kube-controller-manager -o name 2>/dev/null) \
-    || return 1
-  pod_count=$(awk 'NF { count++ } END { print count + 0 }' <<<"$pods")
-  (( pod_count > 0 )) || return 1
-  commands=$(kctl -n kube-system get pods -l component=kube-controller-manager \
-    -o jsonpath='{range .items[*]}{range .spec.containers[*].command[*]}{.}{"\n"}{end}{end}' \
-    2>/dev/null) || return 1
-  prefix_count=$(grep -Fc -- '--terminated-pod-gc-threshold=' <<<"$commands" || true)
-  expected_count=$(grep -Fxc -- "--terminated-pod-gc-threshold=${expected}" <<<"$commands" || true)
-  (( prefix_count == pod_count && expected_count == pod_count )) || return 1
+verify_terminated_pod_gc_config() {
+  verify_terminated_pod_gc_persisted_config && verify_terminated_pod_gc_runtime
+}
 
-  ready=$(kctl -n kube-system get pods -l component=kube-controller-manager \
-    -o jsonpath='{range .items[*]}{.status.containerStatuses[0].ready}{"\n"}{end}' 2>/dev/null) \
-    || return 1
-  ready_count=$(grep -c '^true$' <<<"$ready" || true)
-  (( ready_count == pod_count ))
+controller_manager_ready() {
+  local controller_json pod_count ready
+  controller_json=$(kctl -n kube-system get pods -l component=kube-controller-manager \
+    --field-selector="spec.nodeName=$NODE_NAME" -o json 2>/dev/null) || return 1
+  pod_count=$(jq -r '.items | length' <<<"$controller_json") || return 1
+  ready=$(jq -r '.items[].status.containerStatuses[] | select(.name == "kube-controller-manager") | .ready' \
+    <<<"$controller_json") || return 1
+  (( pod_count == 1 )) && [[ $ready == true ]]
 }
 
 terminal_pod_count() {
-  local succeeded failed
-  succeeded=$(kctl get pods -A --field-selector=status.phase=Succeeded -o name 2>/dev/null) \
-    || return 1
-  failed=$(kctl get pods -A --field-selector=status.phase=Failed -o name 2>/dev/null) \
-    || return 1
-  awk 'NF { count++ } END { print count + 0 }' <<<"${succeeded}"$'\n'"${failed}"
+  kctl get pods -A -o json 2>/dev/null | jq -r '
+    [.items[]
+      | select(
+          (.status.phase == "Succeeded" or .status.phase == "Failed")
+          and (.metadata.deletionTimestamp == null)
+        )]
+    | length
+  '
 }
 
 terminated_pod_gc_converged() {

@@ -78,10 +78,12 @@ check_terminated_pod_gc() {
     || die "终态 Pod GC 阈值配置无效"
   verify_terminated_pod_gc_config \
     || die "kube-controller-manager 的终态 Pod GC 参数未生效"
-  terminated_pod_gc_converged \
-    || die "终态 Pod 数量仍高于 GC 阈值 $KCM_TERMINATED_POD_GC_THRESHOLD"
   count=$(terminal_pod_count) || die "无法统计终态 Pod"
-  log_info "终态 Pod GC 验收通过: count=$count threshold=$KCM_TERMINATED_POD_GC_THRESHOLD"
+  if (( count > KCM_TERMINATED_POD_GC_THRESHOLD )); then
+    log_warn "PodGC 配置一致,但非 terminating 的终态 Pod 暂高于阈值: count=$count threshold=$KCM_TERMINATED_POD_GC_THRESHOLD"
+  else
+    log_info "终态 Pod GC 验收通过: count=$count threshold=$KCM_TERMINATED_POD_GC_THRESHOLD"
+  fi
 }
 
 # --- 4. 存储冒烟(PVC 创建→写→读→清理) ------------------------------------------------------

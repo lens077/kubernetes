@@ -485,6 +485,7 @@ otel-collector 的配置**无需功能性改动** —— 它只与 Jaeger 的 Se
       已运行的 kubelet 配置。步骤校验与 90 阶段验收还会比对 drop-in、login1 D-Bus
       运行值和 `/var/lib/kubelet/config.yaml`；回归测试覆盖合法值、非法值和漂移场景。
 - [x] `KCM_TERMINATED_POD_GC_THRESHOLD=100` 取代 kube-controller-manager 的默认
-      `12500`。新建控制面由 kubeadm 生成参数，已有控制面同步 kubeadm-config 后原子更新
-      静态 Pod 清单；50 阶段等待控制器恢复并确认终态 Pod 数量收敛，90 阶段重复检查。
+      `12500`。新建控制面由 kubeadm 生成参数；已有控制面按次备份并原子更新静态清单，
+      只定向修改 live ClusterConfiguration 的对应 extraArg，中途失败同时回滚。50/90 阶段
+      硬校验持久配置、运行参数和 Ready，终态数量仅作有界观察，避免活跃集群误报。
       `0` 和负数会关闭 GC，安装器直接拒绝，避免为隐藏终态 Pod 而关闭优雅关机或 PodGC。
