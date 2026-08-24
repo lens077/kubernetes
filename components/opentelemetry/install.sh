@@ -18,9 +18,33 @@ VM_SVC="vm-single-victoria-metrics-single-server.victoriametrics.svc.cluster.loc
 LOKI_SVC="loki.logging.svc.cluster.local:3100"
 JAEGER_SVC="jaeger.observability.svc.cluster.local"
 
-exporters="" pipelines="" signals=()
+# 远端观测后端(node3 Pigsty, 经 node1 的 Pangolin 公网入口)。
+#
+# 为什么做成开关而不是写死: 三条信号各自可以独立地"推远端"或"落本地"。设了对应的
+# REMOTE_*_URL 就改推远端并**跳过本地后端**(这正是把观测负载挪出内网的意义 ——
+# 双写只会让内网多扛一份)。没设就退回原来的集群内后端, 与本脚本原有行为一致。
+#
+# 路径不能省: VictoriaLogs / VictoriaTraces 的 OTLP 摄入路径带 /insert 前缀,
+# 用 otlphttp 的 endpoint 会被自动补成 /v1/logs 而 404 —— 必须用
+# logs_endpoint / traces_endpoint 给全路径。实测 node3-traces 上不带 /insert 的
+# /opentelemetry/v1/traces 返回 400, 带 /insert 的返回 200。
+REMOTE_METRICS_URL="${REMOTE_METRICS_URL:-}"
+REMOTE_LOGS_URL="${REMOTE_LOGS_URL:-}"
+REMOTE_TRACES_URL="${REMOTE_TRACES_URL:-}"
 
-if comp_installed victoriametrics vm-single-victoria-metrics-single-server; then
+if [[ -n $REMOTE_METRICS_URL ]]; then
+  exporters+="    otlp_http/remote_metrics:
+      compression: gzip
+      encoding: proto
+      metrics_endpoint: $REMOTE_METRICS_URL
+"
+  pipelines+="      metrics:
+        receivers: [otlp, prometheus]
+        processors: [delta_to_cumulative]
+        exporters: [otlp_http/remote_metrics]
+"
+  signals+=("metrics→远端($REMOTE_METRICS_URL)")
+elif comp_installed victoriametrics vm-single-victoria-metrics-single-server; then
   exporters+="    otlp_http/victoriametrics:
       compression: gzip
       encoding: proto
@@ -39,7 +63,17 @@ if comp_installed victoriametrics vm-single-victoria-metrics-single-server; then
   signals+=("metrics→VictoriaMetrics")
 fi
 
-if comp_installed logging loki; then
+if [[ -n $REMOTE_LOGS_URL ]]; then
+  exporters+="    otlp_http/remote_logs:
+      logs_endpoint: $REMOTE_LOGS_URL
+"
+  pipelines+="      logs:
+        receivers: [otlp]
+        processors: []
+        exporters: [otlp_http/remote_logs]
+"
+  signals+=("logs→远端($REMOTE_LOGS_URL)")
+elif comp_installed logging loki; then
   # Loki 3.x 原生 OTLP 摄入端点(应用侧 otelzap 推的日志走这条; 容器日志仍归 fluent-bit)
   exporters+="    otlp_http/loki:
       endpoint: http://$LOKI_SVC/otlp
@@ -54,7 +88,17 @@ if comp_installed logging loki; then
   signals+=("logs→Loki")
 fi
 
-if comp_installed observability jaeger; then
+if [[ -n $REMOTE_TRACES_URL ]]; then
+  exporters+="    otlp_http/remote_traces:
+      traces_endpoint: $REMOTE_TRACES_URL
+"
+  pipelines+="      traces:
+        receivers: [otlp]
+        processors: []
+        exporters: [otlp_http/remote_traces]
+"
+  signals+=("traces→远端($REMOTE_TRACES_URL)")
+elif comp_installed observability jaeger; then
   exporters+="    otlp_grpc/jaeger:
       endpoint: $JAEGER_SVC:4317
       tls:

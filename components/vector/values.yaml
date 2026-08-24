@@ -34,7 +34,15 @@ customConfig:
     victorialogs:
       type: http
       inputs: [pii_redact]
-      uri: "http://vl-victoria-logs-single-server.logging.svc.cluster.local:9428/insert/jsonline?_stream_fields=kubernetes.pod_namespace,kubernetes.pod_node_name,kubernetes.pod_name,kubernetes.container_name&_msg_field=message&_time_field=timestamp"
+      # 2026-08-24: 容器日志改推 node3(Pigsty)的 VictoriaLogs, 经 node1 的 Pangolin 公网入口。
+      #
+      # 为什么单独改这里而不是只切 otel collector: collector 只承载**应用侧 OTLP 日志**,
+      # 容器日志走的是 vector/fluent-bit 这条 DaemonSet 通路, 不经过 collector。
+      # 只切 collector 的话日志大头仍然落在内网, 与"把观测负载挪出内网"的目的不符。
+      #
+      # 切回本地: 换回下面注释掉的那行集群内地址。
+      # 集群内: http://vl-victoria-logs-single-server.logging.svc.cluster.local:9428/insert/jsonline?...
+      uri: "https://node3-logs.apikv.com/insert/jsonline?_stream_fields=kubernetes.pod_namespace,kubernetes.pod_node_name,kubernetes.pod_name,kubernetes.container_name&_msg_field=message&_time_field=timestamp"
       compression: gzip
       encoding: { codec: json }
       framing: { method: newline_delimited }
