@@ -54,6 +54,7 @@ README.md       解决方案文档：定位 / 上游最佳实践 / **本集群�
 | [loki](components/loki/) | 日志后端 | `logs.dev.test` |
 | [jaeger](components/jaeger/) | 链路追踪（badger 本地卷） | `jaeger.dev.test` |
 | [opentelemetry](components/opentelemetry/) | OTLP 统一入口，pipeline 按后端动态生成 | 集群内 |
+| [tetragon](components/tetragon/) | eBPF 运行时安全观察（三节点，仅 `ecommerce` 进程与 audit-only 策略事件） | 集群内 |
 | [grafana](components/grafana/) | 观测门面，数据源自动预置 | `grafana.dev.test` |
 | [postgres](components/postgres/) | CloudNativePG 算子 | TLS passthrough |
 | [dragonflydb](components/dragonflydb/) | Redis 协议缓存主力（**原生 TLS**，2026-08-20 起证书 cert-manager 签） | TCPRoute `:6380`(TLS) |
