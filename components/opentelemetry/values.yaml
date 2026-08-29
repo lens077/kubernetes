@@ -6,9 +6,12 @@ image:
 
 presets:
   clusterMetrics:
-    enabled: true                # k8s_cluster receiver：节点/Pod/Deployment 的状态指标
+    enabled: true                # k8s_cluster：节点、Pod、Deployment 的状态指标
+  kubernetesEvents:
+    enabled: true                # k8sobjects watch：Kubernetes Event 进入 logs pipeline
+    useK8sEventsReceiver: false  # 0.158.0 继续使用已验证的 k8sobjects receiver
   logsCollection:
-    enabled: false               # 容器日志由集群里已有的 fluent-bit 采集，开了会双份
+    enabled: false               # 容器日志由 Vector 采集，开了会重复写入
 
 config:
   processors:
@@ -21,6 +24,95 @@ config:
           endpoint: 0.0.0.0:4317
         http:
           endpoint: 0.0.0.0:4318
+    # 只发现 Cilium agent/operator、Hubble metrics 与 Vector security exporter。
+    # chart 自带的 prometheus receiver 继续抓 Collector 自身 :8888。
+    prometheus/cilium:
+      config:
+        scrape_configs:
+          - job_name: cilium-agent
+            scrape_interval: 30s
+            scrape_timeout: 10s
+            kubernetes_sd_configs:
+              - role: pod
+                namespaces:
+                  names: [kube-system]
+            relabel_configs:
+              - source_labels: [__meta_kubernetes_pod_label_k8s_app]
+                action: keep
+                regex: cilium
+              - source_labels: [__meta_kubernetes_pod_phase]
+                action: keep
+                regex: Running
+              - source_labels: [__meta_kubernetes_pod_container_port_name]
+                action: keep
+                regex: prometheus
+              - source_labels: [__meta_kubernetes_pod_name]
+                target_label: pod
+              - source_labels: [__meta_kubernetes_pod_node_name]
+                target_label: node
+          - job_name: cilium-operator
+            scrape_interval: 30s
+            scrape_timeout: 10s
+            kubernetes_sd_configs:
+              - role: pod
+                namespaces:
+                  names: [kube-system]
+            relabel_configs:
+              - source_labels: [__meta_kubernetes_pod_label_name]
+                action: keep
+                regex: cilium-operator
+              - source_labels: [__meta_kubernetes_pod_phase]
+                action: keep
+                regex: Running
+              - source_labels: [__meta_kubernetes_pod_container_port_name]
+                action: keep
+                regex: prometheus
+              - source_labels: [__meta_kubernetes_pod_name]
+                target_label: pod
+              - source_labels: [__meta_kubernetes_pod_node_name]
+                target_label: node
+          - job_name: hubble
+            scrape_interval: 15s
+            scrape_timeout: 10s
+            kubernetes_sd_configs:
+              - role: pod
+                namespaces:
+                  names: [kube-system]
+            relabel_configs:
+              - source_labels: [__meta_kubernetes_pod_label_k8s_app]
+                action: keep
+                regex: cilium
+              - source_labels: [__meta_kubernetes_pod_phase]
+                action: keep
+                regex: Running
+              - source_labels: [__meta_kubernetes_pod_container_port_name]
+                action: keep
+                regex: hubble-metrics
+              - source_labels: [__meta_kubernetes_pod_name]
+                target_label: pod
+              - source_labels: [__meta_kubernetes_pod_node_name]
+                target_label: node
+          - job_name: vector-security
+            scrape_interval: 15s
+            scrape_timeout: 10s
+            kubernetes_sd_configs:
+              - role: pod
+                namespaces:
+                  names: [logging]
+            relabel_configs:
+              - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_name]
+                action: keep
+                regex: vector
+              - source_labels: [__meta_kubernetes_pod_phase]
+                action: keep
+                regex: Running
+              - source_labels: [__meta_kubernetes_pod_ip]
+                target_label: __address__
+                replacement: $1:9598
+              - source_labels: [__meta_kubernetes_pod_name]
+                target_label: pod
+              - source_labels: [__meta_kubernetes_pod_node_name]
+                target_label: node
 
 resources:
   requests:

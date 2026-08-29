@@ -1,73 +1,136 @@
-# opentelemetry —— 遥测数据的统一入口（Collector）
+# OpenTelemetry Collector：集群遥测入口
 
 ## 1. 定位
 
-集群里唯一的 OTLP 接收端。应用只需要把 metrics/logs/traces 推到
-`otel-opentelemetry-collector.opentelemetry.svc:4317`，由 Collector 分发到三个后端：
+集群内应用把 OTLP 数据发送到 `otel-opentelemetry-collector.opentelemetry.svc:4317/4318`。Collector 当前将三类信号写入 node3 的 Victoria 后端：
 
-| 信号 | 后端 | 端点 |
+| 信号 | 远端入口 | 后端 |
 |---|---|---|
-| metrics | [victoriametrics](../victoriametrics/) | `/opentelemetry/v1/metrics` |
-| logs | [loki](../loki/) | `/otlp` |
-| traces | [jaeger](../jaeger/) | `:4317` gRPC |
+| metrics | `metrics.apikv.com/opentelemetry/v1/metrics`（**只有 http**） | VictoriaMetrics |
+| logs | `node3-logs.apikv.com/insert/opentelemetry/v1/logs` | VictoriaLogs |
+| traces | `node3-traces.apikv.com/insert/opentelemetry/v1/traces` | VictoriaTraces |
 
-后端换了（比如 Loki 换成别的），只改 Collector 的 exporter，**应用侧零改动**——
-这正是中间加一层 Collector 的意义。
+⚠️ metrics 的域名 2026-08-29 由 `node3-metrics.apikv.com` 改名为 `metrics.apikv.com`，且新资源在 Pangolin 上没配 TLS（`https://metrics.apikv.com` 返回 404）。改名当天这里没同步，collector 对旧域名拿到 404，持续 `Exporting failed. Dropping data.`——**指标链路静默断了，logs/traces 不受影响**。改这三个域名时务必回来同步本表与 `component.env`。
+
+三个 `REMOTE_*_URL` 在 [`component.env`](component.env) 中独立配置。某项未设置时，`install.sh` 才检查集群内对应后端并回退；设置远端后不双写本地，避免观测存储负载留在集群内。
+
+容器 stdout 不走此 Collector，由 Vector DaemonSet 直接写 VictoriaLogs。必须区分应用 OTLP logs、Kubernetes Event 和容器 stdout 三条链。
 
 ## 2. 上游最佳实践
 
-来源：[OpenTelemetry Collector 文档](https://opentelemetry.io/docs/collector/)
+来源：[OpenTelemetry Collector 文档](https://opentelemetry.io/docs/collector/)。
 
-- Agent（DaemonSet）+ Gateway（Deployment）两层是大集群的推荐形态；小集群一层就够。
-- 生产必配 `memory_limiter` 与 `batch` processor，防止后端抖动时把 Collector 撑爆。
-- 组件名 v0.130 起改用 `otlp_http` / `otlp_grpc` / `delta_to_cumulative`，
-  旧别名（`otlphttp` / `otlp` / `deltatocumulative`）**每次启动都会刷 deprecation warn**。
-- Collector 自身的指标在 `:8888`，应该抓进后端做自观测（队列积压、丢点数）。
+- Agent（DaemonSet）+ Gateway（Deployment）适合大集群；当前小集群使用单层 Deployment。
+- 生产必须启用 `memory_limiter` 与 `batch`，防止后端抖动时撑爆 Collector。
+- exporter 使用有界 sending queue、超时和 retry；队列耗尽后仍会丢数据，因此 Collector 与远端后端都要监控。
+- 组件名使用 `otlp_http`、`otlp_grpc`、`delta_to_cumulative`。旧别名会产生 deprecation warning。
+- Collector 自身指标位于 `:8888`，必须写入指标后端做自观测。
 
 ## 3. 本集群取舍
 
-| 上游默认/建议 | 本集群 | 原因 |
+| 上游默认或建议 | 本集群 | 原因 |
 |---|---|---|
-| Agent + Gateway 两层 | **单层 Deployment** | 两节点，一层足够；两层要多一个 DaemonSet 的常驻内存。 |
-| `logsCollection` preset | **关闭** | 容器日志由集群里已有的 fluent-bit 采集，开了就是双份（存储翻倍、标签还不一致）。 |
-| exporters 写死在 values | **按集群实况动态生成** | 后端没装却写了 exporter，Collector 会一直重试报错；后端装了却没写，数据直接丢。`install.sh` 查集群里的 Service 来决定，单独执行时也判断正确。 |
-| chart 默认不挂 prometheus receiver | **挂进 metrics pipeline** | chart 生成了这个 receiver 却没挂进任何 pipeline，等于死配置。挂上之后 `otelcol_*` 自观测指标才会进 VM——队列积压、发送失败数才看得见。 |
+| Agent + Gateway 两层 | 单层 Deployment | 3 节点小集群，一层足够；少一个常驻 DaemonSet。 |
+| `logsCollection` preset | 关闭 | 容器日志由 Vector 采集，开启会重复写入。 |
+| exporters 写死在 values | `install.sh` 动态生成 | 三类信号可独立选择远端或集群内回退，未部署的后端不会产生无效重试。 |
+| chart 自带 `prometheus` receiver | 保留，只抓 Collector `:8888` | 这是 Collector 自观测，不是 Kubernetes Pod discovery。 |
+| 平台安全指标 | 独立 `prometheus/cilium` receiver | 精确发现 Cilium agent/operator、Hubble metrics 与 Vector security exporter，不泛抓其他 Pod。 |
 
-## 4. 暴露方式
+`clusterMetrics` preset 提供 `k8s_cluster` receiver；`kubernetesEvents` preset 提供 Kubernetes Event receiver。它们不抓 Pod `/metrics`，不能替代 Prometheus discovery。
 
-不对外暴露。集群内 OTLP：`otel-opentelemetry-collector.opentelemetry.svc.cluster.local`
-的 `4317`（gRPC）/ `4318`（HTTP）。
+## 4. 平台安全指标 discovery
 
-集群外应用要直接上报的话见 [`../jaeger/examples/otlp-grpcroute.yaml`](../jaeger/examples/otlp-grpcroute.yaml)
-（注意 Cilium 的 ALPN 开关）。
+[`values.yaml`](values.yaml) 在一个受限 receiver 中创建四个 scrape job：
 
-## 5. 验证
+- `cilium-agent`：保留 `k8s-app=cilium`、phase 为 Running、端口名为 `prometheus` 的 Pod target；
+- `cilium-operator`：保留 `name=cilium-operator`、phase 为 Running、端口名为 `prometheus` 的 Pod target；
+- `hubble`：保留 `k8s-app=cilium`、phase 为 Running、端口名为 `hubble-metrics` 的 Pod target；
+- `vector-security`：只发现 `logging` namespace、`app.kubernetes.io/name=vector` 的 Running Pod，并把 Pod IP 定向到 exporter `:9598`；Vector 的 ingress NetworkPolicy 只允许本 Collector identity 访问该端口。
 
-真验证（三条 pipeline 各打一条真数据再回查）由 `bootstrap/scripts/90-verify.sh` 的
-`smoke_observability` 覆盖，也可以单独跑：
+Cilium agent/operator 每 30 秒抓取；Hubble 与 Vector security 每 15 秒抓取；全部超时 10 秒。前三个 job 限制在 `kube-system`，第四个限制在 `logging`，不会泛抓业务 Pod 或 Envoy `:9964`。
 
-```bash
-sudo bash bootstrap/start.sh --only 90-verify
+现有 chart ClusterRole 已为 `k8s_cluster`/Kubernetes Event 提供 `pods get/list/watch`，同一权限足够 Pod discovery，不需要新增写权限或 cluster-admin。
+
+必须确认以下指标已经写入 VictoriaMetrics：
+
+```text
+cilium_bpf_map_pressure
+cilium_controllers_failing
+cilium_errors_warnings_total
+cilium_drop_count_total
+cilium_endpoint_regeneration_time_stats_seconds
+cilium_api_limiter_processed_requests_total
+hubble_drop_total
+hubble_flows_processed_total
+ecommerce_tetragon_security_events_total
 ```
 
-它会往 4318 打 OTLP 指标/日志/链路，再分别从 VM / Loki / Jaeger 查回来，
-只校验**实际启用**的后端。
+这些指标的运维含义、机器相关参数和 24 小时基线手顺见 [`../../bootstrap/CILIUM.md`](../../bootstrap/CILIUM.md)。
 
-快速自查：
+## 5. 暴露方式
 
-```bash
-kubectl -n opentelemetry logs deploy/otel-opentelemetry-collector | grep -ciE '"error"'   # 应为 0
-kubectl -n victoriametrics exec vm-single-victoria-metrics-single-server-0 -- \
-  wget -qO- 'http://127.0.0.1:8428/api/v1/query?query=count({__name__=~"otelcol_.*"})'
+Collector 不对公网暴露。集群内 OTLP 地址：
+
+```text
+otel-opentelemetry-collector.opentelemetry.svc.cluster.local:4317  # gRPC
+otel-opentelemetry-collector.opentelemetry.svc.cluster.local:4318  # HTTP
 ```
 
-## 6. 踩坑
+远端 Victoria 写入口由 Pangolin/Traefik 暴露，只用于 Collector/Vector 写入。读取路径受 Pangolin SSO 保护。
 
-- **启动时刷一屏 `connection refused` / `no such host`**：Collector 与后端同批部署时，
-  它先起来、后端还没就绪。retry_sender 会自动恢复，日志停了就说明好了 ——
-  光看日志分不清「已自愈的历史噪声」和「至今没通」，所以才有打点→回查的冒烟测试。
-- **`otlphttp` 别名的 deprecation warn**：改用 `otlp_http`（本组件已经改了）。
-- **只剩一条 warn 去不掉**（`Using legacy service.telemetry.resource inline map format`）：
-  来自 chart 自己生成的默认值，不是我们的 values。chart 用 `mustMergeOverwrite` 合并，
-  null 删不掉键，硬改反而会出一个 map + array 并存的畸形配置。等上游修。
-- **VM 里查不到刚推的指标**：VM 默认 `-search.latencyOffset=30s`，等 30s 再查。
+## 6. 部署与验证
+
+直接执行组件安装器会应用当前 values；无需重跑整个 80 阶段：
+
+```bash
+bash components/opentelemetry/install.sh
+kubectl -n opentelemetry rollout status deploy/otel-opentelemetry-collector --timeout=180s
+```
+
+确认最终配置包含 Cilium、Hubble 与 Vector security job：
+
+```bash
+kubectl -n opentelemetry get cm otel-opentelemetry-collector \
+  -o jsonpath='{.data.relay}' | sed -n '/prometheus\/cilium:/,/zipkin:/p'
+```
+
+确认 Collector 没有持续 exporter/scrape 错误：
+
+```bash
+kubectl -n opentelemetry logs deploy/otel-opentelemetry-collector --since=10m \
+  | grep -iE 'error|warn|fail|drop'
+```
+
+公网读路径会被 SSO 重定向。通过 node3 本机 VictoriaMetrics 查询落库：
+
+```bash
+ssh node3 'python3 - <<"PY"
+import json, urllib.parse, urllib.request
+for metric in (
+    "cilium_bpf_map_pressure",
+    "cilium_controllers_failing",
+    "cilium_errors_warnings_total",
+    "cilium_drop_count_total",
+    "cilium_endpoint_regeneration_time_stats_seconds_count",
+    "cilium_api_limiter_processed_requests_total",
+    "hubble_drop_total",
+    "hubble_flows_processed_total",
+    "ecommerce_tetragon_security_events_total",
+):
+    query = f"count({metric})"
+    url = "http://127.0.0.1:8428/api/v1/query?" + urllib.parse.urlencode({"query": query})
+    result = json.load(urllib.request.urlopen(url, timeout=5))["data"]["result"]
+    print(metric, result)
+PY'
+```
+
+成功判据是查询结果非空，并且单条样本带 `k8s.node.name`、`k8s.pod.name`、`service.name` 等 target 标签。
+
+## 7. 故障排查
+
+- **HTTP 500/502 或 connection refused**：先检查 node3/Pangolin 远端，不要只重启 Collector。队列打满后的 dropped items 无法追回。
+- **配置里有 receiver，但 VictoriaMetrics 没数据**：依次验证 Pod discovery、Collector 日志、远端写入口和 node3 本机查询。「配置存在」不算落库成功。
+- **只有 Collector 自身指标**：chart 的 `prometheus` receiver 只抓 `:8888`。确认 metrics pipeline 同时包含 `prometheus/cilium`。
+- **Collector 与后端同批启动时短暂连接失败**：retry 会恢复；必须查看近期日志和后端新样本，不能用历史错误判断当前仍故障。
+- **`Using legacy service.telemetry.resource inline map format`**：来自 chart 生成的默认值；当前不影响采集。
+- **`k8sobjects` alias deprecated**：`kubernetesEvents.useK8sEventsReceiver=false` 仍使用已验证的旧 receiver。迁移到新 receiver 前先离线渲染并验证 Event 落库。

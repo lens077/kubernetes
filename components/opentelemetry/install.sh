@@ -14,6 +14,11 @@ DIR=$(comp_dir "${BASH_SOURCE[0]}")
 comp_load_meta "$DIR"
 comp_require_cluster
 
+# 动态配置分支使用 += 组装；显式初始化，保证「无远端且无本地后端」时能走跳过分支。
+exporters=""
+pipelines=""
+signals=()
+
 VM_SVC="vm-single-victoria-metrics-single-server.victoriametrics.svc.cluster.local:8428"
 LOKI_SVC="loki.logging.svc.cluster.local:3100"
 JAEGER_SVC="jaeger.observability.svc.cluster.local"
@@ -37,10 +42,18 @@ if [[ -n $REMOTE_METRICS_URL ]]; then
       compression: gzip
       encoding: proto
       metrics_endpoint: $REMOTE_METRICS_URL
+      timeout: 15s
+      retry_on_failure:
+        enabled: true
+        max_elapsed_time: 5m
+      sending_queue:
+        enabled: true
+        num_consumers: 2
+        queue_size: 1000
 "
   pipelines+="      metrics:
-        receivers: [otlp, prometheus]
-        processors: [delta_to_cumulative]
+        receivers: [otlp, prometheus, prometheus/cilium]
+        processors: [memory_limiter, delta_to_cumulative, batch]
         exporters: [otlp_http/remote_metrics]
 "
   signals+=("metrics→远端($REMOTE_METRICS_URL)")
@@ -56,8 +69,8 @@ elif comp_installed victoriametrics vm-single-victoria-metrics-single-server; th
   # pipeline, 等于死配置) —— 挂上后 otelcol_* 自观测指标才会进后端, 队列积压才看得见。
   # k8s_cluster 由 clusterMetrics preset 自动追加, 不用写。
   pipelines+="      metrics:
-        receivers: [otlp, prometheus]
-        processors: [delta_to_cumulative]
+        receivers: [otlp, prometheus, prometheus/cilium]
+        processors: [memory_limiter, delta_to_cumulative, batch]
         exporters: [otlp_http/victoriametrics]
 "
   signals+=("metrics→VictoriaMetrics")
@@ -65,11 +78,21 @@ fi
 
 if [[ -n $REMOTE_LOGS_URL ]]; then
   exporters+="    otlp_http/remote_logs:
+      compression: gzip
+      encoding: proto
       logs_endpoint: $REMOTE_LOGS_URL
+      timeout: 15s
+      retry_on_failure:
+        enabled: true
+        max_elapsed_time: 5m
+      sending_queue:
+        enabled: true
+        num_consumers: 2
+        queue_size: 1000
 "
   pipelines+="      logs:
         receivers: [otlp]
-        processors: []
+        processors: [memory_limiter, batch]
         exporters: [otlp_http/remote_logs]
 "
   signals+=("logs→远端($REMOTE_LOGS_URL)")
@@ -82,7 +105,7 @@ elif comp_installed logging loki; then
 "
   pipelines+="      logs:
         receivers: [otlp]
-        processors: []
+        processors: [memory_limiter, batch]
         exporters: [otlp_http/loki]
 "
   signals+=("logs→Loki")
@@ -90,11 +113,21 @@ fi
 
 if [[ -n $REMOTE_TRACES_URL ]]; then
   exporters+="    otlp_http/remote_traces:
+      compression: gzip
+      encoding: proto
       traces_endpoint: $REMOTE_TRACES_URL
+      timeout: 15s
+      retry_on_failure:
+        enabled: true
+        max_elapsed_time: 5m
+      sending_queue:
+        enabled: true
+        num_consumers: 2
+        queue_size: 1000
 "
   pipelines+="      traces:
         receivers: [otlp]
-        processors: []
+        processors: [memory_limiter, batch]
         exporters: [otlp_http/remote_traces]
 "
   signals+=("traces→远端($REMOTE_TRACES_URL)")
@@ -106,7 +139,7 @@ elif comp_installed observability jaeger; then
 "
   pipelines+="      traces:
         receivers: [otlp]
-        processors: []
+        processors: [memory_limiter, batch]
         exporters: [otlp_grpc/jaeger]
 "
   signals+=("traces→Jaeger")
@@ -132,7 +165,7 @@ $exporters
 $pipelines
 EOF
 
-helm_install_component "$DIR" -f "$dyn"
+helm_install_component "$DIR" --version "$CHART_VERSION" -f "$dyn"
 rm -f "$dyn"
 
 log_ok "$ID 安装完成(应用把 OTLP 推到 otel-opentelemetry-collector.$NAMESPACE.svc:4317/4318)"

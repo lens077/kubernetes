@@ -1,0 +1,64 @@
+# 静态部分。exporters 与 service.pipelines 由 install.sh 生成（与 opentelemetry 组件同构）。
+mode: daemonset
+image:
+  repository: "otel/opentelemetry-collector-contrib"
+
+presets:
+  hostMetrics:
+    enabled: true                # 提供 hostmetrics receiver + /hostfs 只读挂载
+  clusterMetrics:
+    enabled: false               # 集群级指标归 Deployment 那份；DaemonSet 开会 N 份重复
+  kubernetesEvents:
+    enabled: false               # 同上
+  logsCollection:
+    enabled: false               # 容器日志由 Vector 采集
+
+# 本 agent 只往外推、不接收任何信号。chart 在 daemonset 模式下默认给
+# otlp/jaeger/zipkin 端口都声明了 hostPort，不关掉等于在每个节点上白占 6 个端口。
+ports:
+  otlp:
+    enabled: false
+  otlp-http:
+    enabled: false
+  jaeger-compact:
+    enabled: false
+  jaeger-thrift:
+    enabled: false
+  jaeger-grpc:
+    enabled: false
+  zipkin:
+    enabled: false
+
+config:
+  receivers:
+    # hostmetrics 的 cpu/memory 两个 scraper 默认只出累计量（system.cpu.time、
+    # system.memory.usage），**utilization 是默认关闭的可选指标**，不显式打开
+    # 的话控制台的主机 CPU/内存两张图永远是空的（实测踩到：只有 filesystem 与
+    # network 有数据）。键名沿用 preset 的 hostmetrics（0.158 起有 host_metrics
+    # 新名，但 preset 生成的是旧名，写新名会变成两个 receiver）。
+    hostmetrics:
+      scrapers:
+        cpu:
+          metrics:
+            system.cpu.utilization:
+              enabled: true
+        memory:
+          metrics:
+            system.memory.utilization:
+              enabled: true
+  processors:
+    # hostmetrics 采出来的资源属性里没有节点名，不打上去的话三个节点的曲线会叠在
+    # 一起且分不出谁是谁。控制台的主机图正是按 k8s_node_name 分线的
+    # （control-tower 仓 internal/pkg/promql/catalog.go）。
+    resource/node:
+      attributes:
+        - key: k8s.node.name
+          value: ${env:OTEL_K8S_NODE_NAME}
+          action: upsert
+
+resources:
+  requests:
+    cpu: 20m
+    memory: 64Mi
+  limits:
+    memory: 192Mi
