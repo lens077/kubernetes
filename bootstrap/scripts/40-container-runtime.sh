@@ -153,7 +153,7 @@ write_containerd_proxy() {
 [Service]
 Environment="HTTP_PROXY=$PROXY_URL"
 Environment="HTTPS_PROXY=$PROXY_URL"
-Environment="NO_PROXY=localhost,127.0.0.1,$NODE_IP,$POD_CIDR,$SERVICE_CIDR,.cluster.local,10.0.0.0/8,192.168.0.0/16"
+Environment="NO_PROXY=localhost,127.0.0.1,$NODE_IP,$POD_CIDR,$SERVICE_CIDR,.cluster.local,10.0.0.0/8,192.168.0.0/16${CONTAINERD_NO_PROXY_EXTRA:+,$CONTAINERD_NO_PROXY_EXTRA}"
 EOF
   else
     # 配置关闭时清掉旧 drop-in, 保证结果恒定
