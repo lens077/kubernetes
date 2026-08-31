@@ -124,7 +124,9 @@ for metric in (
 PY'
 ```
 
-成功判据是查询结果非空，并且单条样本带 `k8s.node.name`、`k8s.pod.name`、`service.name` 等 target 标签。
+成功判据是查询结果非空，并且单条样本带 `k8s_node_name`、`k8s_pod_name`、`service_name` 等 target 标签。
+
+⚠️ **查 VM 时标签名是下划线，不是点号**：node3 的 VictoriaMetrics 启动带 `-opentelemetry.usePrometheusNaming=true`〔实测 2026-09-01〕。本组件配置里写的 `k8s.node.name` 是**摄入前的 OTel 属性名**（那里点号是对的），VM 落库时会转成下划线。两者不矛盾，但查询用错口径会返回空结果**且不报错**。
 
 ## 7. 故障排查
 
