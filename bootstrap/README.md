@@ -16,7 +16,7 @@ kubernetes/bootstrap/
 │   ├── 40-container-runtime.sh # runc/containerd/crictl + 镜像加速(certs.d)
 │   ├── 45-etcd-disk.sh         # etcd 专用磁盘(可选; 支持已运行集群在线迁移)
 │   ├── 50-kubernetes.sh        # apt 仓库/kubeadm init(skip kube-proxy)/defrag 定时器
-│   ├── 60-cilium.sh            # Cilium(KPR/native路由/BBR/netkit/Hubble/GatewayAPI/L2)
+│   ├── 60-cilium.sh            # Cilium(KPR/native路由/BBR/netkit/GatewayAPI/L2；见 CILIUM.md)
 │   ├── 70-storage.sh           # LVM 卷组(交互选盘)+OpenEBS+StorageClass
 │   ├── 80-components.sh        # 组件编排器(扫描 ../components/*/component.env,
 │   │                           #   拓扑排序后并行调用各 install.sh; 不含任何 values)
@@ -79,6 +79,7 @@ bash start.sh --worker --yes
 | `sudo bash start.sh --from 60-cilium` | 从指定阶段开始 |
 | `sudo bash start.sh --only 90-verify` / `--verify` | 只跑某阶段/验收 |
 | `sudo bash start.sh --reset-state 80-components` | 清某阶段状态(如重新选组件) |
+| `sudo bash start.sh --only 60-cilium` | 重生 Cilium values；版本/values 指纹变化时自动执行 preflight 与 Helm upgrade |
 | `sudo bash start.sh --reset-cluster` | kubeadm reset 重置集群(保留系统调优/缓存) |
 | `sudo bash start.sh --pack-offline x.tgz` | 打离线包(工件+versions.lock+核心 chart) |
 | `sudo bash start.sh --unpack-offline x.tgz` | 目标机展开离线包后正常安装 |
@@ -161,7 +162,7 @@ unattended-upgrades 自带的 30 秒 logind drop-in。
 ### 终态 Pod GC
 
 `KCM_TERMINATED_POD_GC_THRESHOLD` 控制集群最多保留多少个 `Succeeded/Failed` Pod，默认值为
-`100`。该值必须是正整数；`0` 和负数会关闭终态 Pod GC，因此安装器直接拒绝。新建控制面时，
+`20`。该值必须是正整数；`0` 和负数会关闭终态 Pod GC，因此安装器直接拒绝。新建控制面时，
 50 阶段通过 kubeadm 写入 `--terminated-pod-gc-threshold`。已有控制面每次执行都会重新调和：
 先为 live ClusterConfiguration 和静态 Pod 清单创建本次快照，再原子替换
 `/etc/kubernetes/manifests/kube-controller-manager.yaml`，等待本节点具名控制器恢复 Ready，最后只

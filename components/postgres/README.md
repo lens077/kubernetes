@@ -2,10 +2,11 @@
 
 ## 1. 定位
 
-PostgreSQL 的生命周期管理（建库、备份、故障转移、滚动升级）。本组件**只装算子**，
-数据库实例由用户按需 apply（规格差异大）：`examples/pg-cluster.yaml`。
+PostgreSQL 的生命周期管理（建库、备份、故障转移、滚动升级）。默认配置会安装算子、
+创建 `pg-main` 与 `ecommerce` 数据库，并自动接入宿主网 TLSRoute；设置
+`PG_CREATE_MAIN_CLUSTER=false` 时才退回只装算子、手工应用 `examples/pg-cluster.yaml`。
 
-ecommerce 的业务库、Debezium CDC 的源库都跑在它上面。
+ecommerce 的业务库和 outbox CDC 源表都运行在该实例上。
 
 ## 2. 上游最佳实践
 
@@ -26,7 +27,7 @@ ecommerce 的业务库、Debezium CDC 的源库都跑在它上面。
 
 | 上游默认/建议 | 本集群 | 原因 |
 |---|---|---|
-| ≥3 实例同步复制 | 示例给 `instances: 1` | 两节点集群，3 副本必然有两个落在同一节点，故障域没变——徒增内存。要 HA 先加节点。 |
+| ≥3 实例同步复制 | dev 使用 `instances: 1` | 当前先控制资源开销；生产 HA 需另行规划 ≥3 实例、反亲和和独立故障域。 |
 | requests=limits 含 CPU（Guaranteed） | **只钉内存 1Gi，CPU 不限** | 内存紧 + 查询是突发负载（与 VM/dragonfly 同理）。代价是 QoS 降为 Burstable、丢掉 OOM 调优收益，主动取舍。 |
 | `walStorage` 分卷 | 不分 | 本集群两个 PVC 都落同一个 LVM VG，I/O 并行收益为零；只剩"满盘隔离"一条，对 10Gi 测试实例不值得背"加了拆不掉"的单向决定。 |
 | 对象存储备份 | **暂缺** | MinIO 与数据库跑在同一批本地盘上，备份到那里不构成异地容灾。要做备份应指向集群外（node1 VPS 或云端），且要走 Barman Cloud Plugin（见上）。**这是当前的已知缺口。** |
@@ -34,9 +35,11 @@ ecommerce 的业务库、Debezium CDC 的源库都跑在它上面。
 
 ## 4. 暴露方式
 
-- 集群内：CNPG 自动创建 `<cluster>-rw` / `<cluster>-ro` / `<cluster>-r` 三个 Service
-- 对外：TLS passthrough + SNI 分流，模板与说明见 [`gateway/README.md`](gateway/README.md)
-  （**TLSRoute 必须用 `v1`**，旧清单的 `v1alpha2` 已不再 served）
+- 集群内：CNPG 自动创建 `<cluster>-rw` / `<cluster>-ro` / `<cluster>-r` 三个 Service。
+- 宿主网：安装器自动创建独立 Gateway + TLSRoute，按 `pg.dev.test` SNI 透传到
+  `pg-main-rw:5432`；说明见 [`gateway/README.md`](gateway/README.md)。
+- 兼容入口：旧客户端不能发送 direct TLS ClientHello 时，手工应用
+  [`examples/pg-tcproute.yaml`](examples/pg-tcproute.yaml)，不由安装器自动创建。
 
 ## 5. 验证
 
@@ -45,31 +48,26 @@ kubectl -n cnpg-system get deploy cnpg-cloudnative-pg          # READY 1/1
 kubectl api-resources | grep postgresql.cnpg.io                # CRD 已注册
 ```
 
-真验证（建一个实例再连进去）：
+自动安装与路由状态：
 
 ```bash
-kubectl create ns postgresql
-kubectl apply -f components/postgres/examples/pg-cluster.yaml   # 注意 ${SC_NAME} 需先替换
 kubectl -n postgresql wait --for=condition=Ready cluster/pg-main --timeout=600s
-kubectl -n postgresql exec pg-main-1 -- psql -U postgres -c 'select version()'
+kubectl -n postgresql wait --for=condition=Programmed \
+  gateway/pg-passthrough-gateway --timeout=180s
+kubectl -n postgresql get tlsroute pg-main -o wide
+VIP=$(kubectl -n postgresql get gateway pg-passthrough-gateway \
+  -o jsonpath='{.status.addresses[0].value}')
 ```
 
-经网关的完整 TLS 链路（SNI 分流 + 证书主机名校验 + app 用户写读）：
+宿主网必须使用支持 direct TLS negotiation 的客户端，连接时同时校验 CNPG CA 和
+`pg.dev.test` 主机名：
 
 ```bash
-kubectl apply -f components/postgres/examples/pg-gateway.yaml
-VIP=$(kubectl -n postgresql get gateway pg-passthrough-gateway -o jsonpath='{.status.addresses[0].value}')
-APPPW=$(kubectl -n postgresql get secret pg-main-app -o jsonpath='{.data.password}' | base64 -d)
-kubectl -n postgresql exec pg-main-1 -c postgres -- env PGPASSWORD="$APPPW" psql \
-  "host=pg.dev.test hostaddr=$VIP user=app dbname=app \
-   sslmode=verify-full sslnegotiation=direct \
-   sslrootcert=/controller/certificates/server-ca.crt" \
-  -c "SELECT ssl, cipher FROM pg_stat_ssl WHERE pid=pg_backend_pid()"
-# 期望 ssl=t + TLS_AES_256_GCM_SHA384
+PGPASSWORD=xxx psql "host=pg.dev.test hostaddr=$VIP user=app dbname=ecommerce \
+  sslmode=verify-full sslnegotiation=direct sslrootcert=<pg-main-ca 的 ca.crt>" \
+  -c "SELECT ssl, version FROM pg_stat_ssl WHERE pid=pg_backend_pid()"
+# 期望 ssl=t，且 version 非空
 ```
-
-> **实测结论（2026-08-18）**：pg-main（PostgreSQL 18.4）经 Gateway VIP、SNI `pg.dev.test`、
-> `sslmode=verify-full sslnegotiation=direct` 完成 app 用户建表/写入/查询。
 
 ## 6. 踩坑
 

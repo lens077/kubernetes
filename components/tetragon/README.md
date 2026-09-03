@@ -75,4 +75,4 @@ kubectl -n ecommerce get tracingpolicynamespaced \
 - `PROCESS_EXEC` 会记录命令参数。当前仅脱敏 `--password`、`--token`、`--secret`；业务容器不得通过其他命令行参数传递凭据。
 - `PROCESS_KPROBE` 只有与具体策略配合才有意义；不要新增无工作负载上下文、只增加命中计数的策略制造虚假安全感。
 - `TracingPolicy` CRD 的存在不等于启用阻断。当前唯一策略采用 `Post`，enforcement 需要独立评估、误报观察和回滚方案。
-- 仓库 values 必须保持 `nodeSelector: {}`。重新写成单节点会在下次 Helm 升级时制造观察盲区。
+- agent 与 operator 的仓库 values 都必须保持 `nodeSelector: {}`。agent 重新写成单节点会制造观察盲区；operator 虽不影响传感器覆盖，但硬钉 hostname 会增加无谓的单节点恢复依赖。

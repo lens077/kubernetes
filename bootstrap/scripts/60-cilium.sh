@@ -44,7 +44,20 @@ verify_gateway_api_crds() {
 }
 
 # --- 3. 生成 helm values(按 config.env + 内核能力) -----------------------------------
+validate_cilium_tuning() {
+  awk -v ratio="$CILIUM_BPF_MAP_DYNAMIC_SIZE_RATIO" \
+    'BEGIN { exit !(ratio > 0 && ratio <= 1) }' \
+    || die "CILIUM_BPF_MAP_DYNAMIC_SIZE_RATIO 必须在 (0,1] 内"
+  [[ $CILIUM_BPF_MAP_RESIZE_APPROVED == true || $CILIUM_BPF_MAP_RESIZE_APPROVED == false ]] \
+    || die "CILIUM_BPF_MAP_RESIZE_APPROVED 必须是 true 或 false"
+  [[ $CILIUM_OPERATOR_REPLICAS =~ ^[1-9][0-9]*$ ]] \
+    || die "CILIUM_OPERATOR_REPLICAS 必须是正整数"
+  [[ $CILIUM_K8S_CLIENT_QPS =~ ^[1-9][0-9]*$ && $CILIUM_K8S_CLIENT_BURST =~ ^[1-9][0-9]*$ ]] \
+    || die "CILIUM_K8S_CLIENT_QPS/BURST 必须是正整数"
+}
+
 gen_cilium_values() {
+  validate_cilium_tuning
   # 内核能力门控
   local host_legacy=false bbr=false
   kernel_ge 5.10 || { host_legacy=true; log_warn "内核<5.10, 回退 legacy host routing"; }
@@ -125,16 +138,30 @@ tunnelProtocol: vxlan"
   if [[ $CILIUM_ENABLE_HUBBLE == true ]]; then
     hubble_block="hubble:
   enabled: true
+  eventBufferCapacity: \"$CILIUM_HUBBLE_EVENT_BUFFER_CAPACITY\"
   metrics:
+    enableOpenMetrics: true
     enabled:
-      - dns
       - drop
+      - dns:query;ignoreAAAA
       - tcp
       - flow
       - icmp
-      - httpV2:exemplars=true;labelsContext=source_namespace,destination_namespace,traffic_direction
+  redact:
+    enabled: true
+    http:
+      urlQuery: true
+      headers:
+        deny:
+          - Authorization
+          - Cookie
+          - Set-Cookie
+          - X-API-Key
   relay:
     enabled: true
+    tls:
+      server:
+        enabled: true
   ui:
     enabled: $CILIUM_ENABLE_HUBBLE_UI"
   fi
@@ -158,6 +185,17 @@ kubeProxyReplacement: "true"
 k8sServiceHost: $NODE_IP
 k8sServicePort: 6443
 
+# 三节点集群每次只下线一个 agent，并要求新版至少稳定 10 秒后再继续。
+minReadySeconds: 10
+updateStrategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxUnavailable: 1
+resources:
+  requests:
+    cpu: $CILIUM_AGENT_CPU_REQUEST
+    memory: $CILIUM_AGENT_MEMORY_REQUEST
+
 # 配置变更(helm upgrade)后自动滚动重启, 免手工 rollout restart
 rollOutCiliumPods: true
 # 节点注解 cilium 状态, 便于排障
@@ -178,14 +216,14 @@ bpf:
   masquerade: true
   hostLegacyRouting: $host_legacy
 $tproxy_line
-  # 允许集群外主机访问 ClusterIP(配合到 Pod/Service 网段的路由使用)
-  lbExternalClusterIP: true
-  # 官方性能调优配方三件套: 每 CPU 分片 LRU 连接表 + 大表上限(8%内存) + 按需分配
-  # (上限不是即时占用; 三者配套, 勿单独改 preallocateMaps=true)
+  # 外部入口统一走 LoadBalancer/Gateway；没有 Service CIDR 外部路由时保持关闭。
+  lbExternalClusterIP: false
+  # 每 CPU 分片 LRU 连接表 + 动态 map 比例 + 按需分配。比例必须结合节点内存和
+  # cilium_bpf_map_pressure 调整；改变比例会重建 CT/NAT map、打断现有长连接。
   preallocateMaps: false
   distributedLRU:
     enabled: true
-  mapDynamicSizeRatio: 0.08
+  mapDynamicSizeRatio: $CILIUM_BPF_MAP_DYNAMIC_SIZE_RATIO
 $netkit_line
 
 # CiliumEndpointSlice: 批量化 endpoint 上报, 降低 apiserver/etcd 压力
@@ -195,15 +233,10 @@ ciliumEndpointSlice:
 pmtuDiscovery:
   enabled: true
 
-# 以下三项在 kubeProxyReplacement=true 下已隐含开启, 显式写出仅为自文档
+# socketLB 仍是有效键；NodePort/HostPort/sessionAffinity 由 KPR 能力提供，
+# Cilium 1.20 chart 已没有对应显式开关键，不写无效 values。
 socketLB:
   enabled: true
-nodePort:
-  enabled: true
-hostPort:
-  enabled: true
-# Service ClientIP 会话亲和
-sessionAffinity: true
 
 # 数据面网卡显式钉住(自动探测结果; 多网卡在 config.env 的 CILIUM_DEVICES 指定)
 devices:
@@ -211,6 +244,8 @@ $devices_yaml
 
 loadBalancer:
   algorithm: $CILIUM_LB_ALGORITHM
+  # 让 trafficDistribution: PreferSameNode 生效；用于 Spegel 的本节点优先镜像回源。
+  serviceTopology: true
   # hybrid: TCP 走 DSR(保源IP/回程少一跳), UDP 走 SNAT(避开分片坑)
   mode: $lb_mode
   # best-effort: 网卡支持 XDP 才启用加速, 不支持自动回退
@@ -241,12 +276,10 @@ ingressController:
 
 l2announcements:
   enabled: $CILIUM_ENABLE_L2_ANNOUNCEMENTS
-externalIPs:
-  enabled: true
-# L2 通告的租约续期依赖较高的 apiserver 客户端速率
+# L2 通告的租约续期依赖较高的 apiserver 客户端速率。
 k8sClientRateLimit:
-  qps: 50
-  burst: 100
+  qps: $CILIUM_K8S_CLIENT_QPS
+  burst: $CILIUM_K8S_CLIENT_BURST
 
 # 未使用 mesh mTLS(SPIFFE), 裁掉相关机制
 authentication:
@@ -263,16 +296,102 @@ prometheus:
   enabled: true
 
 operator:
-  # 单控制面只跑一个 operator 副本, 否则第二副本永远 Pending(chart 默认 2)
-  replicas: 1
+  replicas: $CILIUM_OPERATOR_REPLICAS
   rollOutPods: true
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+    maxUnavailable: null
+  resources:
+    requests:
+      cpu: $CILIUM_OPERATOR_CPU_REQUEST
+      memory: $CILIUM_OPERATOR_MEMORY_REQUEST
   prometheus:
     enabled: true
+
+envoy:
+  resources:
+    requests:
+      cpu: $CILIUM_ENVOY_CPU_REQUEST
+      memory: $CILIUM_ENVOY_MEMORY_REQUEST
 EOF
 }
 verify_cilium_values() { [[ -s $VALUES_FILE ]] && grep -q 'kubeProxyReplacement: "true"' "$VALUES_FILE"; }
 
-# --- 3.5 预拉 Cilium 镜像(quay.io 直连很慢; 代理在线则临时借道, 拉完即撤) -----------------
+cilium_desired_fingerprint() {
+  local values_sha
+  values_sha=$(sha256sum "$VALUES_FILE" | awk '{print $1}')
+  printf 'cilium=%s\nvalues=%s\n' "$CILIUM_V" "$values_sha" \
+    | sha256sum | awk '{print $1}'
+}
+
+reconcile_cilium_apply_state() {
+  local current rc=0
+  current=$(cilium_desired_fingerprint)
+  state_reconcile_fingerprint desired "$current" preflight prepull helm wait l2 conn || rc=$?
+  case $rc in
+    0) log_info "Cilium 版本或 values 指纹已变化，下游应用步骤自动失效" ;;
+    1) log_info "Cilium 版本与 values 指纹未变化，保留已完成的下游步骤" ;;
+    *) die "无法更新 Cilium 期望状态指纹" ;;
+  esac
+}
+
+verify_cilium_apply_state() {
+  local file="$STATE_DIR/state/60-cilium:desired.fingerprint.done"
+  [[ -f $file && $(<"$file") == "$(cilium_desired_fingerprint)" ]]
+}
+
+guard_bpf_map_resize() {
+  local live
+  live=$(kctl -n kube-system get configmap cilium-config \
+    -o jsonpath='{.data.bpf-map-dynamic-size-ratio}' 2>/dev/null || true)
+  [[ -n $live && $live != "$CILIUM_BPF_MAP_DYNAMIC_SIZE_RATIO" ]] || return 0
+  if [[ $CILIUM_BPF_MAP_RESIZE_APPROVED != true ]]; then
+    die "BPF map 比例将从 $live 改为 $CILIUM_BPF_MAP_DYNAMIC_SIZE_RATIO；先采集至少 24h 基线并安排维护窗口，再把 CILIUM_BPF_MAP_RESIZE_APPROVED=true"
+  fi
+  log_warn "已显式批准 BPF map 比例 $live → $CILIUM_BPF_MAP_DYNAMIC_SIZE_RATIO；本次 rollout 会重建 CT/NAT map并可能中断长连接"
+}
+
+# --- 3.5 官方升级 preflight + 镜像预拉 ----------------------------------------------------
+run_cilium_preflight() {
+  if ! helm_cmd status cilium --namespace kube-system >/dev/null 2>&1; then
+    log_info "集群尚未安装 Cilium，跳过升级 preflight"
+    return 0
+  fi
+
+  local chart="cilium/cilium" version_args=(--version "${CILIUM_V#v}")
+  local local_tgz="$CACHE_DIR/charts/cilium-${CILIUM_V#v}.tgz"
+  local manifest="$STATE_DIR/cilium-preflight-${CILIUM_V#v}.yaml"
+  if [[ -f $local_tgz ]]; then
+    chart=$local_tgz
+    version_args=()
+  else
+    helm_repo_add cilium https://helm.cilium.io/ >/dev/null
+  fi
+
+  helm_cmd template cilium-pre-flight "$chart" "${version_args[@]}" \
+    --namespace kube-system \
+    --set preflight.enabled=true \
+    --set agent=false \
+    --set operator.enabled=false \
+    --set-string k8sServiceHost="$NODE_IP" \
+    --set k8sServicePort=6443 > "$manifest"
+  kctl apply -f "$manifest"
+  kctl -n kube-system rollout status daemonset/cilium-pre-flight-check --timeout=10m
+  kctl -n kube-system rollout status deployment/cilium-pre-flight-check --timeout=5m
+
+  local agents preflight
+  agents=$(kctl -n kube-system get daemonset cilium -o jsonpath='{.status.numberReady}')
+  preflight=$(kctl -n kube-system get daemonset cilium-pre-flight-check -o jsonpath='{.status.numberReady}')
+  [[ -n $agents && $preflight == "$agents" ]] \
+    || die "Cilium preflight DaemonSet 未覆盖全部 Ready agent（preflight=$preflight, agent=$agents）"
+
+  kctl delete -f "$manifest" --ignore-not-found
+  rm -f "$manifest"
+  log_ok "Cilium $CILIUM_V 官方 preflight 与 CNP 校验通过"
+}
+
+# --- 3.6 预拉 Cilium 镜像(quay.io 直连很慢; 代理在线则临时借道, 拉完即撤) -----------------
 #   镜像清单从 chart 按当前 values 精确渲染(含 digest), 不猜标签
 prepull_cilium_images() {
   local want_proxy=false
@@ -435,18 +554,23 @@ main() {
     return 0
   fi
   ensure_artifacts
-  # values 是 config.env + 内核探测的纯函数, 必须始终重新生成,
-  # 否则修改配置/升级脚本后会拿旧 values 安装(本次 tproxy×netkit 冲突正是这么暴露的)
-  rm -f "$STATE_DIR/state/60-cilium:values.done"
-  add_step cli     "安装 cilium CLI $CILIUM_CLI_V 与 helm $HELM_V" install_cli_tools       verify_cli_tools
-  add_step gwcrd   "Gateway API CRD $GATEWAY_API_V"                install_gateway_api_crds verify_gateway_api_crds
-  add_step values  "生成 Cilium values(内核能力自适应)"            gen_cilium_values       verify_cilium_values
-  add_step prepull "预拉 Cilium 镜像(代理在线则借道)"              prepull_cilium_images
-  add_step ipsec   "IPsec 密钥(可选)"                              create_ipsec_secret
-  add_step helm    "helm 安装 Cilium $CILIUM_V"                    helm_install_cilium
-  add_step wait    "等待 Cilium/节点/CoreDNS 就绪"                 wait_cilium_ready       verify_cilium_ready
-  add_step l2      "L2 通告与 LoadBalancer IP 池"                  apply_l2_policy         verify_l2_policy
-  add_step conn    "连通性测试(可选)"                              run_connectivity_test
+  # values 是 config.env + 内核探测的纯函数，必须始终重新生成；指纹步骤也必须每次比较。
+  # 只有期望状态变化时才使 preflight/helm 等下游步骤失效，不重置 IPsec 步骤。
+  rm -f "$STATE_DIR/state/60-cilium:values.done" \
+        "$STATE_DIR/state/60-cilium:fingerprint.done" \
+        "$STATE_DIR/state/60-cilium:mapguard.done"
+  add_step cli         "安装 cilium CLI $CILIUM_CLI_V 与 helm $HELM_V" install_cli_tools             verify_cli_tools
+  add_step gwcrd       "Gateway API CRD $GATEWAY_API_V"                install_gateway_api_crds       verify_gateway_api_crds
+  add_step values      "生成 Cilium values(内核能力自适应)"            gen_cilium_values             verify_cilium_values
+  add_step fingerprint "核对 Cilium 版本与 values 指纹"                reconcile_cilium_apply_state   verify_cilium_apply_state
+  add_step mapguard    "检查 BPF map 缩容维护窗口授权"                  guard_bpf_map_resize
+  add_step preflight   "运行 Cilium $CILIUM_V 官方升级 preflight"      run_cilium_preflight
+  add_step prepull     "预拉 Cilium 镜像(代理在线则借道)"              prepull_cilium_images
+  add_step ipsec       "IPsec 密钥(可选)"                              create_ipsec_secret
+  add_step helm        "helm 安装 Cilium $CILIUM_V"                    helm_install_cilium
+  add_step wait        "等待 Cilium/节点/CoreDNS 就绪"                 wait_cilium_ready             verify_cilium_ready
+  add_step l2          "L2 通告与 LoadBalancer IP 池"                  apply_l2_policy               verify_l2_policy
+  add_step conn        "连通性测试(可选)"                              run_connectivity_test
   run_steps
   stage_end
 }

@@ -50,8 +50,8 @@ export:
 
 tetragonOperator:
   replicas: 1
-  nodeSelector:
-    kubernetes.io/hostname: node103
+  # 单副本 operator 不增加节点覆盖，固定 hostname 只会制造无谓的恢复依赖。
+  nodeSelector: {}
   resources:
     requests:
       cpu: 10m

@@ -553,6 +553,28 @@ state_reset() {  # state_reset [stage前缀|all]
   else rm -f "$STATE_DIR/state/${what}"*.done 2>/dev/null || true; fi
 }
 
+# 把期望状态摘要收进步骤状态模块：输入变化时只使指定下游步骤失效，避免调用方
+# 依赖「记得手工 reset 整个阶段」这一隐含接口。返回 0 表示指纹变化，1 表示未变。
+state_reconcile_fingerprint() {  # state_reconcile_fingerprint <name> <fingerprint> <step...>
+  local name=$1 current=$2
+  shift 2
+  [[ -n $name && -n $current && $# -gt 0 ]] || return 2
+  ensure_dirs
+
+  local file="$STATE_DIR/state/${STAGE_ID}:${name}.fingerprint.done"
+  local previous="" key tmp
+  [[ -f $file ]] && previous=$(<"$file")
+  [[ $previous != "$current" ]] || return 1
+
+  for key in "$@"; do
+    rm -f "$STATE_DIR/state/${STAGE_ID}:$key.done"
+  done
+  tmp="${file}.tmp.$$"
+  printf '%s' "$current" > "$tmp"
+  mv -f "$tmp" "$file"
+  return 0
+}
+
 # --------------------------- 错误陷阱 ---------------------------------------
 _on_err() {
   local ec=$1
@@ -861,7 +883,7 @@ containerd_tmp_proxy_on() {
 [Service]
 Environment="HTTP_PROXY=$PROXY_URL"
 Environment="HTTPS_PROXY=$PROXY_URL"
-Environment="NO_PROXY=localhost,127.0.0.1,$NODE_IP,$POD_CIDR,$SERVICE_CIDR,.cluster.local,10.0.0.0/8,192.168.0.0/16"
+Environment="NO_PROXY=localhost,127.0.0.1,$NODE_IP,$POD_CIDR,$SERVICE_CIDR,.cluster.local,10.0.0.0/8,192.168.0.0/16${CONTAINERD_NO_PROXY_EXTRA:+,$CONTAINERD_NO_PROXY_EXTRA}"
 EOF
   systemctl daemon-reload
   systemctl restart containerd
