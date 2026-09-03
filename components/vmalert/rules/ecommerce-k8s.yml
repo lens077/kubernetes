@@ -1,0 +1,81 @@
+# K8s 工作负载告警（2026-08-29 新增；2026-08-31 完成点号→下划线指标名迁移）
+#
+# 触发它的事故：12 个 Pod 崩溃循环 9 小时无人发现。当时告警链路完全可用，
+# 但没有任何一条规则看 Kubernetes——869 条规则全是 Pigsty 自带的基础设施规则。
+#
+# 数据来源：集群内 otel collector 的 k8s_cluster receiver → node3 VictoriaMetrics。
+# 不需要 kube-state-metrics。
+#
+# ⚠️ 指标名与 label 名现为**下划线**（k8s_container_restarts / k8s_namespace_name）。
+#    2026-08-31 实测：点号系（{__name__="k8s.container.restarts"}）已查无数据——
+#    原点号规则整体断供且不报错，兜底 K8sClusterMetricsMissing 曾因此慢性 firing。
+#    迁移前先逐个指标在 VM 查到 series 再写，不许凭记忆。
+# ⚠️ 每条规则都必须有 for:。缺 for: 的规则一波动就红，长期挂红等于没有告警
+#    （见 context/team/alerting-signal-hygiene.md）。
+groups:
+  - name: ecommerce-k8s
+    interval: 15s
+    rules:
+      - alert: K8sPodRestartStorm
+        # 稳态 CrashLoopBackOff 退避上限 5 分钟 = 15 分钟内约 3 次，故阈值取 >2；
+        # 正常发布的单次重启为 1，不触发。
+        expr: 'sum by (k8s_namespace_name,k8s_pod_name) (increase(k8s_container_restarts[15m])) > 2'
+        for: 5m
+        labels: { severity: critical, category: kubernetes }
+        annotations:
+          summary: 'Pod 重启风暴 {{ $labels.k8s_namespace_name }}/{{ $labels.k8s_pod_name }}（15 分钟 {{ $value | printf "%.0f" }} 次）'
+          description: 该 Pod 正在崩溃循环。先看 kubectl logs --previous 与 describe 的退出码；若同一 namespace 多个 Pod 同时中招，优先查共同依赖（缓存/数据库/网络策略），不要逐个服务排查。
+
+      - alert: K8sContainerNotReady
+        # 必须限定 phase==2(Running)：CronJob 的 Completed Pod ready 恒为 0，
+        # 不过滤会把 ces-audit 每轮 Job 都算成误报（2026-08-31 实测）。
+        expr: '(min by (k8s_namespace_name,k8s_pod_name,k8s_container_name) (k8s_container_ready) == 0) and on(k8s_namespace_name,k8s_pod_name) (k8s_pod_phase == 2)'
+        for: 15m
+        labels: { severity: warning, category: kubernetes }
+        annotations:
+          summary: '容器持续未就绪 {{ $labels.k8s_namespace_name }}/{{ $labels.k8s_pod_name }}'
+          description: 容器已运行但就绪探针连续 15 分钟未通过。进程活着不等于在干活——重点查它依赖的下游是否可达。
+
+      - alert: K8sDeploymentDegraded
+        expr: 'k8s_deployment_available < on(k8s_deployment_uid) k8s_deployment_desired'
+        for: 10m
+        labels: { severity: warning, category: kubernetes }
+        annotations:
+          summary: 'Deployment 副本不足 {{ $labels.k8s_namespace_name }}/{{ $labels.k8s_deployment_name }}'
+          description: 可用副本少于期望副本超过 10 分钟。本集群多数服务单副本且无 PDB，出现此告警通常意味着该服务已完全不可用。
+
+      - alert: K8sFailedPodsAccumulating
+        # k8s_pod_phase 是枚举 gauge；现场故障注入确认 Failed=4，而不是 phase label。
+        expr: 'count(k8s_pod_phase == 4) > 10'
+        for: 15m
+        labels: { severity: warning, category: kubernetes }
+        annotations:
+          summary: 'Kubernetes Failed Pod 积压 {{ $value | printf "%.0f" }} 个'
+          description: Failed phase Pod 超过 10 个并持续 15 分钟。先按 namespace 与 owner 归类，确认活动副本健康并保留必要日志，再定向清理终态历史；同时检查 kube-controller-manager PodGC 与 leader lease。
+
+      - alert: K8sNodeNotReady
+        expr: 'k8s_node_condition_ready == 0'
+        for: 5m
+        labels: { severity: critical, category: kubernetes }
+        annotations:
+          summary: '节点 NotReady {{ $labels.k8s_node_name }}'
+          description: 三节点集群失去一个节点。检查 kubelet、容器运行时与网络；注意节点恢复不会自动把已迁走的 Pod 搬回来。
+
+      - alert: K8sClusterMetricsMissing
+        # 兜底：采集断了的话上面所有规则会安静变成「无数据」而不是「报警」。
+        expr: 'absent(k8s_container_restarts) == 1'
+        for: 10m
+        labels: { severity: critical, category: observability }
+        annotations:
+          summary: K8s 集群指标停止写入 VictoriaMetrics
+          description: 连续 10 分钟收不到 k8s_container_restarts。检查集群内 otel-opentelemetry-collector（单副本，本链路单点）、其 k8s_cluster receiver 与到 node3 的远端写入。此时所有 K8s 告警均已失效。
+
+      - alert: AlertFiringTooLong
+        # 元规则：长期红着的告警不再产生新信息，反而会把真事故淹掉。
+        # ALERTS_FOR_STATE 不带 alertstate label，不要加该过滤条件（会永远查不到）。
+        expr: '(time() - ALERTS_FOR_STATE{alertname!="AlertFiringTooLong"}) > 4*3600'
+        for: 15m
+        labels: { severity: warning, category: observability }
+        annotations:
+          summary: '告警已持续 {{ $value | humanizeDuration }}：{{ $labels.alertname }}'
+          description: 该告警长期未恢复，已失去信号价值。必须二选一：修掉根因，或删掉/修正这条规则。不要靠调阈值让它变绿——那会把真问题永久藏起来。

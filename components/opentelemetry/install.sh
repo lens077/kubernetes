@@ -6,6 +6,8 @@
 # 为什么要动态: 三条 pipeline 各自依赖一个后端。后端没装却写了 exporter, collector
 # 启动后会一直重试报错; 后端装了却没写, 数据就直接丢了。查集群而不是查选择清单 ——
 # 这样单独执行时也判断正确。
+# 后端优先级(2026-09-03): metrics→victoriametrics; logs→victoria-logs > loki;
+# traces→victoria-traces > jaeger。三条都可被 REMOTE_*_URL 覆盖为远端。
 # =============================================================================
 set -Eeuo pipefail
 source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../_lib" &>/dev/null && pwd)/env.sh"
@@ -22,6 +24,8 @@ signals=()
 VM_SVC="vm-single-victoria-metrics-single-server.victoriametrics.svc.cluster.local:8428"
 LOKI_SVC="loki.logging.svc.cluster.local:3100"
 JAEGER_SVC="jaeger.observability.svc.cluster.local"
+VL_SVC="vl-victoria-logs-single-server.logging.svc.cluster.local:9428"
+VT_SVC="victoria-traces.observability.svc.cluster.local:10428"
 
 # 远端观测后端(node3 Pigsty, 经 node1 的 Pangolin 公网入口)。
 #
@@ -96,6 +100,22 @@ if [[ -n $REMOTE_LOGS_URL ]]; then
         exporters: [otlp_http/remote_logs]
 "
   signals+=("logs→远端($REMOTE_LOGS_URL)")
+elif comp_installed logging vl-victoria-logs-single-server; then
+  # VictoriaLogs 原生 OTLP 摄入(路径带 /insert 前缀, 必须用 logs_endpoint 给全路径)。
+  # 2026-09-03 起是日志主后端(Loki 退为次选); 容器日志由 Vector 直写 VL, 这里只承载应用侧 OTLP 日志与 K8s Event。
+  exporters+="    otlp_http/victorialogs:
+      compression: gzip
+      encoding: proto
+      logs_endpoint: http://$VL_SVC/insert/opentelemetry/v1/logs
+      tls:
+        insecure: true
+"
+  pipelines+="      logs:
+        receivers: [otlp]
+        processors: [memory_limiter, batch]
+        exporters: [otlp_http/victorialogs]
+"
+  signals+=("logs→VictoriaLogs")
 elif comp_installed logging loki; then
   # Loki 3.x 原生 OTLP 摄入端点(应用侧 otelzap 推的日志走这条; 容器日志仍归 fluent-bit)
   exporters+="    otlp_http/loki:
@@ -131,6 +151,21 @@ if [[ -n $REMOTE_TRACES_URL ]]; then
         exporters: [otlp_http/remote_traces]
 "
   signals+=("traces→远端($REMOTE_TRACES_URL)")
+elif comp_installed observability victoria-traces; then
+  # VictoriaTraces 原生 OTLP 摄入(同样带 /insert 前缀); Grafana 走 jaeger 数据源读 /select/jaeger
+  exporters+="    otlp_http/victoriatraces:
+      compression: gzip
+      encoding: proto
+      traces_endpoint: http://$VT_SVC/insert/opentelemetry/v1/traces
+      tls:
+        insecure: true
+"
+  pipelines+="      traces:
+        receivers: [otlp]
+        processors: [memory_limiter, batch]
+        exporters: [otlp_http/victoriatraces]
+"
+  signals+=("traces→VictoriaTraces")
 elif comp_installed observability jaeger; then
   exporters+="    otlp_grpc/jaeger:
       endpoint: $JAEGER_SVC:4317
@@ -146,7 +181,7 @@ elif comp_installed observability jaeger; then
 fi
 
 if [[ -z $exporters ]]; then
-  log_warn "集群里没有任何观测后端(victoriametrics/loki/jaeger), 跳过 $ID"
+  log_warn "集群里没有任何观测后端(victoriametrics/victoria-logs/loki/victoria-traces/jaeger), 跳过 $ID"
   log_warn "  装完后端后重跑本脚本即可补上对应 pipeline"
   exit 0
 fi

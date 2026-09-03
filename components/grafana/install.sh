@@ -44,12 +44,49 @@ if comp_installed tempo tempo; then
 "
   sources+=(Tempo)
 fi
+# ---- 2026-09-03: node3 Pigsty 退役后集群内的 VL/VT/Alertmanager(数据源 uid 固定, 仪表盘 JSON 才能跨环境导入) ----
+plugins=()
+if comp_installed logging vl-victoria-logs-single-server; then
+  # VictoriaLogs 官方数据源插件(不是 loki 类型); 插件由 chart 的 plugins: 在启动时下载
+  ds+="      - name: VictoriaLogs
+        uid: ds-vlogs
+        type: victoriametrics-logs-datasource
+        url: http://vl-victoria-logs-single-server.logging.svc.cluster.local:9428
+"
+  sources+=(VictoriaLogs)
+  plugins+=(victoriametrics-logs-datasource)
+fi
+if comp_installed observability victoria-traces; then
+  # VictoriaTraces 提供 Jaeger 兼容查询 API, 用内置 jaeger 数据源即可(与 node3 Pigsty 同款配置)
+  ds+="      - name: VictoriaTraces
+        uid: ds-vtraces
+        type: jaeger
+        url: http://victoria-traces.observability.svc.cluster.local:10428/select/jaeger
+"
+  sources+=(VictoriaTraces)
+fi
+if comp_installed observability alertmanager; then
+  # 告警页(Alerting → Alert rules/Groups)直接看 Alertmanager 里的 firing/silence, 不必再开一个 UI
+  ds+="      - name: Alertmanager
+        uid: ds-alertmanager
+        type: alertmanager
+        url: http://alertmanager.observability.svc.cluster.local:9093
+        jsonData:
+          implementation: prometheus
+          handleGrafanaManagedAlerts: false
+"
+  sources+=(Alertmanager)
+fi
 
 log_step "安装 $ID → 命名空间 $NAMESPACE (数据源: ${sources[*]:-无})"
 
 dyn=$(mktemp)
 {
   echo "adminPassword: \"$pass\""
+  if (( ${#plugins[@]} > 0 )); then
+    echo "plugins:"
+    printf '  - %s\n' "${plugins[@]}"
+  fi
   if [[ -n $ds ]]; then
     echo "datasources:"
     echo "  datasources.yaml:"

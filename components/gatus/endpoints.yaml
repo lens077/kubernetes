@@ -1,0 +1,195 @@
+# gatus 端点清单。条件三件套沿用 node3: 状态码 + 证书剩余 > 30 天 + 响应 < 5s。
+# 分组:
+#   cluster-origin          集群内各后端的健康端点(Service 名, 不经网关)
+#   observability-pipeline  不看"进程活着", 看"数据真的到了": 查 VM/VL 有没有新 series/事件, 查 Alertmanager 有没有 Watchdog
+#   public-edge             经 Pangolin/newt 暴露的公网入口(与 node3 时代同一批域名)
+#   node1-public            node1 VPS 上的站点
+# 端点里的 `alerts: [{type: ntfy}]` 行在未配置 ntfy 时会被 install.sh 删掉。
+endpoints:
+  # ---------- cluster-origin ----------
+  - name: grafana
+    group: cluster-origin
+    url: http://grafana.observability.svc.cluster.local/api/health
+    interval: 1m
+    conditions: ["[STATUS] == 200", "[RESPONSE_TIME] < 3000"]
+    alerts: [{type: ntfy}]
+  - name: victoriametrics
+    group: cluster-origin
+    url: http://vm-single-victoria-metrics-single-server.victoriametrics.svc.cluster.local:8428/health
+    interval: 1m
+    conditions: ["[STATUS] == 200", "[RESPONSE_TIME] < 3000"]
+    alerts: [{type: ntfy}]
+  - name: victorialogs
+    group: cluster-origin
+    url: http://vl-victoria-logs-single-server.logging.svc.cluster.local:9428/health
+    interval: 1m
+    conditions: ["[STATUS] == 200", "[RESPONSE_TIME] < 3000"]
+    alerts: [{type: ntfy}]
+  - name: victoriatraces
+    group: cluster-origin
+    url: http://victoria-traces.observability.svc.cluster.local:10428/health
+    interval: 1m
+    conditions: ["[STATUS] == 200", "[RESPONSE_TIME] < 3000"]
+    alerts: [{type: ntfy}]
+  - name: vmalert
+    group: cluster-origin
+    url: http://vmalert.observability.svc.cluster.local:8880/health
+    interval: 1m
+    conditions: ["[STATUS] == 200", "[RESPONSE_TIME] < 3000"]
+    alerts: [{type: ntfy}]
+  - name: alertmanager
+    group: cluster-origin
+    url: http://alertmanager.observability.svc.cluster.local:9093/-/healthy
+    interval: 1m
+    conditions: ["[STATUS] == 200", "[RESPONSE_TIME] < 3000"]
+    alerts: [{type: ntfy}]
+  - name: alert-bridge
+    group: cluster-origin
+    url: http://alert-bridge.observability.svc.cluster.local:9099/healthz
+    interval: 1m
+    # ntfy 未配置时 /healthz 仍 200 但 body.ntfy=false; 这里只看进程, ntfy 配没配由 README 的手工验证覆盖
+    conditions: ["[STATUS] == 200", "[BODY].ok == true"]
+    alerts: [{type: ntfy}]
+  - name: otel-collector
+    group: cluster-origin
+    url: http://otel-opentelemetry-collector.opentelemetry.svc.cluster.local:13133/
+    interval: 1m
+    conditions: ["[STATUS] == 200"]
+    alerts: [{type: ntfy}]
+  - name: healthchecks
+    group: cluster-origin
+    url: http://healthchecks.ops.svc.cluster.local:8000/api/v3/status/
+    interval: 1m
+    conditions: ["[STATUS] == 200"]
+    alerts: [{type: ntfy}]
+  - name: bugsink
+    group: cluster-origin
+    url: http://bugsink.ops.svc.cluster.local:8000/health/ready
+    interval: 1m
+    conditions: ["[STATUS] == 200"]
+    alerts: [{type: ntfy}]
+  - name: postgres-pooler-rw
+    group: cluster-origin
+    url: tcp://pg-main-pooler-rw.postgresql.svc.cluster.local:5432
+    interval: 1m
+    conditions: ["[CONNECTED] == true"]
+    alerts: [{type: ntfy}]
+
+  # ---------- observability-pipeline (数据真的到了吗) ----------
+  - name: k8s-cluster-state-ingestion
+    group: observability-pipeline
+    # otel k8s_cluster receiver → VM: 最近 5 分钟必须有 k8s_deployment_available 样本
+    url: "http://vm-single-victoria-metrics-single-server.victoriametrics.svc.cluster.local:8428/api/v1/query?query=max_over_time(k8s_deployment_available%5B5m%5D)"
+    interval: 2m
+    conditions: ["[STATUS] == 200", "[BODY].status == success", "len([BODY].data.result) > 0"]
+    alerts: [{type: ntfy}]
+  - name: hostmetrics-ingestion
+    group: observability-pipeline
+    # otel-node DaemonSet → VM: 最近 5 分钟有主机指标样本。指标名按 VM usePrometheusNaming 口径
+    # (system.cpu.time, 单位 s, 单调计数 → system_cpu_time_seconds_total); 查不到就在 vmui 搜 system_cpu 校正
+    url: "http://vm-single-victoria-metrics-single-server.victoriametrics.svc.cluster.local:8428/api/v1/query?query=count(max_over_time(system_cpu_time_seconds_total%5B5m%5D))"
+    interval: 2m
+    conditions: ["[STATUS] == 200", "[BODY].status == success", "len([BODY].data.result) > 0"]
+    alerts: [{type: ntfy}]
+  - name: container-logs-ingestion
+    group: observability-pipeline
+    # vector DaemonSet → VL: 最近 10 分钟有容器日志(kubernetes.pod_namespace 字段存在)
+    url: "http://vl-victoria-logs-single-server.logging.svc.cluster.local:9428/select/logsql/field_values?query=*&field=kubernetes.pod_namespace&start=10m&limit=5"
+    interval: 2m
+    conditions: ["[STATUS] == 200", "len([BODY].values) > 0"]
+    alerts: [{type: ntfy}]
+  - name: k8s-event-ingestion
+    group: observability-pipeline
+    # otel k8sobjects → VL: 24h 内有 Kubernetes Event
+    url: "http://vl-victoria-logs-single-server.logging.svc.cluster.local:9428/select/logsql/field_values?query=object.kind%3A%3DEvent&field=object.kind&start=24h"
+    interval: 5m
+    conditions: ["[STATUS] == 200", "len([BODY].values) > 0"]
+    alerts: [{type: ntfy}]
+  - name: alert-pipeline-watchdog
+    group: observability-pipeline
+    # vmalert 的 Watchdog 永远 firing; 它不在 Alertmanager 里 = vmalert→Alertmanager 断了
+    url: "http://alertmanager.observability.svc.cluster.local:9093/api/v2/alerts?filter=alertname%3DWatchdog&active=true"
+    interval: 2m
+    conditions: ["[STATUS] == 200", "len([BODY]) > 0"]
+    alerts: [{type: ntfy}]
+
+  # ---------- public-edge (经 Pangolin/newt 的公网入口, 沿用 node3 清单) ----------
+  - name: gateway
+    group: public-edge
+    url: https://gateway.apikv.com/healthz
+    interval: 1m
+    client: {timeout: 10s, ignore-redirect: true}
+    conditions: ["[STATUS] == 200", "[CERTIFICATE_EXPIRATION] > 720h", "[RESPONSE_TIME] < 5000"]
+    alerts: [{type: ntfy}]
+  - name: mall
+    group: public-edge
+    url: https://shop.apikv.com/
+    interval: 1m
+    client: {timeout: 10s, ignore-redirect: true}
+    conditions: ["[STATUS] == 200", "[CERTIFICATE_EXPIRATION] > 720h", "[RESPONSE_TIME] < 5000"]
+    alerts: [{type: ntfy}]
+  - name: casdoor
+    group: public-edge
+    url: https://casdoor.apikv.com/api/health
+    interval: 1m
+    client: {timeout: 10s, ignore-redirect: true}
+    conditions: ["[STATUS] == 200", "[CERTIFICATE_EXPIRATION] > 720h", "[RESPONSE_TIME] < 5000"]
+    alerts: [{type: ntfy}]
+  - name: config-center-web
+    group: public-edge
+    url: https://config.apikv.com/
+    interval: 1m
+    client: {timeout: 10s, ignore-redirect: true}
+    conditions: ["[STATUS] == 200", "[CERTIFICATE_EXPIRATION] > 720h", "[RESPONSE_TIME] < 5000"]
+    alerts: [{type: ntfy}]
+  - name: config-center-api
+    group: public-edge
+    url: https://config-api.apikv.com/health
+    interval: 1m
+    client: {timeout: 10s, ignore-redirect: true}
+    conditions: ["[STATUS] == 401", "[CERTIFICATE_EXPIRATION] > 720h", "[RESPONSE_TIME] < 5000"]
+    alerts: [{type: ntfy}]
+  - name: grafana-edge
+    group: public-edge
+    url: https://grafana.apikv.com/api/health
+    interval: 2m
+    client: {timeout: 10s, ignore-redirect: true}
+    conditions: ["[STATUS] == 200", "[CERTIFICATE_EXPIRATION] > 720h"]
+    alerts: [{type: ntfy}]
+  - name: bugsink-edge
+    group: public-edge
+    url: https://bugsink.apikv.com/health/ready
+    interval: 2m
+    client: {timeout: 10s, ignore-redirect: true}
+    conditions: ["[STATUS] == 200", "[CERTIFICATE_EXPIRATION] > 720h"]
+    alerts: [{type: ntfy}]
+
+  # ---------- node1-public ----------
+  - name: homepage
+    group: node1-public
+    url: https://apikv.com/
+    interval: 5m
+    client: {timeout: 10s, ignore-redirect: true}
+    conditions: ["[STATUS] == 200", "[CERTIFICATE_EXPIRATION] > 720h"]
+    alerts: [{type: ntfy}]
+  - name: pangolin
+    group: node1-public
+    url: https://pangolin.apikv.com/
+    interval: 5m
+    client: {timeout: 10s, ignore-redirect: true}
+    conditions: ["[STATUS] == 200", "[CERTIFICATE_EXPIRATION] > 720h"]
+    alerts: [{type: ntfy}]
+  - name: vault
+    group: node1-public
+    url: https://vault.apikv.com/
+    interval: 5m
+    client: {timeout: 10s, ignore-redirect: true}
+    conditions: ["[STATUS] == 307", "[CERTIFICATE_EXPIRATION] > 720h"]
+    alerts: [{type: ntfy}]
+  - name: ntfy
+    group: node1-public
+    url: https://ntfy.apikv.com/v1/health
+    interval: 5m
+    client: {timeout: 10s, ignore-redirect: true}
+    conditions: ["[STATUS] == 200", "[CERTIFICATE_EXPIRATION] > 720h"]
+    alerts: [{type: ntfy}]

@@ -114,7 +114,10 @@ render_tpl() {  # render_tpl <模板> <输出> [额外变量名...]
               HARBOR_REGISTRY_STORAGE_SIZE HARBOR_JOB_STORAGE_SIZE
               HARBOR_DATABASE_STORAGE_SIZE HARBOR_REDIS_STORAGE_SIZE HARBOR_TRIVY_STORAGE_SIZE
               DRAGONFLY_MAXMEMORY DRAGONFLY_PROACTOR_THREADS
-              KURED_REBOOT_WINDOW_START KURED_REBOOT_WINDOW_END "$@")
+              KURED_REBOOT_WINDOW_START KURED_REBOOT_WINDOW_END
+              # 2026-09-03 观测/告警/运维保障层(vmalert/alertmanager/victoria-traces/gatus/healthchecks/bugsink)
+              VT_STORAGE_SIZE VT_RETENTION VT_DISK_CAP ALERTMANAGER_STORAGE_SIZE
+              GATUS_STORAGE_SIZE HEALTHCHECKS_STORAGE_SIZE BUGSINK_STORAGE_SIZE BUGSINK_EVENT_RETENTION_DAYS "$@")
   local sed_args=() v
   for v in "${vars[@]}"; do sed_args+=(-e "s|\${$v}|${!v-}|g"); done
   sed "${sed_args[@]}" "$src" > "$out"

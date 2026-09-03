@@ -113,6 +113,112 @@ config:
                 target_label: pod
               - source_labels: [__meta_kubernetes_pod_node_name]
                 target_label: node
+          # ---- 2026-09-03 新增: 数据库与告警链路自身的指标(vmalert 的 cnpg.yml / observability-pipeline.yml 靠它们) ----
+          # CNPG 实例 Pod 自带 exporter(:9187, 端口名 metrics): cnpg_collector_* / cnpg_pg_* / cnpg_backends_*
+          - job_name: cnpg
+            scrape_interval: 30s
+            scrape_timeout: 10s
+            kubernetes_sd_configs:
+              - role: pod
+                namespaces:
+                  names: [postgresql]
+            relabel_configs:
+              - source_labels: [__meta_kubernetes_pod_label_cnpg_io_podRole]
+                action: keep
+                regex: instance
+              - source_labels: [__meta_kubernetes_pod_phase]
+                action: keep
+                regex: Running
+              - source_labels: [__meta_kubernetes_pod_container_port_name]
+                action: keep
+                regex: metrics
+              - source_labels: [__meta_kubernetes_pod_label_cnpg_io_cluster]
+                target_label: cnpg_cluster      # 不用 cluster: 那是 k8s 集群名(ces-audit 规则在用)
+              - source_labels: [__meta_kubernetes_pod_name]
+                target_label: pod
+              - source_labels: [__meta_kubernetes_pod_node_name]
+                target_label: node
+          # CNPG Pooler(pgbouncer) Pod, 端口名同样是 metrics(:9127): cnpg_pgbouncer_*
+          - job_name: cnpg-pooler
+            scrape_interval: 30s
+            scrape_timeout: 10s
+            kubernetes_sd_configs:
+              - role: pod
+                namespaces:
+                  names: [postgresql]
+            relabel_configs:
+              - source_labels: [__meta_kubernetes_pod_label_cnpg_io_podRole]
+                action: keep
+                regex: pooler
+              - source_labels: [__meta_kubernetes_pod_phase]
+                action: keep
+                regex: Running
+              - source_labels: [__meta_kubernetes_pod_container_port_name]
+                action: keep
+                regex: metrics
+              - source_labels: [__meta_kubernetes_pod_label_cnpg_io_poolerName]
+                target_label: pooler
+              - source_labels: [__meta_kubernetes_pod_name]
+                target_label: pod
+          # vmalert(:8880) 与 Alertmanager(:9093)自身指标: 告警链路坏了靠它们告警
+          - job_name: vmalert
+            scrape_interval: 30s
+            scrape_timeout: 10s
+            kubernetes_sd_configs:
+              - role: pod
+                namespaces:
+                  names: [observability]
+            relabel_configs:
+              - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_instance, __meta_kubernetes_pod_label_app_kubernetes_io_name]
+                action: keep
+                regex: vmalert;victoria-metrics-alert
+              - source_labels: [__meta_kubernetes_pod_phase]
+                action: keep
+                regex: Running
+              - source_labels: [__meta_kubernetes_pod_ip]
+                target_label: __address__
+                replacement: $1:8880
+              - source_labels: [__meta_kubernetes_pod_name]
+                target_label: pod
+          - job_name: alertmanager
+            scrape_interval: 30s
+            scrape_timeout: 10s
+            kubernetes_sd_configs:
+              - role: pod
+                namespaces:
+                  names: [observability]
+            relabel_configs:
+              - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_name]
+                action: keep
+                regex: alertmanager
+              - source_labels: [__meta_kubernetes_pod_phase]
+                action: keep
+                regex: Running
+              - source_labels: [__meta_kubernetes_pod_ip]
+                target_label: __address__
+                replacement: $1:9093
+              - source_labels: [__meta_kubernetes_pod_name]
+                target_label: pod
+          # gatus(:8080/metrics): 合成探测结果(gatus_results_*)也进 VM, 面板与规则都能用
+          - job_name: gatus
+            scrape_interval: 60s
+            scrape_timeout: 10s
+            kubernetes_sd_configs:
+              - role: pod
+                namespaces:
+                  names: [ops]
+            relabel_configs:
+              - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_name]
+                action: keep
+                regex: gatus
+              - source_labels: [__meta_kubernetes_pod_phase]
+                action: keep
+                regex: Running
+              - source_labels: [__meta_kubernetes_pod_ip]
+                target_label: __address__
+                replacement: $1:8080
+              - source_labels: [__meta_kubernetes_pod_name]
+                target_label: pod
 
 resources:
   requests:

@@ -52,7 +52,7 @@ README.md       解决方案文档：定位 / 上游最佳实践 / **本集群�
 | [gateway](components/gateway/) | 共享 L7 入口 + **全仓路由约定** | 80/443 |
 | [victoriametrics](components/victoriametrics/) | 指标后端 | `metrics.dev.test` |
 | [loki](components/loki/) | 日志后端 | `logs.dev.test` |
-| [jaeger](components/jaeger/) | 链路追踪（badger 本地卷） | `jaeger.dev.test` |
+| [jaeger](components/jaeger/) | 链路追踪（badger 本地卷；2026-09-03 起为 victoria-traces 的次选） | `jaeger.dev.test` |
 | [opentelemetry](components/opentelemetry/) | OTLP 统一入口，pipeline 按后端动态生成 | 集群内 |
 | [tetragon](components/tetragon/) | eBPF 运行时安全观察（三节点，仅 `ecommerce` 进程与 audit-only 策略事件） | 集群内 |
 | [grafana](components/grafana/) | 观测门面，数据源自动预置 | `grafana.dev.test` |
@@ -81,16 +81,27 @@ README.md       解决方案文档：定位 / 上游最佳实践 / **本集群�
 | [keda](components/keda/) | 事件驱动扩缩（cron/prometheus scaler 先行） | — |
 | [argo-rollouts](components/argo-rollouts/) | 金丝雀控制器（流量切分待服务发现改造） | — |
 | [spegel](components/spegel/) | 节点间 P2P 镜像缓存（实测 8.8s→102ms 命中） | NodePort `:30021` |
+| [victoria-traces](components/victoria-traces/) | VictoriaTraces 链路后端（2026-09-03 起替 jaeger 为默认；Grafana 用 jaeger 数据源读） | `traces.dev.test` |
+| [vmalert](components/vmalert/) | 告警规则评估（`rules/*.yml`：ecommerce 自写 14 条 + CNPG + 链路自检） | `vmalert.dev.test` |
+| [alertmanager](components/alertmanager/) | 告警路由/抑制/静默，唯一 receiver 是告警桥 | `alerts.dev.test` |
+| [alert-bridge](components/alert-bridge/) | 告警桥：Alertmanager/Bugsink webhook → ntfy + JSON 日志 | 集群内 `:9099/:9199` |
+| [gatus](components/gatus/) | 合成监控：公网入口 / 集群内后端 / 「数据真的到了吗」探针 | `status.dev.test` |
+| [healthchecks](components/healthchecks/) | 死人开关：备份/CronJob 到点不 ping 就告警 | `hc.dev.test` |
+| [bugsink](components/bugsink/) | 错误追踪（Sentry 协议），issue 经告警桥推 ntfy | `bugsink.dev.test` |
 | [kruise](components/kruise/) | OpenKruise ImagePullJob —— **❌ 2026-08-20 实测否决已卸载**（webhook 冻结集群） | — |
 
 域名后缀由 `bootstrap/config.env` 的 `CLUSTER_DOMAIN` 控制（默认 `dev.test`）。
 2026-08-20 选型定稿新增 12 组件的部署验证记录与坑册见 [`DEPLOY-RECORD-2026-08-20.md`](DEPLOY-RECORD-2026-08-20.md)。
+观测/告警/运维保障层（VM/VL/VT、OTel、Vector、vmalert、Alertmanager、告警桥、gatus、healthchecks、bugsink）
+如何互相接线、怎么验证每一段，见 [`OBSERVABILITY-INTEGRATION.md`](OBSERVABILITY-INTEGRATION.md)；
+这批能力来自 node3 Pigsty 的收割，见 [`PIGSTY-HARVEST-2026-09-03.md`](PIGSTY-HARVEST-2026-09-03.md)。
 
 ## 集群特性（组件配置的前提）
 
-单控制面 + 2 节点（node2 控制面 / node1 工作节点）、ARM64（Parallels VM，Ubuntu 26.04，
-内核 7.0）、**Cilium eBPF 完全替代 kube-proxy**、Gateway API v1.6.1（10 个 CRD 全装，
-TCPRoute 可用）、OpenEBS LVM 本地卷（有节点绑定特性）、内存偏紧。
+单控制面 + 2 工作节点（node101 控制面，node102/node103 工作节点）、ARM64（Parallels VM，
+Ubuntu 26.04，内核 7.0）、**Cilium eBPF 完全替代 kube-proxy**、Gateway API v1.6.1
+（10 个 CRD 全装，TCPRoute 可用）、OpenEBS LVM 本地卷（有节点绑定特性）、内存偏紧。
+Cilium 的当前 values、机器相关调优与在线升级手顺见 [`bootstrap/CILIUM.md`](bootstrap/CILIUM.md)。
 
 每个组件 README 的「本集群取舍」一节，记录的就是在这些约束下**为什么这么配**。
 
