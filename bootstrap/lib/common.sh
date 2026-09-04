@@ -549,8 +549,14 @@ state_done() { [[ -f "$STATE_DIR/state/${STAGE_ID}:$1.done" ]]; }
 mark_done()  { ensure_dirs; touch "$STATE_DIR/state/${STAGE_ID}:$1.done"; }
 state_reset() {  # state_reset [stage前缀|all]
   local what=${1:-all}
-  if [[ $what == all ]]; then rm -f "$STATE_DIR/state/"*.done 2>/dev/null || true
-  else rm -f "$STATE_DIR/state/${what}"*.done 2>/dev/null || true; fi
+  if [[ $what == all ]]; then
+    rm -f "$STATE_DIR/state/"*.done "$STATE_DIR/components.selected" 2>/dev/null || true
+  else
+    rm -f "$STATE_DIR/state/${what}"*.done 2>/dev/null || true
+    if [[ $what == 80-components ]]; then
+      rm -f "$STATE_DIR/components.selected"
+    fi
+  fi
 }
 
 # 把期望状态摘要收进步骤状态模块：输入变化时只使指定下游步骤失效，避免调用方

@@ -59,7 +59,7 @@ README.md       解决方案文档：定位 / 上游最佳实践 / **本集群�
 | [postgres](components/postgres/) | CloudNativePG 算子 | TLS passthrough |
 | [dragonflydb](components/dragonflydb/) | Redis 协议缓存主力（**原生 TLS**，2026-08-20 起证书 cert-manager 签） | TCPRoute `:6380`(TLS) |
 | [kafka](components/kafka/) | Strimzi 算子 | LoadBalancer（不走网关） |
-| [meilisearch](components/meilisearch/) | 商品即时搜索 | `search.dev.test` |
+| [meilisearch](components/meilisearch/) | 已退役的搜索回滚组件，默认关闭；仅显式人工回滚时安装 | 安装后为 `search.dev.test` |
 | [minio](components/minio/) | S3 对象存储（pgsty/silo） | `minio-ui` / `s3` |
 | [argo](components/argo/) | ArgoCD (GitOps) | `argocd.dev.test` |
 | [external-secrets](components/external-secrets/) | ESO：线上 Vault(`vault.apikv.com`) → k8s Secret（密钥不入 Git/明文） | — |
