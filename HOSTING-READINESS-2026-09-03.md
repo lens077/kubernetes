@@ -7,6 +7,7 @@
 > 因此本文 §4/§5 里「应用层用 pigsty PG、`ADDON_CNPG=false`、`ADDON_OPENFGA=false`」的取舍作废:
 > `ADDON_CNPG=true`、`ADDON_OPENFGA=true` 保持内网版原值;§8 关于 node3 的 pigsty/docker/tuned 冲突在重装后不再存在。
 > Pigsty 的配置与经验已收割到 [`PIGSTY-HARVEST-2026-09-03.md`](PIGSTY-HARVEST-2026-09-03.md)。
+> §5 的键已落成可直接使用的 `bootstrap/config.hosting.env`；复原顺序与 node3 重装前清单见 [`RESTORE-RUNBOOK-2026-09-04.md`](RESTORE-RUNBOOK-2026-09-04.md)。
 > 其余结论(存储只能回环、L2 关闭、代理与 GitHub 通道、node4 做控制面、node5 盘慢)不变;
 > 三节点时 `CILIUM_OPERATOR_REPLICAS` 首装仍取 1,三节点就绪后改回 2。
 

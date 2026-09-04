@@ -30,8 +30,13 @@ ntfy/bugsink/newt 凭据、Pigsty CA 私钥和数据库数据。node3 下线后�
 | `etc/tuned/profiles/oltp/`、`etc/security/limits.d/`、`etc/sysctl.d/` | 节点调优 |
 | `home/docker/ecommerce-cdc/` | Debezium → Kafka → Elasticsearch 9 + IK 的 CDC 工程（本地仓 `docker-postgres-kafka-es-streaming-pipeline/ecommerce-cdc` 亦有副本） |
 | `data/gatus/`、`data/healthchecks/`、`data/bugsink/` | 合成监控、死人开关、错误追踪的 compose 与配置 |
-| `_secrets/` | newt 站点凭据、ntfy/bugsink/healthchecks 凭据、OTel bearer token、Pigsty CA（含私钥） |
+| `_secrets/` | newt 站点凭据、ntfy/bugsink/healthchecks 凭据、OTel bearer token、Pigsty CA（含私钥）；2026-09-04 补：root/dba/redis 的 `.ssh`、`.pgpass`、`.pg_service.conf`、`.mcli`、LyraPass cloud `env`、kafka `secrets.yml`、redis/etcd/kafka TLS、4 个自定义容器的 `docker inspect`（含环境变量明文） |
+| `_extra/` | 2026-09-04 二次扫描补收：`host-watchdog`（脚本/timer/env）、第二个 gatus `/opt/ecommerce-gatus`、6 个 systemd `memory.conf`、`pigsty-kafka-*` 脚本、sshd/netplan/apt/ufw 配置、root 的 bashrc/bash_history |
 | `_data/node3-pgdata-pgbackrest-silo-cold-copy.tar.gz` | PG 已停止状态下的 `/pg/data` 冷拷贝（PG 18）、pgbackrest 仓库（最近全备 `20260903-010002F`）、Silo 对象（136K） |
+| `_data/{ecommerce,bugsink,openfga}.pgdump`、`globals.sql` | 由冷拷贝在本机 `postgres:18` 容器导出的逻辑备份（`pg_restore -l` 校验通过）；`meta` 库依赖 postgis 未导出 |
+| `_data/lyrapass-cloud-pg.pg_dumpall.sql` | LyraPass cloud 库（postgres:16 容器，14 表） |
+| `_data/node3-app-volumes.tar.gz` | LyraPass `vault.db`/settings、healthchecks `hc.sqlite`、`grafana.db`、ecommerce-gatus 历史、bugsink `/data` |
+| `_data/ecommerce-cdc-plugins-with-jars.tar.gz` | Kafka Connect ES sink 插件目录，含 PR #940 构建出的 57 个 jar |
 
-未拷贝：Elasticsearch 索引（可由 PG 全量重建）、Kafka 日志段（43M，7 天保留）、
-Victoria 指标/日志/追踪数据（801M）、bugsink/gatus 历史库。
+未拷贝（重装即丢，见 `RESTORE-RUNBOOK-2026-09-04.md` §1.2）：Elasticsearch 索引（可由 PG 全量重建）、
+Kafka 日志段（51M，7 天保留）、Victoria 指标/日志/追踪数据（802M）、gatus 探测历史、三个本地构建镜像。

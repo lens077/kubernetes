@@ -95,6 +95,7 @@ README.md       解决方案文档：定位 / 上游最佳实践 / **本集群�
 观测/告警/运维保障层（VM/VL/VT、OTel、Vector、vmalert、Alertmanager、告警桥、gatus、healthchecks、bugsink）
 如何互相接线、怎么验证每一段，见 [`OBSERVABILITY-INTEGRATION.md`](OBSERVABILITY-INTEGRATION.md)；
 这批能力来自 node3 Pigsty 的收割，见 [`PIGSTY-HARVEST-2026-09-03.md`](PIGSTY-HARVEST-2026-09-03.md)。
+机房三节点复原（`bootstrap/config.hosting.env`）的顺序与缺口见 [`RESTORE-RUNBOOK-2026-09-04.md`](RESTORE-RUNBOOK-2026-09-04.md)。
 
 ## 集群特性（组件配置的前提）
 
