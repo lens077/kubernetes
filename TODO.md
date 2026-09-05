@@ -1,5 +1,12 @@
 # TODO
 
+## 2026-09-04 · Meilisearch 运行时退役
+
+- [x] ecommerce 搜索链已切到 Elasticsearch，回滚窗口结束后卸载 `search/meilisearch` Helm release。
+- [x] 删除 StatefulSet、Service、ServiceAccount、ConfigMap、master-key Secret、两条 HTTPRoute、10 GiB PVC/PV 与 `search` namespace；全集群工作负载、历史 Job 与 NetworkPolicy 不再引用 `7700`。
+- [x] 保留 `components/meilisearch/` 作为显式人工回滚安装器，但 `ADDON_MEILISEARCH` 和 `DEFAULT_ENABLED` 均改为 `false`，默认重装不得重建该组件。
+- [x] 旧安装状态不得复活组件：`install.sh` 对旧 `components.selected` fail-closed（仅 `config.env` 显式 `ADDON_MEILISEARCH=true` + 重置阶段，或单独执行时 `MEILISEARCH_RETIREMENT_ROLLBACK=true` 才放行）；`--reset-state 80-components` 现在连带删除 `components.selected`；node101 的残留选择已手工删除。
+
 ## 2026-08-21 · 与代码对账 + 重装准备(组件数据不保留)
 
 > 本文件自 08-18 后停更,期间仓库完成整形重构与四天组件工作;本段先补账,再为即将执行的集群重装固定「什么会自动重建、什么需要手动」。下方 08-06/08-17 各段引用的旧目录(`kafka/strimzi-kafka/`、`jaeger/`、`minio/yaml/`、`loki/helm/`、`victoriametrics/single/`、`opentelemetry/server/helm/`)已不存在——或按组件契约重写为 `components/<组件>/`,或删除;`archive/` 冻结的是历史清单(原 cloud-native-deploy 资产与本仓旧存档),不再部署。
@@ -41,7 +48,7 @@
 
 - **08-06 三段(Kafka/Debezium、Jaeger、可观测底座)的集群状态类条目整体作废**:所写集群已于 08-16 重建亡故,且 Strimzi/Kafka/Debezium 栈 08-20 定稿退役(`ADDON_STRIMZI=false`)——Connect 构建加速、build pod 资源、VPA 校准、Debezium 换 Final、metadataVersion 风险、broker PVC 钉节点、node1 untaint、entity-operator 重启排查等不再有载体;streaming-pipeline 仓随 Kafka 退役失去载体(其 GOIMAGE/namespace/明文密码三条同废,ecommerce TODO 搜索小节已记),替代实现为 ecommerce `pkg/outbox` + `pkg/searchindex` + NATS JetStream
 - **minio/loki 凭据轮换 9 步 runbook 整段不再执行**:老集群 loki S3 key 已随集群死亡(08-17 段已记),MinIO root 08-17 已迁线上 Vault 经 ESO 物化,集群内 minio 08-20 定稿移除;日志侧现为 loki 组件 + victoria-logs/vector 双写过渡
-- **ES/elastic-stack 全部条目作废**(索引 yellow、TLS 待决策、docker.elastic.co 加速):ES 已退役,搜索定稿 Meilisearch(components/meilisearch),应用侧迁移在 ecommerce TODO
+- **ES/elastic-stack 旧条目整体作废**(索引 yellow、TLS 待决策、docker.elastic.co 加速):后续搜索链已改用 node3 Elasticsearch 并于 2026-09-03 切流；Meilisearch 于 2026-09-04 完整退役，安装器仅保留默认关闭的人工回滚能力
 - 「缺文件 vs 集群对账机制」→ 应用侧已由 ArgoCD GitOps 覆盖;组件侧靠 install.sh 幂等 + `90-verify` 验收,imperative 残余风险知情保留
 - 「collector 自监控无人抓」仍成立,载体变更:components/opentelemetry 按后端动态生成 pipelines,自采配置应改该组件
 - 「遥测端点是否匿名可达」仍成立,范围以 components/gateway 路由约定 + 各组件 README 为准
