@@ -143,6 +143,31 @@ ssh node4 'kubectl -n pangolin exec deploy/newt -- wget -S -qO- --no-check-certi
 
 **仍待处理**：node3 重装与加入；newt 站点切换；机房对 `10.10.31.0/24` 的答复；两台机器有 GRUB 持久化变更建议空闲时 reboot 一次；`~/k8s-creds-backup`（node101 关机）未带入，组件密码全部新生成，需按 `config.env` 重建须知同步 Config Center。
 
+### 2.2 执行记录：2026-09-06 应用层复现（对照内网 node101~103 实际状态）
+
+内网集群实际在跑的与 `components.selected` 不一致：VM/Loki/Jaeger/NATS/CNPG 等观测与数据组件**都不在内网集群里**，
+实际是基础设施层 + Tetragon + ArgoCD（无 Application）+ `config-center` + `ecommerce`（14 个工作负载，`kubectl apply`
+直接部署，非 GitOps）+ newt。机房已是基础设施层的超集，差集只有 Tetragon 与应用层。
+
+| 项 | 结果 |
+|---|---|
+| Tetragon 1.7.1 | ✅ `ADDON_TETRAGON=true`，两节点 2/2；Go gRPC 测试通过 |
+| Go 客户端连通性 | ✅ `tests/go-connectivity` 14 用例全绿（见其 README） |
+| `config-center` | ✅ 用 `tools/clone-namespace.sh` 从内网克隆（Secret 经 ssh 管道，不落盘）；`config-api.app.com` / `config.app.com` 经 VIP 200 |
+| `control-tower-gateway` | ✅ 2/2；`dragonfly-session` Secret 的 `ca.crt`/`password` 换成机房值（内网 CA 与密码在机房无效） |
+| `payment` | ✅ 1.6.3（不用 Redis） |
+| 其余 9 个后端服务 | ❌ CrashLoop：Dragonfly 的 CA/密码来自 config-center **dev 环境配置**（存 node3 PG，内网/机房共用一份），写的是内网 Dragonfly 的值 |
+| `consumer-next` / `ecommerce-frontend` / `qqbot` | ❌ 缩到 0：TCR 只有 arm64 的 `dev-*`/`sha-*` 标签，机房是 amd64（内网 node101~103 是 Apple 芯片虚拟机）；需 ecommerce CI 出 amd64 |
+| 10 个后端镜像 | 内网跑 `sha-c364128`（仅 arm64），机房改用最近发布版 `1.6.3`（双架构）；Deployment 上有 annotation 说明 |
+
+应用层的数据面本来就不在集群里：config-center 与各服务通过 `pg.apikv.com:30001` / `redis.apikv.com:30002`
+（node3 Pigsty 经 Pangolin 暴露）访问 PG/Redis，机房照旧可用；切到集群内 CNPG 属于 node3 重装时的迁移决策（§4）。
+
+**待拍板**（config-center 是共享配置，按 control-tower 规矩先征询）：
+- A. 机房用独立环境（`pre`）：在管理台为 `pre` 播种各服务的 redis CA/密码等键、签发 machine token、换 `ecommerce-config-source-*` Secret —— 与 control-tower `deploy/pre` 的设计一致，两集群隔离；
+- B. 共用 `dev`：把机房根 CA 追加进 dev 环境各服务 `redis.tls.ca_pem`（bundle，对内网无害），机房 Dragonfly 密码改成内网的同一个 —— 快，但两集群继续共享一份可变配置。
+
+
 ## 3. 凭据与外部系统（不在仓库，必须带过去）
 
 | 项 | 来源 | 去向 |
