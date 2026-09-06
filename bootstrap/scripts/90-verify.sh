@@ -2,8 +2,8 @@
 # =============================================================================
 # 90-verify —— 全局验收与报告
 #   - 控制面/CNI/存储/组件逐项复检(核心项失败即报错, 可选组件仅警告)
-#   - 冒烟测试: PVC 读写(默认开) / LoadBalancer L2 通告(默认关)
-#               可观测链路 OTLP 打点→后端查回(默认开, 只测已启用的 vm/loki/jaeger)
+#   - 冒烟测试: PVC 读写 / LoadBalancer IPAM+BPF+L2 / OTLP 打点→后端查回
+#               均由 config.env 开关控制, 默认开; 观测只测已启用的 VM/VL/VT 或 Loki/Jaeger
 #   - 生成 /root/k8s-install-report.txt
 #   注意: 本阶段所有步骤不做状态跳过(每次执行都完整复检)
 # =============================================================================
@@ -49,6 +49,26 @@ check_kube_proxy_free() {
   grep -qiE 'KubeProxyReplacement:[[:space:]]*True' <<<"$status_out" \
     || die "Cilium KubeProxyReplacement 未生效"
   log_info "kube-proxy 已完全移除, Cilium eBPF 接管服务转发"
+}
+
+check_shared_gateway() {
+  [[ $CILIUM_ENABLE_GATEWAY_API == true ]] || { log_info "Gateway API 未启用, 跳过共享 Gateway 检查"; return 0; }
+  if ! kctl -n default get gateway cilium-gateway >/dev/null 2>&1; then
+    grep -qx gateway "$STATE_DIR/components.selected" 2>/dev/null \
+      && die "80 阶段已选 gateway, 但 default/cilium-gateway 不存在"
+    log_warn "共享 Gateway 未安装, 跳过(未选组件时属正常)"
+    return 0
+  fi
+  # 完整对象 + 生成的 Service 一起校验(lib/common.sh shared_gateway_problems):
+  # Programmed 必须是当前 generation 的结论; Service 的请求注解与实际分配都必须是固定 VIP。
+  local gw_json svc_json problems
+  gw_json=$(kctl -n default get gateway cilium-gateway -o json 2>/dev/null) \
+    || die "读取 default/cilium-gateway 失败"
+  svc_json=$(kctl -n default get svc cilium-gateway-cilium-gateway -o json 2>/dev/null) || svc_json=""
+  problems=$(shared_gateway_problems "$gw_json" "$svc_json" "$CILIUM_GATEWAY_LB_IP")
+  [[ -z $problems ]] || die "共享 Gateway 验收未通过(检查 LB-IPAM 池/固定 VIP/证书/listener):"$'\n'"$problems"
+  log_info "共享 Gateway 验收通过: $CILIUM_GATEWAY_LB_IP (固定 VIP, 当前 generation Programmed=True, LB-IPAM 请求已满足)"
+  log_info "以上只证明控制面与地址分配; newt Pod → VIP:443 → HTTPRoute 的实际路径按 components/gateway/README.md §5 从 newt Pod 内实测"
 }
 
 # --- 3. 系统调优抽检 ---------------------------------------------------------------------
@@ -196,22 +216,25 @@ EOF
   [[ -n $ip ]] || die "LoadBalancer 服务未分配到外部 IP(检查 CiliumLoadBalancerIPPool)"
   kctl -n lb-smoke rollout status deploy/web --timeout=300s
 
-  # L2 通告的 VIP 面向局域网"其他"主机(ARP 应答), 节点自访不走该路径 —— 已知行为,
-  # 因此判定标准是: Cilium 已编程该 LB 服务 + L2 通告租约存在; 节点自访通了算加分
-  local svc_prog
+  # 本冒烟只覆盖两层: ① LB-IPAM 分配 ② Cilium eBPF service map 已编程该 VIP。
+  # L2 租约与节点自访是附加观测, 分别记录; 都不能替代"外部主机/newt Pod 实际访问"这一层。
+  local svc_prog lease_state="缺失" self_state="未通"
   svc_prog=$(kctl -n kube-system exec ds/cilium -c cilium-agent -- cilium-dbg service list 2>/dev/null) || true
   grep -q "$ip" <<<"$svc_prog" || die "Cilium 未编程 LB 服务($ip), 数据面异常"
-  if ! kctl -n kube-system get lease cilium-l2announce-lb-smoke-web &>/dev/null; then
-    log_warn "未见 L2 通告租约(cilium-l2announce-lb-smoke-web), 外部可达性存疑"
+  if kctl -n kube-system get lease cilium-l2announce-lb-smoke-web &>/dev/null; then
+    lease_state="存在"
+  else
+    log_warn "未见 L2 通告租约(cilium-l2announce-lb-smoke-web): 该 VIP 当前无节点应答 ARP; 跨网段集群内 VIP 可接受, 同网段 LAN 直达模式下属异常"
   fi
   local lb_body=""
   if lb_body=$(curl -fsS --max-time 5 "http://$ip/" 2>/dev/null) && grep -qi nginx <<<"$lb_body"; then
-    log_info "节点自访 VIP 也通(加分项)"
+    self_state="通"
   else
-    log_info "节点自访 VIP 未通 —— L2 通告的已知行为(ARP 只应答外部主机); 从局域网其他机器执行 curl http://$ip/ 验证"
+    log_info "节点自访 VIP 未通: 单独记录, 不据此判定外部或 Pod 路径成败"
   fi
   kctl delete ns lb-smoke --timeout=120s
-  log_ok "LoadBalancer 冒烟通过: VIP $ip 已分配并由 Cilium 编程(外部可达性从局域网内其他主机验证)"
+  log_ok "LoadBalancer 冒烟: VIP $ip 已分配并由 Cilium 编程(已验证); L2 租约=$lease_state, 节点自访=$self_state(附加观测)"
+  log_info "未验证层: 局域网其他主机 / newt Pod 到 VIP 的实际访问 —— 按 components/gateway/README.md §5 另行实测"
 }
 
 # --- 6. 可观测链路冒烟(OTLP 打点 → 回查后端确认落库) ---------------------------------------
@@ -426,6 +449,7 @@ Helm        : $HELM_V   Gateway-API: $GATEWAY_API_V
 OpenEBS     : $OPENEBS_V (VG: $LVM_VG_NAME → SC: $SC_NAME/$SC_FS_TYPE)
 Pod CIDR    : $POD_CIDR    Service CIDR: $SERVICE_CIDR
 LB IP 池    : $CILIUM_LB_POOL_START - $CILIUM_LB_POOL_STOP (L2 通告: $CILIUM_ENABLE_L2_ANNOUNCEMENTS)
+Gateway VIP : $CILIUM_GATEWAY_LB_IP (固定, Pangolin/newt HTTPRoute target)
 已装组件    : ${addons:-无}
 
 常用入口:
@@ -504,6 +528,7 @@ main() {
   else
     add_step cp       "控制面与节点健康检查"            check_control_plane
     add_step nokp     "kube-proxy 替代确认(eBPF)"       check_kube_proxy_free
+    add_step gateway  "共享 Gateway 固定 VIP 检查"      check_shared_gateway
     add_step tuning   "系统调优抽检"                    check_tuning
     add_step shutdown "GracefulNodeShutdown 一致性检查" check_graceful_node_shutdown
     add_step podgc    "终态 Pod GC 一致性检查"          check_terminated_pod_gc

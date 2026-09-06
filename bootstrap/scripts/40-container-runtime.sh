@@ -94,13 +94,6 @@ verify_containerd_config() {
 # --- 4. registry 配置(certs.d 目录式, 每个上游一个 hosts.toml) -----------------------
 #   优先级: 用户自带完整目录(CONTAINERD_CERTS_SRC / files/certs.d) > USE_CN_MIRRORS 生成 > 不配置
 write_registry_mirrors() {
-  # Spegel 已接管 _default 时保留其动态节点地址；重新复制静态目录会绕过 P2P 配置。
-  local spegel_hosts=/etc/containerd/certs.d/_default/hosts.toml
-  if [[ -f $spegel_hosts ]] && grep -qE "30020|30021" "$spegel_hosts"; then
-    log_info "检测到 Spegel 已接管 certs.d，保留现有 registry 配置"
-    return 0
-  fi
-
   # 路线一: 原样安装用户自带的 certs.d 目录(宿主机维护的一份完整 registry 配置)
   local src=$CONTAINERD_CERTS_SRC
   [[ -z $src && -d $K8S_BASE_DIR/files/certs.d ]] && src="$K8S_BASE_DIR/files/certs.d"
@@ -111,6 +104,7 @@ write_registry_mirrors() {
       || die "$src 下未发现任何 hosts.toml, 不是合法的 certs.d 目录"
     mkdir -p /etc/containerd/certs.d
     cp -a "$src"/. /etc/containerd/certs.d/
+    inject_spegel_mirror
     log_info "已安装自带 registry 配置: $src → /etc/containerd/certs.d ($(find /etc/containerd/certs.d -name hosts.toml | wc -l | tr -d ' ') 个 hosts.toml)"
     return 0
   fi
@@ -142,6 +136,46 @@ server = "$server"
   capabilities = ["pull", "resolve"]
 EOF
   done
+  inject_spegel_mirror
+}
+
+# --- 4.5 Spegel P2P 镜像与 certs.d 的关系 ---------------------------------------------
+#   Spegel 组件自己的 containerdMirrorAdd 会把 certs.d 里所有 hosts.toml 挪进 _backup/、只留一个
+#   指向本节点 P2P 的 _default —— 未命中时回退"上游直连", 机房 docker.io/registry.k8s.io/quay.io
+#   直连不通(2026-09-06 node4: DNS 污染 + 超时, 80 阶段大面积 ImagePullBackOff)。
+#   因此 Spegel 组件设 containerdMirrorAdd=false, certs.d 由本阶段独占:
+#     - 每个 <registry>/hosts.toml: server 行之后先注入本节点 Spegel(只 pull, 200ms 超时),
+#       标签解析与未命中的 blob 继续走后面的镜像站;
+#     - _default/hosts.toml: 只有 Spegel, 未列出的 registry 也能吃到 P2P, 再回退该 registry 自身。
+#   hosts.toml 每次拉取时读取, 改动无需重启 containerd。
+inject_spegel_mirror() {
+  local port=${SPEGEL_MIRROR_PORT:-}
+  if [[ ${ADDON_SPEGEL:-false} != true || -z $port ]]; then
+    rm -f /etc/containerd/certs.d/_default/hosts.toml
+    return 0
+  fi
+  local block
+  block=$(mktemp)
+  cat > "$block" <<EOF
+
+# k8s-installer 注入: 本节点 Spegel P2P(未命中 ${port} 200ms 内回退下面的镜像站)
+[host."http://$NODE_IP:$port"]
+  capabilities = ["pull"]
+  dial_timeout = "200ms"
+EOF
+  local f n=0
+  while IFS= read -r f; do
+    # 只处理有 server 行的标准文件; 已含本节点 Spegel 的不重复注入
+    grep -q '^server *=' "$f" || continue
+    grep -q "$NODE_IP:$port" "$f" && continue
+    # sed r: 在(唯一的)server 行之后插入整块; 不依赖 GNU awk 的多行 -v
+    sed "/^server *=/r $block" "$f" > "$f.tmp" && mv -f "$f.tmp" "$f"
+    n=$(( n + 1 ))
+  done < <(find /etc/containerd/certs.d -mindepth 2 -maxdepth 2 -name hosts.toml -not -path '*/_backup/*')
+  mkdir -p /etc/containerd/certs.d/_default
+  tail -n +2 "$block" > /etc/containerd/certs.d/_default/hosts.toml
+  rm -f "$block"
+  log_info "Spegel P2P 已注入 $n 个 hosts.toml + _default(http://$NODE_IP:$port, 先 P2P 再镜像站再回源)"
 }
 
 # --- 5. containerd 代理(可选, 仅影响镜像拉取) ---------------------------------------

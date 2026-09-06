@@ -321,7 +321,12 @@ verify_cilium_values() { [[ -s $VALUES_FILE ]] && grep -q 'kubeProxyReplacement:
 cilium_desired_fingerprint() {
   local values_sha
   values_sha=$(sha256sum "$VALUES_FILE" | awk '{print $1}')
-  printf 'cilium=%s\nvalues=%s\n' "$CILIUM_V" "$values_sha" \
+  # LB-IPAM/L2 CR 不在 Helm values 里；不把它们纳入指纹，改池后 l2.done 会错误保留，
+  # 60 阶段看似成功但集群仍用旧池(2026-09-04 机房适配深查发现)。Gateway 固定 VIP 也放进来，
+  # 让改入口地址时至少重跑 L2/连通性步骤并在日志里显式暴露变化。
+  printf 'cilium=%s\nvalues=%s\nl2=%s\npool=%s-%s\ngateway=%s\n' \
+    "$CILIUM_V" "$values_sha" "$CILIUM_ENABLE_L2_ANNOUNCEMENTS" \
+    "$CILIUM_LB_POOL_START" "$CILIUM_LB_POOL_STOP" "$CILIUM_GATEWAY_LB_IP" \
     | sha256sum | awk '{print $1}'
 }
 
@@ -490,7 +495,16 @@ verify_cilium_ready() {
 # --- 7. L2 通告 + LoadBalancer IP 池 ------------------------------------------------------
 apply_l2_policy() {
   if [[ $CILIUM_ENABLE_L2_ANNOUNCEMENTS != true ]]; then
-    log_info "未启用 L2 通告, 跳过"
+    # 本安装器把 IPPool 与 L2Policy 视为同一个能力。显式关闭就清理旧 CR，不能只跳过，
+    # 否则 values 指纹虽然变了，历史 VIP 仍会继续分配/通告。
+    # CRD 不存在(从未启用过)是合法情况; CRD 存在时删除失败必须暴露, 不能吞成"已清理"。
+    if kctl get crd ciliuml2announcementpolicies.cilium.io >/dev/null 2>&1; then
+      kctl delete ciliuml2announcementpolicies.cilium.io default-l2 --ignore-not-found
+    fi
+    if kctl get crd ciliumloadbalancerippools.cilium.io >/dev/null 2>&1; then
+      kctl delete ciliumloadbalancerippools.cilium.io gateway-pool default-pool --ignore-not-found
+    fi
+    log_info "L2/LB-IPAM 已关闭, 旧 default-l2/gateway-pool/default-pool 已清理"
     return 0
   fi
   wait_for "CiliumLoadBalancerIPPool CRD 注册" 120 kctl get crd ciliumloadbalancerippools.cilium.io
@@ -509,6 +523,24 @@ apply_l2_policy() {
   l2_api=$(pick_served_api ciliuml2announcementpolicies.cilium.io)
 
   cat > "$L2_FILE" <<EOF
+# 共享 HTTP Gateway 专属 /32 池：组件在 80 阶段按依赖分层并行安装，Consul 或独立 L4 Gateway
+# 可能先创建 LoadBalancer Service。不给共享 Gateway 独占地址就存在固定 VIP 被提前分走的竞态。
+apiVersion: cilium.io/$pool_api
+kind: CiliumLoadBalancerIPPool
+metadata:
+  name: gateway-pool
+spec:
+  blocks:
+    - start: "$CILIUM_GATEWAY_LB_IP"
+      stop: "$CILIUM_GATEWAY_LB_IP"
+  # Cilium 为 Gateway default/cilium-gateway 生成的 Service 名固定为 cilium-gateway-cilium-gateway。
+  # 使用 LB-IPAM 特殊 selector 字段匹配 Service 元数据，不依赖实现生成的普通 label。
+  serviceSelector:
+    matchLabels:
+      "io.kubernetes.service.namespace": "default"
+      "io.kubernetes.service.name": "cilium-gateway-cilium-gateway"
+---
+# 其它 LoadBalancer Service 的默认池（Consul、Postgres/Dragonfly 独立 Gateway、可选 Kafka 等）。
 apiVersion: cilium.io/$pool_api
 kind: CiliumLoadBalancerIPPool
 metadata:
@@ -518,6 +550,14 @@ spec:
   blocks:
     - start: "$CILIUM_LB_POOL_START"
       stop: "$CILIUM_LB_POOL_STOP"
+  # 共享 Gateway 的 Service 只能落在 gateway-pool: 无 selector 的池会匹配所有 Service, 一旦
+  # 固定 IP 请求注解丢失(如 infrastructure.annotations 覆盖), 它就会从这里拿到一个非 .240 地址而
+  # Gateway 仍显示 Programmed=True。NotIn 按名字排除(该名字在任何 namespace 都不该进本池)。
+  serviceSelector:
+    matchExpressions:
+      - key: io.kubernetes.service.name
+        operator: NotIn
+        values: [cilium-gateway-cilium-gateway]
 ---
 apiVersion: cilium.io/$l2_api
 kind: CiliumL2AnnouncementPolicy
@@ -530,10 +570,45 @@ spec:
     - ^eth.*
 EOF
   kctl apply -f "$L2_FILE"
+  # apply 成功只是写入了期望; 等 operator 在当前 generation 上给出 PoolConflict 结论再判定成功,
+  # 否则两池重叠/与旧池冲突这类问题会被"apply 通过"掩盖。
+  wait_for "LB-IPAM 池调和(PoolConflict 条件)" 120 l2_pools_reconciled
 }
+
+# 两个池都已被 operator 在当前 generation 上评估(结论好坏由 verify_l2_policy 判定)
+l2_pools_reconciled() {
+  local pool json
+  for pool in gateway-pool default-pool; do
+    json=$(kctl get ciliumloadbalancerippools.cilium.io "$pool" -o json 2>/dev/null) || return 1
+    jq -e '
+      ([.status.conditions[]? | select(.type == "cilium.io/PoolConflict")] | last) as $c
+      | $c != null and ($c.observedGeneration // -1) == .metadata.generation
+    ' <<<"$json" >/dev/null || return 1
+  done
+}
+
 verify_l2_policy() {
-  [[ $CILIUM_ENABLE_L2_ANNOUNCEMENTS != true ]] \
-    || kctl get ciliumloadbalancerippools.cilium.io default-pool >/dev/null
+  if [[ $CILIUM_ENABLE_L2_ANNOUNCEMENTS != true ]]; then
+    ! kctl get ciliuml2announcementpolicies.cilium.io default-l2 >/dev/null 2>&1 \
+      && ! kctl get ciliumloadbalancerippools.cilium.io gateway-pool >/dev/null 2>&1 \
+      && ! kctl get ciliumloadbalancerippools.cilium.io default-pool >/dev/null 2>&1
+    return
+  fi
+  # 一次读取完整对象, 用 lib/common.sh 的纯校验(blocks 全部段/selector/disabled/PoolConflict@generation)
+  local gw_json def_json l2_json problems
+  gw_json=$(kctl get ciliumloadbalancerippools.cilium.io gateway-pool -o json 2>/dev/null) || return 1
+  def_json=$(kctl get ciliumloadbalancerippools.cilium.io default-pool -o json 2>/dev/null) || return 1
+  l2_json=$(kctl get ciliuml2announcementpolicies.cilium.io default-l2 -o json 2>/dev/null) || return 1
+  problems=$(
+    lb_pool_problems "$gw_json" "$CILIUM_GATEWAY_LB_IP" "$CILIUM_GATEWAY_LB_IP" default cilium-gateway-cilium-gateway
+    lb_pool_problems "$def_json" "$CILIUM_LB_POOL_START" "$CILIUM_LB_POOL_STOP" exclude=cilium-gateway-cilium-gateway
+    l2_policy_problems "$l2_json"
+  )
+  if [[ -n $problems ]]; then
+    log_error "LB-IPAM/L2 校验未通过:"$'\n'"$problems"
+    return 1
+  fi
+  log_info "LB-IPAM/L2 CR 校验通过(gateway-pool=$CILIUM_GATEWAY_LB_IP/32 独占, default-pool=$CILIUM_LB_POOL_START-$CILIUM_LB_POOL_STOP, 两池 PoolConflict=False); 网络可达性由 90 阶段冒烟与 newt 实测判定"
 }
 
 # --- 8. 全量连通性测试(可选, 约 10 分钟) ----------------------------------------------------
@@ -556,9 +631,12 @@ main() {
   ensure_artifacts
   # values 是 config.env + 内核探测的纯函数，必须始终重新生成；指纹步骤也必须每次比较。
   # 只有期望状态变化时才使 preflight/helm 等下游步骤失效，不重置 IPsec 步骤。
+  # l2 步骤是幂等 apply + 完整对象校验, 每次重跑都重新执行: 指纹只覆盖 config.env 的变化,
+  # 集群里被人工改过/删掉的池与 L2Policy(live 漂移)只能靠这里重新校验发现。
   rm -f "$STATE_DIR/state/60-cilium:values.done" \
         "$STATE_DIR/state/60-cilium:fingerprint.done" \
-        "$STATE_DIR/state/60-cilium:mapguard.done"
+        "$STATE_DIR/state/60-cilium:mapguard.done" \
+        "$STATE_DIR/state/60-cilium:l2.done"
   add_step cli         "安装 cilium CLI $CILIUM_CLI_V 与 helm $HELM_V" install_cli_tools             verify_cli_tools
   add_step gwcrd       "Gateway API CRD $GATEWAY_API_V"                install_gateway_api_crds       verify_gateway_api_crds
   add_step values      "生成 Cilium values(内核能力自适应)"            gen_cilium_values             verify_cilium_values

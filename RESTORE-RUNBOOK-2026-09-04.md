@@ -12,12 +12,12 @@ Pigsty 收割见 [`PIGSTY-HARVEST-2026-09-03.md`](PIGSTY-HARVEST-2026-09-03.md)�
 | 裸机 → 三节点集群 | ✅ 可一键 | `bootstrap/start.sh` + **新增 `bootstrap/config.hosting.env`**（机房版完整配置，`cp` 覆盖 `config.env` 即用；差异全部标 `# 机房:`） |
 | 集群 → 组件层 | ✅ | 80 阶段；观测/告警/运维保障 7 个新组件已入库（2026-09-03） |
 | 存储 | ⚠️ 只能回环文件 | 三台根 LV 已吃满 VG、机房不能加盘；`LVM_ALLOW_LOOPBACK=true` 60G/台，70 阶段会弹一次确认 |
-| LoadBalancer / 网关地址 | ⚠️ 无 | 共享 VLAN 关闭 L2；Gateway 拿不到地址，`gateway` 组件只告警。对外走 newt（Pangolin），对内 `kubectl port-forward` / ssh 隧道。机房给专用 VIP 后填 `CILIUM_LB_POOL_*` 并开 L2 |
+| LoadBalancer / 网关地址 | ✅ 集群内固定 VIP | L2 + LB-IPAM 开启；`gateway-pool=.240/32` 专属匹配共享 Gateway，`default-pool=.241-.249` 给其它 LB，避免并行安装抢 VIP。newt/Pangolin target 用 `.240:443`；机房给专属 `.21.x` 后可切成 LAN 直达池 |
 | 数据库数据 | ✅ 已备份 | node3 PG 的 `ecommerce` / `bugsink` / `openfga` 三库逻辑备份 + 角色（§4）；PGDATA 冷拷贝与 pgbackrest 仓库作第二份保险 |
 | 凭据延续 | ⚠️ 需人工 | 集群凭据在 node101 `/var/lib/k8s-installer/creds/`（node101 当前关机）；ntfy / newt / OTel token / Pigsty CA 已收割到 `raw/_secrets/`（§3） |
 | node3 上非 Pigsty 的负载 | ⚠️ 需拍板 | LyraPass 三容器、ecommerce-gatus、host-watchdog、CDC(Debezium+ES)、Kafka、Silo（§5） |
 | 应用层（ecommerce 服务 / ArgoCD） | 📎 不在本仓 | ecommerce 仓 TODO「集群重建后 GitOps 重新接线」；`config.env` 重建须知第 3 条 |
-| 90 阶段验收 | ✅ | OTel 冒烟已支持 VL/VT 查回；LB 冒烟按机房版关闭 |
+| 90 阶段验收 | ✅ | OTel 冒烟支持 VL/VT 查回；LB 冒烟机房版开启，验证 IPAM 分配、BPF Service 与 L2 Lease |
 
 ## 1. node3 重装前最终清单
 
@@ -48,8 +48,8 @@ Pigsty 收割见 [`PIGSTY-HARVEST-2026-09-03.md`](PIGSTY-HARVEST-2026-09-03.md)�
 
 ### 1.3 重装后必须手工复原的系统项（安装器不管）
 
-1. **sshd**：node3 现在监听 `Port 22` 与 `Port 5837`；机房端口映射 `44163` 指向其中之一〔待确认是 5837〕。
-   重装后先在 `/etc/ssh/sshd_config.d/` 加回端口，否则失联。
+1. **sshd**：2026-09-04 从现有 SSH 会话的服务端 socket 实测，公网 `211.144.221.229:44163`
+   映射到 `10.10.21.163:22`；不是 5837。重装后默认 22/tcp 即可，**不要**复制 Pigsty 额外开的 5837。
 2. **authorized_keys**：3 把公钥（`rcc@vip.qq.com` ED25519、`root@jump` RSA、`pigsty-admin@node3`）。
    `root@jump` 说明有一台跳板机能 root 登录 node3——重装后要不要保留，你定。
 3. **静态地址**：`10.10.21.163/24`，网关 `.254`，DNS `.219/.222`（`raw/_extra/etc/netplan/01-netcfg.yaml`）。
@@ -65,17 +65,25 @@ Pigsty 收割见 [`PIGSTY-HARVEST-2026-09-03.md`](PIGSTY-HARVEST-2026-09-03.md)�
 ls -la archive/pigsty-node3-2026-09-03/raw/_data/*.pgdump
 
 # ---- Day 1: 三台系统准备(node3 重装后) ----
-# 每台: apt 源、内核、sshd 端口(仅 node3)、确认 hostname 是 node4/node5/node3
+# 每台: apt 源、内核、确认 hostname 是 node4/node5/node3；node3 默认 sshd 22 即匹配公网 44163 映射
 # node101(内网控制面, 需开机): 带走集群凭据
 rsync -a root@node101:/var/lib/k8s-installer/creds/ ~/k8s-creds-backup/
 
 # ---- Day 1: node4 控制面 ----
 rsync -a --delete --exclude archive/pigsty-node3-2026-09-03/raw ~/lens077/kubernetes/ node4:/root/kubernetes/
 ssh node4 'cp /root/kubernetes/bootstrap/config.hosting.env /root/kubernetes/bootstrap/config.env'
+ssh node4 'mkdir -p /var/lib/k8s-installer/creds && chmod 700 /var/lib/k8s-installer/creds'
 rsync -a ~/k8s-creds-backup/ node4:/var/lib/k8s-installer/creds/        # 沿用 dragonfly/grafana 等密码
 scp archive/pigsty-node3-2026-09-03/raw/_secrets/etc/infra-alerts/ntfy.env node4:/var/lib/k8s-installer/creds/ntfy.env
-ssh -t node4 'cd /root/kubernetes/bootstrap && sudo bash start.sh'      # 交互; 70 阶段回答"用回环文件兜底"
-#   80 阶段按 config.hosting.env 选组件(可观测层全开, loki/jaeger/fluent-bit 关, CNPG 开)
+# newt 组件要求 creds/newt-{id,secret}; 从收割的 config.json 拆出(文件权限必须 600)
+jq -r .id archive/pigsty-node3-2026-09-03/raw/_secrets/opt/newt/config.json > /tmp/newt-id
+jq -r .secret archive/pigsty-node3-2026-09-03/raw/_secrets/opt/newt/config.json > /tmp/newt-secret
+scp /tmp/newt-id /tmp/newt-secret node4:/var/lib/k8s-installer/creds/
+ssh node4 'chmod 600 /var/lib/k8s-installer/creds/newt-{id,secret}'
+rm -f /tmp/newt-id /tmp/newt-secret
+# 控制面只跑到 70-storage: 组件(31 个)必须等 worker 加入后再装, 否则全部挤进 node4 一台。
+ssh node4 'cd /root/kubernetes/bootstrap && bash start.sh --dry-run --to 70-storage'   # 先看阶段列表(无需 root)
+ssh -t node4 'cd /root/kubernetes/bootstrap && sudo bash start.sh --to 70-storage'     # 交互; 70 阶段回答"用回环文件兜底"
 
 # ---- Day 1: node5 / node3 加入 ----
 ssh node4 'kubeadm token create --print-join-command'
@@ -84,7 +92,19 @@ for n in node5 node3; do
   ssh $n 'cp /root/kubernetes/bootstrap/config.hosting.env /root/kubernetes/bootstrap/config.env'
   ssh -t $n 'cd /root/kubernetes/bootstrap && sudo bash start.sh --worker'   # 50 阶段粘贴 join 命令; 70 阶段回环确认
 done
-ssh node4 'sed -i "s/^CILIUM_OPERATOR_REPLICAS=\"1\"/CILIUM_OPERATOR_REPLICAS=\"2\"/" /root/kubernetes/bootstrap/config.env && cd /root/kubernetes/bootstrap && sudo bash start.sh --only 60-cilium && sudo bash start.sh --verify'
+ssh node4 'kubectl get nodes -o wide'                                        # 三台 Ready 后再继续
+
+# ---- Day 1: node4 收尾: operator 扩 2 副本 → 组件 → 验收 ----
+ssh node4 'sed -i "s/^CILIUM_OPERATOR_REPLICAS=\"1\"/CILIUM_OPERATOR_REPLICAS=\"2\"/" /root/kubernetes/bootstrap/config.env && cd /root/kubernetes/bootstrap && sudo bash start.sh --only 60-cilium'
+#   values 指纹变化 → 自动 preflight + helm upgrade; l2 步骤每次重跑都重新校验两个池(PoolConflict@当前 generation)
+#   config.hosting.env 已设 RUN_CILIUM_CONNECTIVITY_TEST=true, 三节点齐后连通性测试才有意义
+ssh -t node4 'cd /root/kubernetes/bootstrap && sudo bash start.sh --from 80-components'   # = 80-components + 90-verify
+#   80 阶段按 config.hosting.env 选组件(可观测层全开, loki/jaeger/fluent-bit 关, CNPG 开)
+#   90 阶段验收共享 Gateway: 当前 generation Programmed=True, 生成的 Service 请求注解与实际分配都是 .240,
+#   IPAMRequestSatisfied=True; LB 冒烟只证明"分配 + eBPF 编程", L2 租约/节点自访是附加观测。
+# 90 通过 ≠ 公网路径通: newt Pod → VIP:443 → HTTPRoute 必须从 newt Pod 内实测(要看到业务状态码, 不是 404/502)
+ssh node4 'kubectl -n default get gateway cilium-gateway -o wide; kubectl -n default get svc cilium-gateway-cilium-gateway -o wide'
+ssh node4 'kubectl -n pangolin exec deploy/newt -- wget -S -qO- --no-check-certificate --header="Host: grafana.dev.test" https://10.10.31.240/api/health'
 
 # ---- Day 2: 数据与接线 ----
 # CNPG 恢复(§4) → 观测链路验证(OBSERVABILITY-INTEGRATION §3) → newt 站点与 Pangolin 资源改指向(§3)
@@ -95,13 +115,41 @@ ssh node4 'sed -i "s/^CILIUM_OPERATOR_REPLICAS=\"1\"/CILIUM_OPERATOR_REPLICAS=\"
 本机访问：`ssh -L 6443:10.10.21.161:6443 node4`，kubeconfig 的 server 改 `https://127.0.0.1:6443`
 （`config.hosting.env` 的 SAN 已含 `127.0.0.1`/`localhost`/`211.144.221.229`）。
 
+### 2.1 执行记录：2026-09-06 Day 1（node4 + node5，node3 未动）
+
+按上面的顺序在两台空机上跑完，全部非交互（`--yes`，无 TTY → 70 阶段自动回环文件）：
+
+| 步骤 | 结果 |
+|---|---|
+| node4 `--to 70-storage` | 5 分 22 秒；两池 `PoolConflict=False` |
+| node5 `--worker --to 40-container-runtime` → `--from 50-kubernetes --to 70-storage` | 加入 41 秒；回环 VG 60G |
+| node4 operator=2 `--only 60-cilium` | 指纹变化 → preflight + helm upgrade；operator 2/2 |
+| node4 `--from 80-components` | 三轮才过（见下），最终 31 个组件全 Running |
+| node4 `--verify` | 10/10 通过：Gateway `.240` 当前 generation Programmed、LB 冒烟 `.244`（租约存在，节点自访通）、存储冒烟、OTel 冒烟 metrics→VM / logs→VL / traces→VT 打点回查 |
+| Pod → `https://10.10.31.240` | node4/node5 各起一个 Cilium 管理的非 hostNetwork 探测 Pod：`metrics.dev.test`/`argocd.dev.test` 200 `server=envoy`，未匹配 Host 404，80→443 301，证书 `CN=dev.test / my-global-root-ca` |
+
+**本次没做**：`ADDON_NEWT` 临时置 `false`——node3 的 newt 仍在线承载 lyrapass 等生产服务，集群里用同一站点 ID 会互踢。
+正式的 newt Pod 实测等站点切换方案定下（面板另建站点，或先下线 node3 的 newt）后，把 `ADDON_NEWT` 改回 `true`、`bash components/newt/install.sh`，再跑上面第 107 行那条。
+
+**过程中发现并已修进仓库的安装器问题**（都已在两台机器上验证）：
+
+1. `50-kubernetes` 把 kubelet 1.36 deb 自带的 `/etc/kubernetes/manifests/.kubelet-keep` 当成残留集群 → 判据改为存在 `*.yaml`。
+2. `00-preflight` 在 `--to 40-container-runtime` 这种不含 50 的范围里仍要求 worker 的 `JOIN_*` → `start.sh` 导出 `K8S_RUN_LIST`，只在范围含 50 时要求。
+3. **Spegel 接管 certs.d**：`containerdMirrorAdd=true` 把 13 个 hosts.toml 挪进 `_backup/`，未命中回退"上游直连"，机房 docker.io/registry.k8s.io/quay.io 直连不通（DNS 污染 + 超时）→ 80 阶段大面积 `ImagePullBackOff`。改为 Spegel 不接管，40 阶段在每个 hosts.toml 里先注入本节点 Spegel（`SPEGEL_MIRROR_PORT`）再镜像站再回源；实测 node4 首拉 14s、node5 P2P 命中 2s。
+4. prometheus-community/autoscaler/vector/openbao/open-telemetry 的 chart 包托管在 github.com releases，直连超时 → `helm_install_component` 从本地仓库索引解析 tgz URL，github.com 的经 `GITHUB_PROXY` 缓存到 `$CACHE_DIR/charts/` 再装（失败回退原路径）。
+5. `ALERTMANAGER_STORAGE_SIZE=200Mi` 小于 xfs 最小 300MB，mkfs 失败 → 512Mi。
+6. bugsink 镜像 uid 14237，xfs PVC 挂上是 root 755 → 加 `fsGroup`。
+7. `cilium connectivity test` 的客户端镜像在内核 7.0 上 `nslookup` 崩溃（exit 139，`kill: Permission denied`），DNS 预检就中止，一条数据面用例都没跑；已手工清理它遗留的三个命名空间。这是测试镜像的问题，需换更新的 cilium-cli/测试镜像再验，不能当成数据面证据。
+
+**仍待处理**：node3 重装与加入；newt 站点切换；机房对 `10.10.31.0/24` 的答复；两台机器有 GRUB 持久化变更建议空闲时 reboot 一次；`~/k8s-creds-backup`（node101 关机）未带入，组件密码全部新生成，需按 `config.env` 重建须知同步 Config Center。
+
 ## 3. 凭据与外部系统（不在仓库，必须带过去）
 
 | 项 | 来源 | 去向 |
 |---|---|---|
 | 集群组件密码（dragonfly、grafana、meilisearch、consul…） | node101 `/var/lib/k8s-installer/creds/` | node4 同路径；不带则全部重新生成，且要按 `config.env` 重建须知第 1 条同步 Config Center |
 | ntfy | `raw/_secrets/etc/infra-alerts/ntfy.env`（也在 gatus/secrets） | node4 `creds/ntfy.env`；alert-bridge 与 gatus 共用 |
-| newt 站点 | `raw/_secrets/opt/newt/config.json`（node3 站点） | 集群 `newt` 组件可直接复用这份站点凭据（node3 下线后该站点由集群接管）；Pangolin 面板里 `node3-*.apikv.com`、`bugsink/grafana/metrics.apikv.com` 等资源的目标改成集群内 Service |
+| newt 站点 | `raw/_secrets/opt/newt/config.json`（node3 站点） | 拆成 node4 `creds/newt-{id,secret}`；旧 node3 进程必须先下线再由集群接管，避免同 ID 互踢。HTTPRoute 资源 target 统一改 `https://10.10.31.240:443`，节点资源按需 target `.161/.162/.163:<port>` |
 | OTel 公网入口 Bearer token | `raw/_secrets/etc/otelcol/otel-tokens` | ecommerce 前端/SDK 继续用；集群 collector 侧鉴权待补（OBSERVABILITY-INTEGRATION §6） |
 | Vault AppRole（ESO） | 组件 README | 重装后重新注入（`config.env` 重建须知第 1 条） |
 | LyraPass cloud 的 env | `raw/_secrets/data/lyrapass-cloud/env` + `docker-inspect-custom-containers.json` | 见 §5 |
@@ -146,7 +194,8 @@ kubectl -n postgresql exec pg-main-1 -- psql -U postgres -d ecommerce -Atc \
 ## 6. 仍缺的代码与决策
 
 - 多环境配置加载：仍靠 `cp config.hosting.env config.env`；内网版改公共键后要同步（文件头有说明）。
-- LB 池与 L2 解耦（HOSTING §6.2）：拿到机房 VIP 前无影响。
+- L2/LB-IPAM 已按机房版修正并固定 Gateway VIP；若未来需要「有池但不建 L2Policy」才再拆开开关。
+- 共享 VLAN 允许伪造 Pod CIDR 源地址，跨节点流量当前明文；生产前评估现有 IPsec 开关或增加 WireGuard。
 - `victoria-logs` 的 `-retention.maxDiskSpaceUsageBytes` / `-insert.maxLineSizeBytes` 未加（回环卷撑满会拒写）。
 - `vector` 对 CNPG JSON 日志的解析分支未加（慢查询/错误码字段化，PIGSTY-HARVEST §5.4）。
 - 公网 OTLP 入口的 Bearer 鉴权未迁入 opentelemetry 组件。

@@ -14,6 +14,10 @@ service:
 
 spegel:
   containerdRegistryConfigPath: /etc/containerd/certs.d
-  containerdMirrorAdd: true
+  # 不让 Spegel 接管 certs.d: 它会把全部 hosts.toml 挪进 _backup/、只留指向 P2P 的 _default，
+  # 未命中就"上游直连"——机房 docker.io/registry.k8s.io/quay.io 直连不通(2026-09-06 实测 80 阶段
+  # 大面积 ImagePullBackOff)。certs.d 由 bootstrap 40 阶段独占: 每个 hosts.toml 先本节点 Spegel、
+  # 再国内镜像站、最后回源(config.env: SPEGEL_MIRROR_PORT)。
+  containerdMirrorAdd: false
   # 标签仍由上游解析，Spegel 只按 digest 命中本地缓存，避免冷镜像被误报为 NotFound。
   resolveTags: false

@@ -151,8 +151,8 @@ Grafana 数据源由 `grafana/install.sh` 按集群实际后端预置，uid 固�
 ## 6. 已知缺口
 
 - 集群内 Pod 解析 `*.${CLUSTER_DOMAIN}`：Bugsink 的 `ALLOWED_HOSTS` 只认 `BASE_URL` 域名，SDK 从 Pod 内
-  直连 Service 会 400。要么 CoreDNS 加一条 rewrite 把 `*.dev.test` 指到网关地址，要么 SDK 用公网域名。
-  机房环境关闭 L2 通告后网关没有地址，这条先挂着（见 `HOSTING-READINESS-2026-09-03.md` §6.2）。
+  直连 Service 会 400。机房版 Gateway 已固定 `10.10.31.240`，可在 CoreDNS 加 rewrite/hosts 把
+  `*.dev.test` 指到该 VIP，或让 SDK 用公网域名；VIP 不随重建漂移。
 - 公网 OTLP 入口的 Bearer 鉴权（node3 时代 otelcol 的 `bearertokenauth`）尚未迁入 opentelemetry 组件。
 - healthchecks 的 Prometheus 指标需要项目 API key，暂未接入 VM；先靠 gatus 探它的 `/api/v3/status/`。
 - Pigsty 的 29 个 PGSQL 仪表盘依赖 pg_exporter 指标名，CNPG 自带指标不兼容；可选方案见

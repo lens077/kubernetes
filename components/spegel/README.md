@@ -8,6 +8,14 @@ Spegel 在节点间共享 containerd 已缓存的 OCI layer，作为上游 regis
 
 Spegel 保留上游 registry 回退。某个节点没有 layer、P2P 暂时不可达或 Service 没有本地 Ready endpoint 时，containerd 仍可尝试其他 mirror 与上游 registry。
 
+## certs.d 归 bootstrap 40 阶段，Spegel 不接管
+
+`spegel.containerdMirrorAdd` 为 `true` 时，Spegel 会把 `/etc/containerd/certs.d` 里已有的全部 `hosts.toml` 挪进 `_backup/`，只留一个指向本节点 P2P 的 `_default/hosts.toml`；P2P 未命中就回退**上游直连**。机房（2026-09-06）直连 docker.io / registry.k8s.io / quay.io 不通（DNS 污染 + 超时），80 阶段因此大面积 `ImagePullBackOff`。
+
+现在固定 `containerdMirrorAdd: false`，由 `bootstrap/scripts/40-container-runtime.sh` 独占 certs.d：每个 `<registry>/hosts.toml` 在 `server` 行后先注入 `http://<本节点IP>:${SPEGEL_MIRROR_PORT}`（只 `pull`，`dial_timeout=200ms`），再是仓库自带的镜像站列表，最后回源；另写一个只含 Spegel 的 `_default/hosts.toml` 给未列出的 registry。`hosts.toml` 每次拉取时读取，改动不需要重启 containerd。实测 node4 首拉 `nats:2.14.5-alpine` 14 秒（镜像站），node5 同镜像 2 秒且 `spegel_mirror_requests_total{cache="hit"}` 递增。
+
+改了 `files/certs.d/` 或 `SPEGEL_MIRROR_PORT` 后，在每台节点重跑 `sudo bash start.sh --reset-state 40-container-runtime && sudo bash start.sh --only 40-container-runtime`（会重启 containerd，运行中的容器不受影响）。
+
 ## PreferSameNode
 
 Spegel v0.7.4 推荐的最小 values：

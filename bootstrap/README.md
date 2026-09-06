@@ -21,8 +21,12 @@ kubernetes/bootstrap/
 │   ├── 80-components.sh        # 组件编排器(扫描 ../components/*/component.env,
 │   │                           #   拓扑排序后并行调用各 install.sh; 不含任何 values)
 │   └── 90-verify.sh            # 全局验收+冒烟测试+报告
-├── tests/
-│   └── test-node-shutdown.sh   # 节点关机预算与终态 Pod GC 一致性回归
+├── tests/                      # 离线回归(不需要 root/集群): bash tests/<名>.sh
+│   ├── test-node-shutdown.sh   #   节点关机预算与终态 Pod GC 一致性
+│   ├── test-stage-range.sh     #   start.sh --from/--to/--only/--worker/--dry-run 阶段范围矩阵
+│   ├── test-lb-config.sh       #   preflight 对 Gateway VIP/default-pool/L2 开关的合法性判定
+│   ├── test-l2-policy.sh       #   LB-IPAM 池/L2Policy/共享 Gateway 状态校验(喂 JSON)
+│   └── test-state-fingerprint.sh #  Cilium 期望状态指纹与下游步骤失效
 └── files/                      # 运行时生成: kubeadm.yml / cilium-values.yaml / 示例
 ```
 
@@ -43,10 +47,34 @@ sudo bash start.sh
 #    真正无终端(systemd/cron)才回退显式配置(盘符 + 对应 WIPE_OK=true), 否则跳过/兜底
 sudo bash start.sh --yes
 ```
-重新生成token
+重新生成 token：
 ```bash
 kubeadm token create --print-join-command
 ```
+
+### 机房 node4/node5/node3
+
+完整手顺见仓库根目录 [`RESTORE-RUNBOOK-2026-09-04.md`](../RESTORE-RUNBOOK-2026-09-04.md)。
+三台使用同一个完整配置副本：
+
+```bash
+cp config.hosting.env config.env
+# node4: control-plane, 先只到存储阶段(不装组件: 31 个组件不能挤进单节点)
+sudo bash start.sh --to 70-storage
+# node5/node3: worker（50 阶段粘贴 node4 的 join 命令）
+sudo bash start.sh --worker
+# node4: 三节点齐后 operator 扩到 2 副本(values 指纹变化 → 自动 helm upgrade), 再装组件与验收
+sed -i 's/^CILIUM_OPERATOR_REPLICAS="1"/CILIUM_OPERATOR_REPLICAS="2"/' config.env
+sudo bash start.sh --only 60-cilium
+sudo bash start.sh --from 80-components        # = 80-components + 90-verify
+```
+
+任何范围都可以先 `bash start.sh --dry-run <同样参数>` 看将执行的阶段（不需要 root，不写系统）。
+
+机房版仍启用 Cilium L2/LB-IPAM：共享 Gateway 独占 `10.10.31.240/32`，其它 LB 用 `.241-.249`，
+`default/cilium-gateway` 固定 `.240`。公网 HTTP target 用 `https://10.10.31.240:443`；
+节点服务可由 newt target `10.10.21.161/.162/.163:<port>` 直接暴露。原理、验收层次与已知边界见 [`CILIUM.md`](CILIUM.md) §8.1
+与 [`CILIUM-UPSTREAM-VERIFICATION.md`](CILIUM-UPSTREAM-VERIFICATION.md)。
 
 ### 工作负载
 自动跳过 etcd 盘/Cilium 安装/helm/全部组件/重型验收
@@ -77,6 +105,8 @@ bash start.sh --worker --yes
 |---|---|
 | `sudo bash start.sh --list` | 查看阶段与已完成步骤数 |
 | `sudo bash start.sh --from 60-cilium` | 从指定阶段开始 |
+| `sudo bash start.sh --to 70-storage` | 执行到指定阶段为止（含）；可与 `--from` 组合，不能与 `--only` 同用 |
+| `bash start.sh --dry-run [范围参数]` | 只打印将执行的阶段（stdout 每行 `id<TAB>标题`），参数错误退出码 2；不需要 root |
 | `sudo bash start.sh --only 90-verify` / `--verify` | 只跑某阶段/验收 |
 | `sudo bash start.sh --reset-state 80-components` | 清某阶段状态(如重新选组件) |
 | `sudo bash start.sh --only 60-cilium` | 重生 Cilium values；版本/values 指纹变化时自动执行 preflight 与 Helm upgrade |
@@ -179,10 +209,10 @@ ClusterConfiguration 字段保持不变；中途失败会同时回滚运行清�
 找回已经被 PodGC 删除的 Pod、容器日志或现场状态。需要更长排障窗口时，提高正整数阈值；不要
 把 `shutdownGracePeriod` 改为 `0s`，也不要把 PodGC 阈值设为 `0`。
 
-回归检查：
+回归检查（全部离线，不需要 root）：
 
 ```bash
-bash tests/test-node-shutdown.sh
+for t in tests/*.sh; do bash "$t"; done
 ```
 
 ## etcd 维护(45 阶段 + defrag 定时器)

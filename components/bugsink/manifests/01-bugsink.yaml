@@ -52,6 +52,12 @@ spec:
       securityContext:
         seccompProfile:
           type: RuntimeDefault
+        # 镜像以 uid/gid 14237(bugsink) 运行; PVC(xfs) 挂上来是 root:root 755, 不给 fsGroup 就
+        # "unable to open database file" CrashLoop(2026-09-06 机房实测)。fsGroup 让 kubelet 把卷 chgrp 成组可写。
+        runAsUser: 14237
+        runAsGroup: 14237
+        fsGroup: 14237
+        fsGroupChangePolicy: OnRootMismatch
       containers:
         - name: bugsink
           # node3 上验证过的镜像 digest(bugsink 官方只发 latest 与 digest)

@@ -105,7 +105,7 @@ ns_ensure() { kctl create namespace "$1" --dry-run=client -o yaml | kctl apply -
 render_tpl() {  # render_tpl <模板> <输出> [额外变量名...]
   local src=$1 out=$2; shift 2
   local vars=(SC_NAME SC_FS_TYPE CLUSTER_DOMAIN TIMEZONE NAMESPACE RELEASE HOSTNAME
-              CILIUM_LB_POOL_START CILIUM_LB_POOL_STOP
+              CILIUM_LB_POOL_START CILIUM_LB_POOL_STOP CILIUM_GATEWAY_LB_IP
               # config.env 里各组件的容量/保留期旋钮
               VM_STORAGE_SIZE LOKI_STORAGE_SIZE LOKI_RETENTION GRAFANA_STORAGE_SIZE
               MEILI_STORAGE_SIZE MINIO_STORAGE_SIZE JAEGER_STORAGE_SIZE CONSUL_STORAGE_SIZE
@@ -166,6 +166,45 @@ routes_apply() {  # routes_apply <组件目录>
   rm -rf "$out"
 }
 
+# 不少 helm 仓库(prometheus-community/autoscaler/vector/openbao/open-telemetry...)的 index 把 chart 包
+# 指到 github.com/<org>/<repo>/releases/download/...; 机房直连 github.com 极不稳定(2026-09-06 五个组件
+# 同时超时)。安装器自己的工件下载走 GITHUB_PROXY 前缀, 这里让 chart 包也走同一条路:
+# 从本地 helm 仓库索引解析出 tgz URL, 是 github.com 且配置了 GITHUB_PROXY 就经代理下载到缓存,
+# 再用本地包安装。任一步失败都回退到原来的 repo/chart 方式, 不改变行为。
+# 输出: 可直接交给 helm 的 chart 引用(本地 tgz 路径, 或原样 HELM_CHART)。
+helm_chart_ref_via_github_proxy() {  # helm_chart_ref_via_github_proxy <repo/chart> <version>
+  local chart=$1 version=$2
+  [[ -n ${GITHUB_PROXY:-} && -n $version && $chart == */* && $chart != oci://* ]] || { echo "$chart"; return 0; }
+  local repo=${chart%%/*} name=${chart#*/}
+  local index="${HELM_CACHE_HOME:-$HOME/.cache/helm}/repository/${repo}-index.yaml"
+  [[ -f $index ]] || { echo "$chart"; return 0; }
+  local url
+  url=$(python3 - "$index" "$name" "$version" <<'PY' 2>/dev/null
+import sys, yaml
+index, name, version = sys.argv[1:]
+with open(index, encoding="utf-8") as f:
+    doc = yaml.safe_load(f) or {}
+for entry in (doc.get("entries") or {}).get(name) or []:
+    if str(entry.get("version")) == version and entry.get("urls"):
+        print(entry["urls"][0]); break
+PY
+  ) || url=""
+  [[ $url == https://github.com/* ]] || { echo "$chart"; return 0; }
+  local out="$CACHE_DIR/charts/${name}-${version}.tgz"
+  mkdir -p "$CACHE_DIR/charts"
+  if [[ ! -s $out ]]; then
+    local proxied; proxied=$(gh_url "$url")
+    if ! retry 3 5 curl -fsSL --connect-timeout 10 --max-time 120 -o "$out.part" "$proxied" >&2; then
+      rm -f "$out.part"
+      log_warn "$name-$version: 经 GITHUB_PROXY 下载 chart 失败, 回退 helm 直连" >&2
+      echo "$chart"; return 0
+    fi
+    mv -f "$out.part" "$out"
+    log_info "$name-$version: chart 已经 GITHUB_PROXY 缓存到 $out" >&2
+  fi
+  echo "$out"
+}
+
 # helm 仓库 + 安装(幂等)。values 走渲染后的临时文件, 不污染仓库工作区。
 helm_install_component() {  # helm_install_component <组件目录> [附加 helm 参数...]
   local dir=$1; shift
@@ -177,7 +216,14 @@ helm_install_component() {  # helm_install_component <组件目录> [附加 helm
     render_tpl "$dir/values.yaml" "$rendered"
     values_arg=(-f "$rendered")
   fi
-  retry 2 10 helm_cmd upgrade --install "${RELEASE:-$ID}" "$HELM_CHART" \
+  # 从附加参数里找 --version, 决定能否走 GITHUB_PROXY 缓存包
+  local version="" i chart_ref
+  for ((i = 1; i <= $#; i++)); do
+    [[ ${!i} == --version ]] && { local j=$(( i + 1 )); version=${!j:-}; break; }
+    [[ ${!i} == --version=* ]] && { version=${!i#--version=}; break; }
+  done
+  chart_ref=$(helm_chart_ref_via_github_proxy "$HELM_CHART" "$version")
+  retry 2 10 helm_cmd upgrade --install "${RELEASE:-$ID}" "$chart_ref" \
     --namespace "$NAMESPACE" --create-namespace "${values_arg[@]}" "$@"
   [[ -n $rendered ]] && rm -f "$rendered"
   return 0

@@ -19,7 +19,7 @@
 - Gateway API v1.6.1
 - `externalTrafficPolicy: Cluster`
 - BIG TCP 关闭
-- IPsec 关闭；当前节点位于同一可信虚拟化与 LAN 环境
+- IPsec 关闭；内网 PD 环境是可信 LAN。机房版位于多租户共享 VLAN，当前保持关闭以先复原基线，安全边界见 8.1 节
 - Gateway API ALPN 关闭；当前没有 GRPCRoute
 - `ciliumEndpointSlice.enabled=true`，暂时保留 CES
 
@@ -111,7 +111,9 @@ ssh node3 "curl -fsSG http://127.0.0.1:8428/api/v1/query \
 | `CILIUM_ENVOY_CPU_REQUEST` / `MEMORY_REQUEST` | `50m` / `128Mi` | 结合 Gateway/L7 流量、Envoy 重启和延迟调整；不设置严格 memory limit。 |
 | `CILIUM_OPERATOR_REPLICAS` | `2` | 当前有 3 个可调度节点，chart 自带跨节点 anti-affinity；两个副本可正常调度。PDB 保证至少一个可用。 |
 | `CILIUM_K8S_CLIENT_QPS` / `BURST` | `50` / `100` | 观察 API limiter 结果、L2 Lease 续期、Service 变更率和 CES 同步。没有限流证据时不要继续放大。 |
-| `CILIUM_LB_ACCELERATION` | `disabled` | 当前 virtio 网卡的 `bpftool net show` 没有 XDP 程序，native XDP 返回不支持。换成支持 native XDP 的物理网卡后，先验证驱动能力再改为 `best-effort` 或 `native`。 |
+| `CILIUM_GATEWAY_LB_IP` | 环境相关 | 独立 `gateway-pool` 的唯一地址，只匹配 Cilium 生成的共享 Gateway Service；`spec.addresses` 固定它，Pangolin target 不漂移。 |
+| `CILIUM_LB_POOL_START/STOP` | 环境相关 | 给其它 LB 的 `default-pool`，不得与 Gateway `/32` 重叠，且用 `NotIn` 排除共享 Gateway 的 Service。内网 `.121-.199`；机房 `.241-.249`。未经所有者确认，不要在共享 VLAN 猜空闲地址。 |
+| `CILIUM_LB_ACCELERATION` | `disabled` | 当前 virtio/vmxnet3 的 XDP 未做真实 Service 压测，先保持禁用；换物理网卡或验证 `best-effort` 后再开。 |
 | `CILIUM_HUBBLE_EVENT_BUFFER_CAPACITY` | `4095` | 仅在启用 Hubble 后生效。保持 4 vCPU 节点默认 event queue 规模；只有观测到 lost events 才扩大。 |
 | `CILIUM_BBR`、`CILIUM_NETKIT`、`CILIUM_BIGTCP` | `auto` / `auto` / `false` | 由内核、NIC 与现有 Pod 数据面决定。运行态必须以 `cilium-dbg status`、内核配置和真实吞吐测试验收。 |
 
@@ -346,6 +348,85 @@ control-tower gateway 仍由共享 `cilium-gateway` 的 HTTPRoute 对外，后�
 
 保留的 LoadBalancer 使用 `externalTrafficPolicy: Cluster`。Cilium L2 Announcements 与 `externalTrafficPolicy: Local` 不兼容：宣告 VIP 的节点可能没有本地 backend，进而丢包。
 
+### 8.1 机房三节点：为什么仍开 L2，VIP 为什么不用 `10.10.21.x`
+
+机房节点是 `node4=10.10.21.161`、`node5=.162`、`node3=.163`，位于 VMware `vmxnet3` 的多租户
+`10.10.21.0/24`。2026-09-04 在未部署 k8s 前做了三项只读/瞬时网络验证：
+
+1. 从 node4 构造源地址 `10.244.99.99`（Pod CIDR）的 UDP 包，node5 `tcpdump` 收到 3/3；说明
+   vSwitch 没有 SpoofGuard/源地址反欺骗，`routingMode=native + autoDirectNodeRoutes` 能携带 Pod 源 IP。
+2. node4 → node5 的 `ping -R`（IPv4 Record-Route option）完整往返；`hybrid + dsrDispatch=opt` 依赖的
+   IP option 没被 vSwitch/NSX 丢弃。仍需在真实 Service 上跑 `cilium connectivity test` 作最终验收。
+3. 两轮扫描看到同 VLAN 至少 82 个地址在用；`.160/.164/.168/.169/.176-.179` 当前无 ARP 应答，
+   **但「当前空闲」不等于机房分配给我们**，不能拿来做长期 VIP。
+
+机房版采用两层入口：
+
+```text
+公网用户 → Pangolin/Traefik(node1 VPS) → WireGuard/newt Pod
+          ├─ HTTPRoute: target=https://10.10.31.240:443 → Cilium Gateway → Service/Pod
+          └─ 节点服务: target=10.10.21.161|162|163:<port> → node4|5|3
+
+gateway-pool: CILIUM_GATEWAY_LB_IP = 10.10.31.240/32（只匹配共享 Gateway Service）
+default-pool: CILIUM_LB_POOL_START/STOP = 10.10.31.241-249（其它 LoadBalancer）
+```
+
+这两个池与 LAN `10.10.21/24`、Pod `10.244/16`、Service `10.96/12` 都不重叠。2026-09-04 从 node4 探测
+`10.10.31.240/.245/.249`：走默认网关、无响应、无 ARP——这只是那个时间点、从那台机器的观测记录，
+**不是**该段未被占用或已分配给我们的证明（RFC 5227 §1.3：单次探测可能漏掉冲突）。使用前提是机房的地址规划确认
+`10.10.31.0/24` 不会被路由到这个 VLAN；这一条尚未取得书面确认，列为待办。
+
+2026-09-06 从 node4/node3 复测（只读，集群尚未部署）：
+- `tracepath 10.10.31.240`：`.254`（不回 TTL 超时）→ 第 2 跳 `10.10.19.1` → 之后无回应；
+  对照 `tracepath 8.8.8.8`：`.254` → `10.10.19.1` → `211.144.221.225`（公网边界）。
+  说明核心路由器 `10.10.19.1` **没有**把 `10.10.31.0/24` 当成公网流量转发，而是黑洞/内部路由/过滤了 ICMP——
+  三者从节点侧分不出来。这正是要问机房的问题。
+- `ip neigh`、本机地址均无 `10.10.31.x`；`arping` 未安装，没做同链路 ARP 探测。
+- 结论不变：可作为集群内 VIP 候选；能否长期使用取决于机房答复，不取决于探测结果。
+
+要问机房的具体问题（拿到答复后写回本节）：
+1. `10.10.31.0/24` 在你们的地址规划里是什么状态：未分配 / 保留 / 已分给其它租户或内部系统？
+2. `10.10.19.1` 上对 `10.10.31.0/24` 的处理：无路由丢弃、null route，还是转发到某个 VLAN？
+3. 我们打算只在 `10.10.21.0/24` 的三台主机内部使用 `10.10.31.240-249` 作为不出网的 Service VIP，且会在 `ens160`
+   上做 ARP 通告（跨网段地址，正常情况下 `/24` 邻居不会请求它）；这是否与你们的规划冲突？
+4. 若冲突，能否分配一段专属的 `10.10.21.x`（至少 10 个地址）作为 LAN 直达的 LB 池？
+
+安装后 Cilium 在每个节点的 eBPF service map 里编程 VIP。对 Cilium 管理、非 hostNetwork 的 newt Pod，
+`.240:443` 是 L7 LB：socket 层 eBPF 不做直连后端的转换，交给 endpoint 数据面重定向到本节点 Envoy，再按 HTTPRoute 选
+后端（v1.20.1 `bpf/bpf_sock.c` 与 Gateway 文档，见 [`CILIUM-UPSTREAM-VERIFICATION.md`](CILIUM-UPSTREAM-VERIFICATION.md) §3）。
+这条路径**不依赖** L2 announcement，也不需要谁应答 ARP。L2 announcement 只影响「同链路的其它主机」能否直达 VIP；
+一般 `/24` 掩码的邻居会把跨网段目的地交给网关而不发 ARP，但邻居的掩码/on-link 路由本轮未核实，
+不能写成「绝不会」。
+
+仍然必须保持 `CILIUM_ENABLE_L2_ANNOUNCEMENTS=true`：当前安装器把 `CiliumLoadBalancerIPPool` 与
+`CiliumL2AnnouncementPolicy` 放在同一步；无池时 Cilium 为 Gateway 建出的 LoadBalancer Service 一直
+`<pending>`，Gateway 没有 address、`Programmed=False`（00 阶段 preflight 直接拒绝 Gateway API 开、L2 关的组合）。
+
+验收分四层，互相不能替代（状态列为 2026-09-06 node4+node5 两节点集群的实测）：
+
+| 层 | 证明什么 | 由谁验证 | 状态 |
+|---|---|---|---|
+| 控制面/分配 | 两池 `PoolConflict=False`@当前 generation；Gateway 当前 generation `Programmed=True`；生成的 Service `default/cilium-gateway-cilium-gateway` 请求注解与实际分配都是 `.240`，`IPAMRequestSatisfied=True` | 60 阶段 l2 步骤（每次重跑都重校验）、`components/gateway/install.sh`、90 阶段 | ✅ 60/80/90 三处校验都通过 |
+| eBPF 编程 | `cilium-dbg service list` 含该 VIP | 90 阶段 LB 冒烟（L2 租约、节点自访只作附加观测分别记录） | ✅ 冒烟 VIP `.244` 已编程；租约存在；节点自访第一次未通、第二次通（附加观测，不作判据） |
+| Pod 路径（newt 的同一条路） | 从 Cilium 管理、非 hostNetwork 的 Pod 内带正确 Host 访问 `https://.240/...` 得到业务状态码（404/502 不算） | 探测 Pod（`curlimages/curl`，node4 与 node5 各一）；正式 newt Pod 待 `ADDON_NEWT` 打开后按 `components/gateway/README.md` §5 复测 | ✅ 两节点都：`metrics.dev.test`/`argocd.dev.test` 200 `server=envoy`；未匹配 Host 404；80→443 301；证书 `CN=dev.test`。newt Pod 本身尚未部署（站点 ID 与 node3 在线 newt 冲突） |
+| 同链路外部主机 | 只有拿到机房专属 `10.10.21.x` 池后才有意义 | 人工，需先取得地址授权 | ⏳ 待机房答复（见上文 4 个问题） |
+
+`default/cilium-gateway` 通过 `spec.addresses` 固定在 `CILIUM_GATEWAY_LB_IP`（Cilium 把它写成生成 Service 的
+`io.cilium/lb-ipam-ips` 请求注解；若 `spec.infrastructure.annotations` 里已有同名注解则不覆盖，所以验收看的是 Service
+上的实际注解）；`gateway-pool` 用 LB-IPAM 特殊 selector 匹配生成的 Service `default/cilium-gateway-cilium-gateway`，
+防止 Consul/其它 Gateway 先抢 `.240`。带固定请求的 Service 不会退回 default-pool 随机取址；request 未满足时
+Service 保持 pending（`IPAMRequestSatisfied=False`，reason `no_pool`/`pool_selector_mismatch`/`already_allocated`）。
+反向也封住：`default-pool` 的 `serviceSelector` 用 `NotIn` 排除 `cilium-gateway-cilium-gateway`，
+即使固定请求注解丢失（例如被 `spec.infrastructure.annotations` 覆盖），共享 Gateway 也拿不到 `.241-.249`
+里的地址，只会 pending 并被 90 阶段抓出来；60 阶段的 l2 校验同时检查这个排除项。
+Pangolin target 不再写每次重建会变化的 ClusterIP。若机房以后明确分配一段专属 `10.10.21.x`，
+替换 Gateway VIP 与 default-pool 起止三项；届时 VIP
+也会被 ens160 真正 ARP 通告，LAN 其它主机可以直达。**未经机房确认，不要把「无 ARP 应答」的地址当成所有权。**
+
+安全边界：上述 spoof 测试也证明共享 VLAN 允许任意源 IP，跨节点 Pod 流量当前是明文。先按当前
+`CILIUM_ENABLE_IPSEC=false` 复原并做吞吐基线；承载生产敏感数据前，应在维护窗口评估 IPsec
+（安装器已支持，打开后会自动取消 `installNoConntrackIptablesRules`）或为安装器增加 WireGuard 选项。
+
 ## 9. 哪些变更需要重建
 
 | 变更 | 是否重建集群 | 生效方式与风险 |
@@ -424,4 +505,8 @@ helm -n kube-system rollback cilium <上一版本 revision> --wait --timeout 15m
 - [Cilium performance tuning / netkit](https://docs.cilium.io/en/v1.20/operations/performance/tuning/#netkit)
 - [CiliumEndpointSlice](https://docs.cilium.io/en/v1.20/network/kubernetes/ciliumendpointslice/)
 - [Egress Gateway incompatibilities](https://docs.cilium.io/en/v1.20/network/egress-gateway/egress-gateway/#incompatibility-with-other-features)
+- [Cilium Gateway API](https://docs.cilium.io/en/v1.20/network/servicemesh/gateway-api/gateway-api/)
+- [Cilium v1.20.1 Gateway `spec.addresses` support](https://raw.githubusercontent.com/cilium/cilium/v1.20.1/Documentation/network/servicemesh/gateway-api/addresses.rst)
+- [Cilium L2 Announcements](https://docs.cilium.io/en/v1.20/network/l2-announcements/)
+- [Cilium LoadBalancer IPAM](https://docs.cilium.io/en/stable/network/lb-ipam/)
 - [Spegel chart v0.7.4](https://github.com/spegel-org/spegel/tree/v0.7.4/charts/spegel)

@@ -31,9 +31,15 @@ rm -rf "$tmp"
 kctl -n default wait --for=condition=Ready certificate/global-default-tls-cert --timeout=180s \
   || log_warn "泛域名证书未就绪: kubectl -n default describe certificate global-default-tls-cert"
 
-if kctl -n default wait --for=condition=Programmed gateway/cilium-gateway --timeout=180s; then
-  addr=$(kctl -n default get gateway cilium-gateway -o jsonpath='{.status.addresses[0].value}')
-  log_ok "共享网关就绪: $addr (80/443) —— 组件路由 parentRef 到 default/cilium-gateway"
-else
-  log_warn "网关未 Programmed: kubectl -n default describe gateway cilium-gateway"
+# wait 只看 Programmed=True 出现; 之后用 lib/common.sh 的 shared_gateway_problems 复核:
+# 条件必须属于当前 generation, 生成的 Service 请求注解与实际分配都必须是固定 VIP。
+if ! kctl -n default wait --for=condition=Programmed gateway/cilium-gateway --timeout=180s; then
+  kctl -n default describe gateway cilium-gateway | tail -40 >&2 || true
+  die "共享 Gateway 180s 内未 Programmed(检查 LB-IPAM 池、固定 VIP、证书与 listener)"
 fi
+gw_json=$(kctl -n default get gateway cilium-gateway -o json)
+svc_json=$(kctl -n default get svc cilium-gateway-cilium-gateway -o json 2>/dev/null) || svc_json=""
+problems=$(shared_gateway_problems "$gw_json" "$svc_json" "$CILIUM_GATEWAY_LB_IP")
+[[ -z $problems ]] || die "共享 Gateway 状态与固定 VIP $CILIUM_GATEWAY_LB_IP 不一致:"$'\n'"$problems"
+log_ok "共享网关就绪: $CILIUM_GATEWAY_LB_IP (80/443, 固定 VIP, LB-IPAM 请求已满足) —— 组件路由 parentRef 到 default/cilium-gateway"
+log_info "newt Pod → VIP:443 → HTTPRoute 的实际路径尚未验证, 见 README.md §5"

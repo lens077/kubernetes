@@ -515,6 +515,101 @@ terminated_pod_gc_converged() {
   (( count <= KCM_TERMINATED_POD_GC_THRESHOLD ))
 }
 
+# --------------------------- Cilium LB-IPAM / L2 / Gateway 纯校验 ---------------------
+# 输入完整对象 JSON, 每行输出一个问题; 无输出即通过。只比较 CR/Service 字段, 不证明网络可达。
+# 60-cilium 的 l2 步骤、90-verify 与 components/gateway 共用同一套判据(tests/test-l2-policy.sh)。
+#
+# lb_pool_problems <pool json> <期望起> <期望止> [selector 要求]
+#   selector 要求二选一:
+#     <namespace> <service 名>   专属池: serviceSelector.matchLabels 必须同时含两把特殊键
+#     exclude=<service 名>       默认池: serviceSelector.matchExpressions 必须有 NotIn 排除该名字
+#   - blocks 必须恰好一段且起止相等于期望(单地址池起=止)
+#   - spec.disabled 不能为 true(disabled 保留已分配地址但停止新分配)
+#   - 状态: 当前 generation 的 cilium.io/PoolConflict 必须为 False; 条件缺失/过期视为未收敛
+lb_pool_problems() {
+  local json=$1 start=$2 stop=$3 ns=${4:-} svc=${5:-} exclude=""
+  if [[ $ns == exclude=* ]]; then exclude=${ns#exclude=}; ns=""; fi
+  jq -r --arg start "$start" --arg stop "$stop" --arg ns "$ns" --arg svc "$svc" --arg exclude "$exclude" '
+    def problem(p; c): if c then [] else [p] end;
+    (.metadata.name // "?") as $name
+    | (.spec.blocks // []) as $blocks
+    | ([.status.conditions[]? | select(.type == "cilium.io/PoolConflict")] | last) as $conflict
+    | problem("\($name): blocks 应恰好 1 段, 实际 \($blocks | length)"; ($blocks | length) == 1)
+    + problem("\($name): 地址段 \($blocks[0].start // "?")-\($blocks[0].stop // "?") 与期望 \($start)-\($stop) 不一致";
+        ($blocks | length) == 1 and $blocks[0].start == $start and $blocks[0].stop == $stop and ($blocks[0].cidr == null))
+    + problem("\($name): spec.disabled=true, 池已停止分配"; (.spec.disabled // false) != true)
+    + (if $ns == "" then [] else
+        problem("\($name): serviceSelector 未同时限定 namespace=\($ns) 与 name=\($svc)";
+          (.spec.serviceSelector.matchLabels["io.kubernetes.service.namespace"] // "") == $ns
+          and (.spec.serviceSelector.matchLabels["io.kubernetes.service.name"] // "") == $svc)
+      end)
+    + (if $exclude == "" then [] else
+        problem("\($name): serviceSelector 未用 NotIn 排除 \($exclude), 共享 Gateway 的 Service 可能从本池取到非固定地址";
+          any(.spec.serviceSelector.matchExpressions[]?;
+              .key == "io.kubernetes.service.name" and .operator == "NotIn" and ((.values // []) | index($exclude)) != null))
+      end)
+    + problem("\($name): 缺少 cilium.io/PoolConflict 条件(operator 尚未调和)"; $conflict != null)
+    + (if $conflict == null then [] else
+        problem("\($name): PoolConflict=\($conflict.status) (\($conflict.reason // "-"): \($conflict.message // "-"))";
+          $conflict.status == "False")
+        + problem("\($name): PoolConflict 条件 observedGeneration=\($conflict.observedGeneration // "null") 落后于 generation=\(.metadata.generation)";
+          ($conflict.observedGeneration // -1) == .metadata.generation)
+      end)
+    | .[]
+  ' <<<"$json"
+}
+
+# l2_policy_problems <policy json>: loadBalancerIPs 必须为 true, interfaces 非空
+l2_policy_problems() {
+  jq -r '
+    def problem(p; c): if c then [] else [p] end;
+    (.metadata.name // "?") as $name
+    | problem("\($name): spec.loadBalancerIPs 不是 true"; .spec.loadBalancerIPs == true)
+    + problem("\($name): spec.interfaces 为空, 不会在任何网卡应答 ARP"; ((.spec.interfaces // []) | length) > 0)
+    | .[]
+  ' <<<"$1"
+}
+
+# shared_gateway_problems <gateway json> <生成的 Service json 或空串> <期望 VIP>
+#   - Programmed=True 且 observedGeneration 等于当前 generation(旧 generation 的 True 不算)
+#   - status.addresses[0] 等于固定 VIP
+#   - 生成的 Service 必须是 LoadBalancer, 请求注解 io.cilium/lb-ipam-ips 含 VIP,
+#     status.loadBalancer.ingress 含 VIP, 且 cilium.io/IPAMRequestSatisfied=True
+shared_gateway_problems() {
+  local gw_json=$1 svc_json=$2 vip=$3
+  jq -r --arg vip "$vip" '
+    def problem(p; c): if c then [] else [p] end;
+    ([.status.conditions[]? | select(.type == "Programmed")] | last) as $prog
+    | problem("Gateway 缺少 Programmed 条件"; $prog != null)
+    + (if $prog == null then [] else
+        problem("Gateway Programmed=\($prog.status) (\($prog.reason // "-"): \($prog.message // "-"))"; $prog.status == "True")
+        + problem("Gateway Programmed 条件 observedGeneration=\($prog.observedGeneration // "null") 落后于 generation=\(.metadata.generation)";
+          ($prog.observedGeneration // -1) == .metadata.generation)
+      end)
+    + problem("Gateway 地址 \(.status.addresses[0].value // "<none>") 不等于固定 VIP \($vip)";
+        (.status.addresses[0].value // "") == $vip)
+    | .[]
+  ' <<<"$gw_json"
+  if [[ -z $svc_json ]]; then
+    echo "未找到 Cilium 为共享 Gateway 生成的 Service(default/cilium-gateway-cilium-gateway)"
+    return 0
+  fi
+  jq -r --arg vip "$vip" '
+    def problem(p; c): if c then [] else [p] end;
+    ([.status.conditions[]? | select(.type == "cilium.io/IPAMRequestSatisfied")] | last) as $sat
+    | problem("生成的 Service 类型是 \(.spec.type // "?"), 不是 LoadBalancer(hostNetwork 模式会变成 NodePort)"; .spec.type == "LoadBalancer")
+    + problem("生成的 Service 请求注解 io.cilium/lb-ipam-ips=\(.metadata.annotations["io.cilium/lb-ipam-ips"] // "<none>") 不含 \($vip)";
+        ((.metadata.annotations["io.cilium/lb-ipam-ips"] // "") | split(",") | map(gsub("\\s"; "")) | index($vip)) != null)
+    + problem("生成的 Service 实际 LB 地址 \([.status.loadBalancer.ingress[]?.ip] | join(",")) 不含 \($vip)";
+        ([.status.loadBalancer.ingress[]?.ip] | index($vip)) != null)
+    + problem("生成的 Service 缺少 cilium.io/IPAMRequestSatisfied 条件"; $sat != null)
+    + (if $sat == null then [] else
+        problem("IPAMRequestSatisfied=\($sat.status) (\($sat.reason // "-"): \($sat.message // "-"))"; $sat.status == "True")
+      end)
+    | .[]
+  ' <<<"$svc_json"
+}
+
 # 从整条 `kubeadm join <ep> --token <t> --discovery-token-ca-cert-hash <h>` 命令
 # 解析出三个参数并写入 JOIN_* 全局(worker 交互模式粘贴用)
 parse_join_cmd() {

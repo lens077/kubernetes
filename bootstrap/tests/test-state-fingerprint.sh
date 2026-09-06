@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2034  # variables are consumed by a function loaded through process substitution
 set -euo pipefail
 
 BOOTSTRAP_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." &>/dev/null && pwd)
@@ -63,5 +64,26 @@ fi
 if state_reconcile_fingerprint desired sha-c 2>/dev/null; then
   fail "missing downstream steps must be rejected"
 fi
+
+# Cilium 的 L2/IPAM CR 不在 Helm values 里，也必须进入 desired fingerprint；
+# 否则只改池地址会错误保留 l2.done，集群继续用旧池。
+# 只加载纯函数，不能 source 60-cilium.sh（尾部会执行 main）。
+# shellcheck disable=SC1090
+source <(sed -n '/^cilium_desired_fingerprint()/,/^}/p' "$BOOTSTRAP_DIR/scripts/60-cilium.sh")
+VALUES_FILE="$root/cilium-values.yaml"
+printf 'kubeProxyReplacement: "true"\n' > "$VALUES_FILE"
+CILIUM_V=v1.20.1
+CILIUM_ENABLE_L2_ANNOUNCEMENTS=true
+CILIUM_LB_POOL_START=10.10.31.241
+CILIUM_LB_POOL_STOP=10.10.31.249
+CILIUM_GATEWAY_LB_IP=10.10.31.240
+fp_a=$(cilium_desired_fingerprint)
+CILIUM_LB_POOL_STOP=10.10.31.250
+fp_b=$(cilium_desired_fingerprint)
+[[ $fp_a != "$fp_b" ]] || fail "Cilium fingerprint ignored LB pool change"
+CILIUM_LB_POOL_STOP=10.10.31.249
+CILIUM_GATEWAY_LB_IP=10.10.31.241
+fp_c=$(cilium_desired_fingerprint)
+[[ $fp_a != "$fp_c" ]] || fail "Cilium fingerprint ignored fixed Gateway VIP change"
 
 printf 'state fingerprint tests: OK\n'
