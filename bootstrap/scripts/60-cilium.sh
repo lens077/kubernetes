@@ -647,8 +647,13 @@ run_connectivity_test() {
     log_info "跳过连通性测试"
     return 0
   fi
-  # 外网相关用例受环境影响大, 失败降级为警告
-  cilium_cli connectivity test || log_warn "连通性测试存在失败用例, 请查看上方输出定位"
+  # 外网相关用例受环境影响大, 失败降级为警告。失败/中止时 cilium-cli 不清理测试命名空间
+  # (2026-09-06 机房: 内核 7.0 上测试客户端镜像 nslookup 崩溃, DNS 预检即中止, 三个 ns 各残留 ~150Mi),
+  # 这里兜底删除, 否则每次重跑 60 阶段都堆一份。
+  if ! cilium_cli connectivity test; then
+    log_warn "连通性测试存在失败用例, 请查看上方输出定位; 正在清理残留的 cilium-test-* 命名空间"
+    kctl delete ns cilium-test-1 cilium-test-ccnp1 cilium-test-ccnp2 --ignore-not-found --wait=false >/dev/null 2>&1 || true
+  fi
 }
 
 main() {
