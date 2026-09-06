@@ -85,5 +85,15 @@ CILIUM_LB_POOL_STOP=10.10.31.249
 CILIUM_GATEWAY_LB_IP=10.10.31.241
 fp_c=$(cilium_desired_fingerprint)
 [[ $fp_a != "$fp_c" ]] || fail "Cilium fingerprint ignored fixed Gateway VIP change"
+CILIUM_GATEWAY_LB_IP=10.10.31.240
+# 池开关(auto → 由 Gateway/L2 推导)变化也必须使下游失效：关池会删 CR。
+CILIUM_ENABLE_GATEWAY_API=true
+CILIUM_ENABLE_LB_IPAM=auto
+fp_d=$(cilium_desired_fingerprint)
+CILIUM_ENABLE_LB_IPAM=false
+CILIUM_ENABLE_GATEWAY_API=false
+CILIUM_ENABLE_L2_ANNOUNCEMENTS=false
+fp_e=$(cilium_desired_fingerprint)
+[[ $fp_d != "$fp_e" ]] || fail "Cilium fingerprint ignored LB-IPAM on/off change"
 
 printf 'state fingerprint tests: OK\n'

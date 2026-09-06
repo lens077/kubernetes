@@ -36,6 +36,91 @@ fi
 
 ASSUME_YES=${ASSUME_YES:-false}              # start.sh --yes 时置 true
 
+# --------------------------- Cilium LB-IPAM 与 L2 通告(解耦) --------------------------
+# 池(CiliumLoadBalancerIPPool)决定 LoadBalancer Service 能否拿到地址; L2 通告决定同链路主机能否
+# ARP 到该地址。只经 newt/Pod 访问的集群内 VIP 只需要池, 不需要在共享 VLAN 上通告。
+#   CILIUM_ENABLE_LB_IPAM: true / false / auto(默认; = Gateway API 或 L2 任一开启即开)
+#   CILIUM_ENABLE_L2_ANNOUNCEMENTS: true / false(开启时必须有池)
+# 三个地址(CILIUM_GATEWAY_LB_IP / CILIUM_LB_POOL_START / _STOP)只有使用者能决定: config.env 没写时,
+# 00-preflight 有终端就询问并存到 $LB_IPAM_ANSWERS(安装器状态目录, 不改 config.env, 重跑自动复用);
+# 无终端则报错退出。
+LB_IPAM_ANSWERS="$STATE_DIR/lb-ipam.env"
+
+lb_ipam_enabled() {
+  case ${CILIUM_ENABLE_LB_IPAM:-auto} in
+    true)    return 0 ;;
+    false)   return 1 ;;
+    auto|"") [[ ${CILIUM_ENABLE_GATEWAY_API:-false} == true || ${CILIUM_ENABLE_L2_ANNOUNCEMENTS:-false} == true ]] ;;
+    *)       die "CILIUM_ENABLE_LB_IPAM 必须是 true / false / auto, 当前: $CILIUM_ENABLE_LB_IPAM" ;;
+  esac
+}
+l2_enabled() { [[ ${CILIUM_ENABLE_L2_ANNOUNCEMENTS:-false} == true ]]; }
+
+# config.env 留空的地址项用询问时保存的答案补上(config.env 显式写了的永远优先)
+load_lb_ipam_answers() {
+  [[ -f $LB_IPAM_ANSWERS ]] || return 0
+  local k v
+  while IFS='=' read -r k v; do
+    [[ $k =~ ^CILIUM_(GATEWAY_LB_IP|LB_POOL_START|LB_POOL_STOP)$ ]] || continue
+    v=${v%\"}; v=${v#\"}
+    [[ -n ${!k:-} ]] || printf -v "$k" '%s' "$v"
+  done < "$LB_IPAM_ANSWERS"
+}
+load_lb_ipam_answers
+
+lb_ipam_addresses_missing() {
+  [[ -z ${CILIUM_GATEWAY_LB_IP:-} || -z ${CILIUM_LB_POOL_START:-} || -z ${CILIUM_LB_POOL_STOP:-} ]]
+}
+
+# 在终端上逐项询问缺失的地址, 校验 IPv4 格式后写入 $LB_IPAM_ANSWERS。无终端返回 1(由调用方报错)。
+# LB_IPAM_TTY 允许测试用文件代替 /dev/tty。
+prompt_lb_ipam_addresses() {
+  local tty=${LB_IPAM_TTY:-/dev/tty} tty_in
+  [[ -n ${LB_IPAM_TTY:-} ]] || has_tty || return 1
+  # 读用独立 fd(顺序消费多行答案), 写用追加(对 /dev/tty 等价于直接写; 对文件不会截断答案)
+  exec {tty_in}<"$tty" || return 1
+  local ip_re='^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'
+  local var desc ans
+  {
+    echo
+    echo "${C_YEL}${I_ASK} Cilium LB-IPAM 需要地址池, 但 config.env 没有填写。这些地址只有你能决定:${C_RST}"
+    echo "  - 共享 Gateway 固定 VIP(单地址, Pangolin/newt 的 target, 之后不会漂移)"
+    echo "  - 其它 LoadBalancer Service 的默认池起止(不能包含上面的 VIP, 不能包含节点 IP)"
+    echo "  开了 L2 通告时它们会在局域网被 ARP 通告, 必须是网络所有者分配给你的地址;"
+    echo "  只经 newt/Pod 访问(L2 关闭)时可用与 LAN/Pod/Service 都不重叠的集群内网段。"
+    echo "  答案保存到 $LB_IPAM_ANSWERS, 重跑自动复用; 想改就改 config.env 或删掉该文件。"
+  } >>"$tty"
+  for var in CILIUM_GATEWAY_LB_IP CILIUM_LB_POOL_START CILIUM_LB_POOL_STOP; do
+    [[ -z ${!var:-} ]] || continue
+    case $var in
+      CILIUM_GATEWAY_LB_IP) desc="共享 Gateway 固定 VIP" ;;
+      CILIUM_LB_POOL_START) desc="默认池起始 IP" ;;
+      CILIUM_LB_POOL_STOP)  desc="默认池结束 IP(含)" ;;
+    esac
+    while true; do
+      printf '%s%s %s (%s): %s' "$C_CYA" "$I_ASK" "$desc" "$var" "$C_RST" >>"$tty"
+      if ! read -r ans <&"$tty_in"; then
+        exec {tty_in}<&-
+        echo "  输入结束, 未得到 $var" >>"$tty"
+        return 1
+      fi
+      [[ $ans =~ $ip_re ]] && break
+      echo "  不是合法的 IPv4 地址: '${ans}'" >>"$tty"
+    done
+    printf -v "$var" '%s' "$ans"
+  done
+  exec {tty_in}<&-
+  mkdir -p "$(dirname "$LB_IPAM_ANSWERS")"
+  {
+    echo "# k8s-installer: 00-preflight 询问得到的 LB-IPAM 地址(config.env 留空时生效; 改 config.env 优先)"
+    echo "CILIUM_GATEWAY_LB_IP=\"$CILIUM_GATEWAY_LB_IP\""
+    echo "CILIUM_LB_POOL_START=\"$CILIUM_LB_POOL_START\""
+    echo "CILIUM_LB_POOL_STOP=\"$CILIUM_LB_POOL_STOP\""
+  } > "$LB_IPAM_ANSWERS"
+  chmod 600 "$LB_IPAM_ANSWERS"
+  log_info "LB-IPAM 地址已记录到 $LB_IPAM_ANSWERS: Gateway=$CILIUM_GATEWAY_LB_IP 默认池=$CILIUM_LB_POOL_START-$CILIUM_LB_POOL_STOP"
+}
+
 # --------------------------- 颜色与图标 -------------------------------------
 if [[ -z ${NO_COLOR:-} ]] && { [[ -t 1 ]] || [[ ${K8S_FORCE_COLOR:-} == 1 ]]; }; then
   C_RED=$'\e[31m'; C_GRN=$'\e[32m'; C_YEL=$'\e[33m'; C_BLU=$'\e[34m'

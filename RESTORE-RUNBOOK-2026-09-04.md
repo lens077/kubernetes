@@ -194,7 +194,7 @@ kubectl -n postgresql exec pg-main-1 -- psql -U postgres -d ecommerce -Atc \
 ## 6. 仍缺的代码与决策
 
 - 多环境配置加载：仍靠 `cp config.hosting.env config.env`；内网版改公共键后要同步（文件头有说明）。
-- L2/LB-IPAM 已按机房版修正并固定 Gateway VIP；若未来需要「有池但不建 L2Policy」才再拆开开关。
+- L2/LB-IPAM 已按机房版修正并固定 Gateway VIP；2026-09-06 池与 L2 通告已拆成独立开关（`CILIUM_ENABLE_LB_IPAM` / `CILIUM_ENABLE_L2_ANNOUNCEMENTS`），地址留空时 00 阶段有终端会询问并存到状态目录。
 - 共享 VLAN 允许伪造 Pod CIDR 源地址，跨节点流量当前明文；生产前评估现有 IPsec 开关或增加 WireGuard。
 - `victoria-logs` 的 `-retention.maxDiskSpaceUsageBytes` / `-insert.maxLineSizeBytes` 未加（回环卷撑满会拒写）。
 - `vector` 对 CNPG JSON 日志的解析分支未加（慢查询/错误码字段化，PIGSTY-HARVEST §5.4）。

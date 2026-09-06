@@ -164,10 +164,10 @@ EOF
   log_info "存储链路冒烟测试通过(创建→写→读→清理)"
 }
 
-# --- 5. LoadBalancer L2 冒烟(可选) -----------------------------------------------------------
+# --- 5. LoadBalancer 冒烟(可选; 需要 LB-IPAM 池, 与 L2 通告是否开启无关) -----------------------
 smoke_loadbalancer() {
-  if [[ $VERIFY_LB_SMOKE_TEST != true || $CILIUM_ENABLE_L2_ANNOUNCEMENTS != true ]]; then
-    log_info "LB 冒烟测试未启用, 跳过"
+  if [[ $VERIFY_LB_SMOKE_TEST != true ]] || ! lb_ipam_enabled; then
+    log_info "LB 冒烟测试未启用或 LB-IPAM 关闭, 跳过"
     return 0
   fi
   kctl delete ns lb-smoke --ignore-not-found --timeout=120s
@@ -223,8 +223,11 @@ EOF
   grep -q "$ip" <<<"$svc_prog" || die "Cilium 未编程 LB 服务($ip), 数据面异常"
   if kctl -n kube-system get lease cilium-l2announce-lb-smoke-web &>/dev/null; then
     lease_state="存在"
-  else
+    l2_enabled || log_warn "L2 通告已关闭却仍有租约 cilium-l2announce-lb-smoke-web: 旧 L2Policy 可能残留, 检查 kubectl get ciliuml2announcementpolicies"
+  elif l2_enabled; then
     log_warn "未见 L2 通告租约(cilium-l2announce-lb-smoke-web): 该 VIP 当前无节点应答 ARP; 跨网段集群内 VIP 可接受, 同网段 LAN 直达模式下属异常"
+  else
+    lease_state="无(L2 关闭, 预期)"
   fi
   local lb_body=""
   if lb_body=$(curl -fsS --max-time 5 "http://$ip/" 2>/dev/null) && grep -qi nginx <<<"$lb_body"; then
@@ -448,7 +451,7 @@ Cilium      : $CILIUM_V (CLI $CILIUM_CLI_V)  路由: $CILIUM_ROUTING_MODE
 Helm        : $HELM_V   Gateway-API: $GATEWAY_API_V
 OpenEBS     : $OPENEBS_V (VG: $LVM_VG_NAME → SC: $SC_NAME/$SC_FS_TYPE)
 Pod CIDR    : $POD_CIDR    Service CIDR: $SERVICE_CIDR
-LB IP 池    : $CILIUM_LB_POOL_START - $CILIUM_LB_POOL_STOP (L2 通告: $CILIUM_ENABLE_L2_ANNOUNCEMENTS)
+LB IP 池    : $CILIUM_LB_POOL_START - $CILIUM_LB_POOL_STOP (LB-IPAM: $(lb_ipam_enabled && echo on || echo off), L2 通告: $CILIUM_ENABLE_L2_ANNOUNCEMENTS)
 Gateway VIP : $CILIUM_GATEWAY_LB_IP (固定, Pangolin/newt HTTPRoute target)
 已装组件    : ${addons:-无}
 

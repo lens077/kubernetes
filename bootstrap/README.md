@@ -26,6 +26,7 @@ kubernetes/bootstrap/
 │   ├── test-stage-range.sh     #   start.sh --from/--to/--only/--worker/--dry-run 阶段范围矩阵
 │   ├── test-lb-config.sh       #   preflight 对 Gateway VIP/default-pool/L2 开关的合法性判定
 │   ├── test-l2-policy.sh       #   LB-IPAM 池/L2Policy/共享 Gateway 状态校验(喂 JSON)
+│   ├── test-lb-ipam-prompt.sh  #   地址留空时的询问/答案持久化/开关推导
 │   └── test-state-fingerprint.sh #  Cilium 期望状态指纹与下游步骤失效
 └── files/                      # 运行时生成: kubeadm.yml / cilium-values.yaml / 示例
 ```
@@ -157,7 +158,7 @@ token 过期重join：控制面重新生成命令，worker 上 `sudo bash start.
 - **kube-proxy 零残留**：kubeadm `skipPhases: addon/kube-proxy` + Cilium `kubeProxyReplacement: "true"` + 兜底删除 DS/ConfigMap + 验收阶段检查 iptables 无 KUBE-SVC 链。
 - **Cilium 按内核自动分级**：eBPF Host-Routing(≥5.10)、BBR 带宽管理(≥5.18)、BIG-TCP(≥6.3, 默认关)、**netkit(默认 auto：内核≥6.8 且 CONFIG_NETKIT 已编译时自动启用)**；native 路由 + eBPF masquerade 时启用 `installNoConntrackIptablesRules` 绕过 iptables conntrack。netkit 是 Guest 内核内部特性(替代 veth)，与宿主机/虚拟化平台无关；XDP 加速则依赖网卡驱动，虚拟机保持 disabled。
 - **L7/流量控制**：内置 Envoy(L7Proxy) + Gateway API CRD + 带宽管理器(Pod annotation 限速) + maglev 一致性哈希；Hubble(+UI) 提供流量观测。
-- **LoadBalancer 可用**：L2 通告 + `CiliumLoadBalancerIPPool`（`CILIUM_LB_POOL_START`/`STOP` 显式 IP 范围，预检拒绝覆盖节点 IP 的范围），局域网内直接访问 LoadBalancer 服务。
+- **LoadBalancer 可用**：`CiliumLoadBalancerIPPool`（`CILIUM_ENABLE_LB_IPAM`，默认 auto）给 LoadBalancer/Gateway 分地址，与 L2 通告（`CILIUM_ENABLE_L2_ANNOUNCEMENTS`，让局域网主机 ARP 到该地址）是两个独立开关；Gateway 固定 VIP 与默认池起止留空时 00 阶段有终端会询问并存到 `/var/lib/k8s-installer/lb-ipam.env`，预检拒绝两池重叠或覆盖节点 IP。
 - **存储面向数据库**：xfs + WaitForFirstConsumer；宿主机侧 THP=never、IO 调度(none/mq-deadline)、`vm.dirty_*` 平滑刷盘、`fs.aio-max-nr`、`vm.max_map_count`(ES 硬性要求)、`vm.overcommit_memory=1`(Redis/PG fork)。
 - **国内网络（四条独立通道）**：① `PROXY_URL` 按需代理——每次执行前 TCP 探活，代理没开自动降级直连，"要用就开、不用就关"无需改配置；只作用于脚本自身下载（GitHub 工件/helm 仓库/版本解析），从不污染 apt 与集群流量。② `GITHUB_PROXY` URL 前缀加速，是没有本地代理时的替代品，与 ① 二选一。③ containerd 拉镜像走 certs.d registry mirror——**支持原样导入你自己维护的完整 certs.d 目录**（`CONTAINERD_CERTS_SRC` 指定路径，或直接放到安装器 `files/certs.d/`，优先级高于 `USE_CN_MIRRORS` 自动生成的 DaoCloud 系）。④ `K8S_IMAGE_REPO` 独立指定 kubeadm 镜像仓库（如阿里云），与 mirror 通道解耦。另有 `PREPULL_VIA_PROXY=auto`：kubeadm init 前的预拉阶段若代理在线，临时给 containerd 挂代理、**拉完即撤**（中断残留会在重跑时自动清理），不留常驻代理配置。`CONTAINERD_USE_PROXY=true` 是独立的常驻开关；已验证可直连的仓库必须加入 `CONTAINERD_NO_PROXY_EXTRA`。当前 TCR `ccr.ccs.tencentyun.com`、GHCR `ghcr.io` 与其 blob 重定向域 `.githubusercontent.com` 已列入该值，避免本地代理停机时业务 Pod 全部进入 `ImagePullBackOff`。〔实测 2026-08-31〕三节点分别直拉 27.8 MB 的 config-web 镜像，耗时 108～117 秒（237～257 kB/s），超过 100 kB/s 门槛。
 

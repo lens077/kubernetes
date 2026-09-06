@@ -68,17 +68,46 @@ if (check_config >/dev/null 2>&1); then
   fail "Gateway pool containing node IP was accepted"
 fi
 
-# 开着 Gateway API 却关掉 L2/LB-IPAM：共享 Gateway 永远拿不到地址，preflight 必须拒绝。
+# ---- 池(LB-IPAM)与 L2 通告解耦 ----------------------------------------------------
+# 只经 newt/Pod 访问: Gateway 开、L2 关、池 auto → 池仍开, 地址照常校验。
+CILIUM_ENABLE_L2_ANNOUNCEMENTS=false
+CILIUM_ENABLE_LB_IPAM=auto
+CILIUM_GATEWAY_LB_IP=10.10.31.240
+CILIUM_LB_POOL_START=10.10.31.241
+CILIUM_LB_POOL_STOP=10.10.31.249
+check_config >/dev/null || fail "Gateway on + L2 off + LB-IPAM auto (pool without announcement) was rejected"
+lb_ipam_enabled || fail "auto must derive LB-IPAM=on from Gateway API"
+CILIUM_GATEWAY_LB_IP=10.10.31.245   # 池地址规则在 L2 关闭时同样生效
+if (check_config >/dev/null 2>&1); then fail "overlap check skipped when L2 is off"; fi
+CILIUM_GATEWAY_LB_IP=10.10.31.240
+
+# Gateway 开却把池显式关掉：共享 Gateway 永远拿不到地址，preflight 必须拒绝。
+CILIUM_ENABLE_LB_IPAM=false
+if (check_config >/dev/null 2>&1); then fail "Gateway API enabled with LB-IPAM=false was accepted"; fi
+
+# L2 开、池关：没有可通告的地址，拒绝。
+CILIUM_ENABLE_GATEWAY_API=false
+CILIUM_ENABLE_L2_ANNOUNCEMENTS=true
+if (check_config >/dev/null 2>&1); then fail "L2 enabled with LB-IPAM=false was accepted"; fi
+
+# 非法取值
+CILIUM_ENABLE_LB_IPAM=maybe
+if (check_config >/dev/null 2>&1); then fail "invalid CILIUM_ENABLE_LB_IPAM was accepted"; fi
+
+# Gateway 关、L2 关、池 auto → 池关, 允许地址为空(安装器会删除旧池与 default-l2)。
+CILIUM_ENABLE_LB_IPAM=auto
 CILIUM_ENABLE_L2_ANNOUNCEMENTS=false
 CILIUM_LB_POOL_START=""
 CILIUM_LB_POOL_STOP=""
 CILIUM_GATEWAY_LB_IP=""
-if (check_config >/dev/null 2>&1); then
-  fail "Gateway API enabled without LB-IPAM/L2 pool was accepted"
-fi
-
-# 两项一起关闭时允许池变量为空（当前安装器会删除旧 gateway-pool/default-pool/default-l2）。
-CILIUM_ENABLE_GATEWAY_API=false
 check_config >/dev/null || fail "disabled Gateway+L2 with empty pool was rejected"
+lb_ipam_enabled && fail "auto must derive LB-IPAM=off when Gateway and L2 are both off"
+
+# 池开但地址为空且无终端：必须停下(不能默默继续到 60 阶段)。
+# 在真实终端里跑测试时 has_tty 为真会进入询问, 这里强制"无终端"保证确定性。
+has_tty() { return 1; }
+CILIUM_ENABLE_LB_IPAM=true
+LB_IPAM_TTY=""
+if (check_config >/dev/null 2>&1); then fail "LB-IPAM on with empty addresses and no tty was accepted"; fi
 
 printf 'LB/Gateway config tests: OK\n'

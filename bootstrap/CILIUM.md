@@ -111,7 +111,9 @@ ssh node3 "curl -fsSG http://127.0.0.1:8428/api/v1/query \
 | `CILIUM_ENVOY_CPU_REQUEST` / `MEMORY_REQUEST` | `50m` / `128Mi` | 结合 Gateway/L7 流量、Envoy 重启和延迟调整；不设置严格 memory limit。 |
 | `CILIUM_OPERATOR_REPLICAS` | `2` | 当前有 3 个可调度节点，chart 自带跨节点 anti-affinity；两个副本可正常调度。PDB 保证至少一个可用。 |
 | `CILIUM_K8S_CLIENT_QPS` / `BURST` | `50` / `100` | 观察 API limiter 结果、L2 Lease 续期、Service 变更率和 CES 同步。没有限流证据时不要继续放大。 |
-| `CILIUM_GATEWAY_LB_IP` | 环境相关 | 独立 `gateway-pool` 的唯一地址，只匹配 Cilium 生成的共享 Gateway Service；`spec.addresses` 固定它，Pangolin target 不漂移。 |
+| `CILIUM_ENABLE_LB_IPAM` | `auto` | 是否创建 LB-IPAM 池（`gateway-pool` + `default-pool`）。`auto` = Gateway API 或 L2 任一开启即开；Gateway API 开或 L2 开时不允许为 `false`。 |
+| `CILIUM_ENABLE_L2_ANNOUNCEMENTS` | 环境相关 | 是否在节点网卡上 ARP 通告池地址（`default-l2`）。只经 newt/Pod 访问的集群内 VIP 不需要；开启时池地址必须是网络所有者分配的。 |
+| `CILIUM_GATEWAY_LB_IP` | 环境相关 | 独立 `gateway-pool` 的唯一地址，只匹配 Cilium 生成的共享 Gateway Service；`spec.addresses` 固定它，Pangolin target 不漂移。留空时 00 阶段有终端会询问。 |
 | `CILIUM_LB_POOL_START/STOP` | 环境相关 | 给其它 LB 的 `default-pool`，不得与 Gateway `/32` 重叠，且用 `NotIn` 排除共享 Gateway 的 Service。内网 `.121-.199`；机房 `.241-.249`。未经所有者确认，不要在共享 VLAN 猜空闲地址。 |
 | `CILIUM_LB_ACCELERATION` | `disabled` | 当前 virtio/vmxnet3 的 XDP 未做真实 Service 压测，先保持禁用；换物理网卡或验证 `best-effort` 后再开。 |
 | `CILIUM_HUBBLE_EVENT_BUFFER_CAPACITY` | `4095` | 仅在启用 Hubble 后生效。保持 4 vCPU 节点默认 event queue 规模；只有观测到 lost events 才扩大。 |
@@ -398,9 +400,16 @@ default-pool: CILIUM_LB_POOL_START/STOP = 10.10.31.241-249（其它 LoadBalancer
 一般 `/24` 掩码的邻居会把跨网段目的地交给网关而不发 ARP，但邻居的掩码/on-link 路由本轮未核实，
 不能写成「绝不会」。
 
-仍然必须保持 `CILIUM_ENABLE_L2_ANNOUNCEMENTS=true`：当前安装器把 `CiliumLoadBalancerIPPool` 与
-`CiliumL2AnnouncementPolicy` 放在同一步；无池时 Cilium 为 Gateway 建出的 LoadBalancer Service 一直
-`<pending>`，Gateway 没有 address、`Programmed=False`（00 阶段 preflight 直接拒绝 Gateway API 开、L2 关的组合）。
+池与通告已解耦（2026-09-06）：`CiliumLoadBalancerIPPool` 由 `CILIUM_ENABLE_LB_IPAM`（默认 `auto` = Gateway API
+或 L2 任一开启即开）控制，`CiliumL2AnnouncementPolicy` 由 `CILIUM_ENABLE_L2_ANNOUNCEMENTS` 控制，60 阶段是两个独立步骤
+（`pools`、`l2`），各自创建/清理/校验。无池时 Cilium 为 Gateway 建出的 LoadBalancer Service 一直 `<pending>`、
+`Programmed=False`，所以 preflight 拒绝「Gateway API 开、池关」与「L2 开、池关」两种组合。只经 newt/Pod 访问集群内 VIP
+时 L2 不是必需的：把它改成 `false` 只会删掉 `default-l2`，池与 Gateway 固定 VIP 不受影响（Pod → `.240:443` 路径已实测
+不依赖 L2）。机房当前仍保持 L2 开启。
+
+三个地址（Gateway VIP、默认池起止）只有使用者能决定：`config.env` 留空时，00 阶段有终端就逐项询问（校验 IPv4，
+答案存到 `/var/lib/k8s-installer/lb-ipam.env`，0600，重跑自动复用；`config.env` 显式写了的永远优先），无终端则报错退出，
+不会带着空地址走到 60 阶段。配置校验步骤每次重跑都重新执行，改了地址或开关不会被首次的完成标记跳过。
 
 验收分四层，互相不能替代（状态列为 2026-09-06 node4+node5 两节点集群的实测）：
 

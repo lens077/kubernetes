@@ -133,12 +133,20 @@ check_config() {
   if cidr_contains "$POD_CIDR" "${SERVICE_CIDR%/*}" || cidr_contains "$SERVICE_CIDR" "${POD_CIDR%/*}"; then
     die "POD_CIDR 与 SERVICE_CIDR 相互重叠"
   fi
-  # GatewayClass cilium 为 Gateway 生成 LoadBalancer Service; 本安装器只在 60 阶段 L2 步骤创建 LB-IPAM 池,
-  # 关掉 L2 等于没有池 → 共享 Gateway 永远 <pending>/Programmed=False, 80 阶段 gateway 组件必失败。
-  if [[ $CILIUM_ENABLE_GATEWAY_API == true && $CILIUM_ENABLE_L2_ANNOUNCEMENTS != true ]]; then
-    die "CILIUM_ENABLE_GATEWAY_API=true 需要 CILIUM_ENABLE_L2_ANNOUNCEMENTS=true(LB-IPAM 池随 L2 步骤创建), 否则共享 Gateway 拿不到地址; 不用 Gateway 就把两项都关掉"
+  # 池(LB-IPAM)与 L2 通告解耦(lib/common.sh): GatewayClass cilium 生成 LoadBalancer Service, 没有池就永远
+  # <pending>/Programmed=False; L2 通告没有池则无物可通告。两种组合都在这里拒绝, 不留到 80 阶段才发现。
+  if [[ $CILIUM_ENABLE_GATEWAY_API == true ]] && ! lb_ipam_enabled; then
+    die "CILIUM_ENABLE_GATEWAY_API=true 需要 LB-IPAM 池(CILIUM_ENABLE_LB_IPAM=true 或 auto), 否则共享 Gateway 拿不到地址"
   fi
-  if [[ $CILIUM_ENABLE_L2_ANNOUNCEMENTS == true ]]; then
+  if l2_enabled && ! lb_ipam_enabled; then
+    die "CILIUM_ENABLE_L2_ANNOUNCEMENTS=true 需要 LB-IPAM 池(CILIUM_ENABLE_LB_IPAM=true 或 auto), 没有池就没有可通告的地址"
+  fi
+  if lb_ipam_enabled; then
+    # 地址只有使用者能决定: config.env 没写 → 有终端就问(答案存状态目录, 重跑复用), 无终端就停下
+    if lb_ipam_addresses_missing; then
+      prompt_lb_ipam_addresses \
+        || die "LB-IPAM 已启用但 CILIUM_GATEWAY_LB_IP / CILIUM_LB_POOL_START / CILIUM_LB_POOL_STOP 未填写, 且无终端可询问: 写进 config.env(或 $LB_IPAM_ANSWERS)后重跑"
+    fi
     local ip_re='^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'
     [[ $CILIUM_LB_POOL_START =~ $ip_re ]] || die "CILIUM_LB_POOL_START 不是合法 IP: $CILIUM_LB_POOL_START"
     [[ $CILIUM_LB_POOL_STOP  =~ $ip_re ]] || die "CILIUM_LB_POOL_STOP 不是合法 IP: $CILIUM_LB_POOL_STOP"
@@ -155,6 +163,7 @@ check_config() {
     if (( node_n >= start_n && node_n <= stop_n )) || (( node_n == gateway_n )); then
       die "LB 地址池包含节点 IP $NODE_IP, 会引发地址冲突, 请调整 Gateway VIP/default-pool"
     fi
+    log_info "LB-IPAM: Gateway VIP $CILIUM_GATEWAY_LB_IP/32, 默认池 $CILIUM_LB_POOL_START-$CILIUM_LB_POOL_STOP | L2 通告: $CILIUM_ENABLE_L2_ANNOUNCEMENTS"
   fi
   log_info "节点: $NODE_NAME($NODE_IP) 角色: $NODE_ROLE | Pod网段: $POD_CIDR | Service网段: $SERVICE_CIDR"
 }
@@ -182,6 +191,8 @@ check_network() {
 
 main() {
   stage_begin "00-preflight" "环境预检"
+  # 配置校验是 config.env 的纯函数, 每次重跑都要重新做: 改了地址池/开关不能被首次的完成标记跳过
+  rm -f "$STATE_DIR/state/00-preflight:config.done"
   add_step os     "操作系统与运行环境检查"          check_os
   add_step hw     "硬件资源检查"                    check_hw
   add_step kernel "内核版本与 eBPF 特性检查"        check_kernel
