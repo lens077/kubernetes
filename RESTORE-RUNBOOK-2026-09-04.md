@@ -201,7 +201,7 @@ Dragonfly）、10 枚 pre machine token、`ecommerce-config-source-pre` Secret�
 | consumer-next / ecommerce-frontend / qqbot | ❌ 0 副本（TCR 仅 arm64，不变） |
 | Go 连通性 | ✅ 14/14，新增 `TestApplicationLayer`（经 VIP 的应用层 + Config Center 数据面 machine token 读取） |
 
-管理 token 的取得：Casdoor 应用 `ecommerce` 没开 password grant；用账号会话走 **authorization_code**（`/api/login?clientId=…&responseType=code&grantType=authorization_code&redirectUri=…` 带 `type:"code"` 的 JSON 体）拿 code，再换 token（900 s）。`is_secret` 必须与 dev 一致为 false，否则管理面读回是 `******`。
+管理 token 的取得：`tools/config-center-admin-token.sh`（需要 `/root/.casdoor-login` 两行用户名/密码）。Casdoor 应用 `ecommerce` 没开 password grant；脚本用账号会话走 **authorization_code**（`/api/login?clientId=…&responseType=code&grantType=authorization_code&redirectUri=…` 带 `type:"code"` 的 JSON 体）拿 code，再换 token（900 s）。`is_secret` 必须与 dev 一致为 false，否则管理面读回是 `******`。
 
 **node3 混合节点的教训**：node3 空载（Pigsty + 10 个 docker 容器 + k8s DaemonSet）已用 4.7 G/7.4 G，调度 3 个 ecommerce Pod 后宿主内存耗尽失联，只能机房强制重启。已打 taint `workload=pigsty-host:NoSchedule`（DaemonSet 不受影响），普通 Pod 只在 node4/node5 跑。重启后 OpenBao 重新 sealed（组件设计如此），用 `creds/openbao-init` 的 key 解封。
 
