@@ -197,7 +197,7 @@ Dragonfly）、10 枚 pre machine token、`ecommerce-config-source-pre` Secret�
 | 项 | 结果 |
 |---|---|
 | address / behavior / cart / inventory / merchant / order / payment / product / user | ✅ 9/9 Running（pre） |
-| search | ❌ 缩到 0：dev 配置含 `search.catalog`，镜像 1.6.3 不认识；Config Center schema（enforce）又要求该键，pre 里删不掉。等 search 出含 catalog 的 amd64 版本 |
+| search | ❌ 缩到 0：dev 配置含 `search.catalog`，镜像 1.6.3 不认识；Config Center schema（enforce）又要求该键，pre 里删不掉。等 search 出含 catalog 的 amd64 版本后 `set image` + `scale 1` 即可——pre 的 bootstrap 已是含 catalog 的正确内容，不必重新播种；只有 dev 那份此后又改过时才 `SERVICES=search bash tools/config-center-pre-seed.sh`（幂等，会重签 token） |
 | consumer-next / ecommerce-frontend / qqbot | ❌ 0 副本（TCR 仅 arm64，不变） |
 | Go 连通性 | ✅ 14/14，新增 `TestApplicationLayer`（经 VIP 的应用层 + Config Center 数据面 machine token 读取） |
 
