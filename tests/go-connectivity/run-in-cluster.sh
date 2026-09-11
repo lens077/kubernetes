@@ -91,6 +91,15 @@ copy_secret() {  # copy_secret <源ns> <源名> <目标名>
 copy_secret postgresql pg-main-app conntest-pg || true
 copy_secret consul consul-bootstrap-acl-token conntest-consul || true
 copy_secret dragonfly dragonfly-password-secret conntest-dragonfly || true
+# Config Center 数据面: 从 ecommerce 的 pre selector Secret 里取一个服务的 machine token(缺失则 TestApplicationLayer 的数据面部分 Skip)
+cc_env=${CONFIG_CENTER_ENV:-pre}; cc_svc=${CONFIG_CENTER_SERVICE:-payment}
+if sel=$(k -n ecommerce get secret "ecommerce-config-source-$cc_env" -o jsonpath="{.data.$cc_svc\.yaml}" 2>/dev/null | base64 -d) && [[ -n $sel ]]; then
+  tok=$(sed -nE 's/^\s*service_token:\s*//p' <<<"$sel" | tr -d '"'"'"' ')
+  k -n "$NS" create secret generic conntest-config-center --from-literal=token="$tok" --dry-run=client -o yaml | k apply -f - >/dev/null
+else
+  echo "   (Secret ecommerce/ecommerce-config-source-$cc_env 不存在: Config Center 数据面测试将 Skip)"
+  k -n "$NS" delete secret conntest-config-center --ignore-not-found >/dev/null
+fi
 
 # 环境变量: 可选凭据用 optional: true, 缺失时测试自身 Skip
 env_yaml() {
@@ -105,6 +114,10 @@ env_yaml() {
               valueFrom: {secretKeyRef: {name: conntest-consul, key: token, optional: true}}
             - name: DRAGONFLY_PASSWORD
               valueFrom: {secretKeyRef: {name: conntest-dragonfly, key: password, optional: true}}
+            - name: CONFIG_CENTER_SERVICE_TOKEN
+              valueFrom: {secretKeyRef: {name: conntest-config-center, key: token, optional: true}}
+            - {name: CONFIG_CENTER_ENV, value: "$cc_env"}
+            - {name: CONFIG_CENTER_SERVICE, value: "$cc_svc"}
 EOF
   # 透传调用方的 SKIP_* 与显式地址覆盖
   local v

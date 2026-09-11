@@ -189,6 +189,22 @@ patroni/pgbouncer/redis/dnsmasq 全部绑定失效，`pg.apikv.com`/`redis.apikv
 - A. 机房用独立环境（`pre`）：在管理台为 `pre` 播种各服务的 redis CA/密码等键、签发 machine token、换 `ecommerce-config-source-*` Secret —— 与 control-tower `deploy/pre` 的设计一致，两集群隔离；
 - B. 共用 `dev`：把机房根 CA 追加进 dev 环境各服务 `redis.tls.ca_pem`（bundle，对内网无害），机房 Dragonfly 密码改成内网的同一个 —— 快，但两集群继续共享一份可变配置。
 
+### 2.4 执行记录：2026-09-11 ecommerce 后端切到 Config Center `pre` 环境（拍板 A）
+
+`tools/config-center-pre-seed.sh` 一次跑完：10 个服务的 `pre/bootstrap.yaml`（由 dev 复制，只换 `data.cache.redis` 的密码/CA 为本集群
+Dragonfly）、10 枚 pre machine token、`ecommerce-config-source-pre` Secret、Deployment 的 `DEPLOYMENT_MODE`/selector 切换。
+
+| 项 | 结果 |
+|---|---|
+| address / behavior / cart / inventory / merchant / order / payment / product / user | ✅ 9/9 Running（pre） |
+| search | ❌ 缩到 0：dev 配置含 `search.catalog`，镜像 1.6.3 不认识；Config Center schema（enforce）又要求该键，pre 里删不掉。等 search 出含 catalog 的 amd64 版本 |
+| consumer-next / ecommerce-frontend / qqbot | ❌ 0 副本（TCR 仅 arm64，不变） |
+| Go 连通性 | ✅ 14/14，新增 `TestApplicationLayer`（经 VIP 的应用层 + Config Center 数据面 machine token 读取） |
+
+管理 token 的取得：Casdoor 应用 `ecommerce` 没开 password grant；用账号会话走 **authorization_code**（`/api/login?clientId=…&responseType=code&grantType=authorization_code&redirectUri=…` 带 `type:"code"` 的 JSON 体）拿 code，再换 token（900 s）。`is_secret` 必须与 dev 一致为 false，否则管理面读回是 `******`。
+
+**node3 混合节点的教训**：node3 空载（Pigsty + 10 个 docker 容器 + k8s DaemonSet）已用 4.7 G/7.4 G，调度 3 个 ecommerce Pod 后宿主内存耗尽失联，只能机房强制重启。已打 taint `workload=pigsty-host:NoSchedule`（DaemonSet 不受影响），普通 Pod 只在 node4/node5 跑。重启后 OpenBao 重新 sealed（组件设计如此），用 `creds/openbao-init` 的 key 解封。
+
 
 ## 3. 凭据与外部系统（不在仓库，必须带过去）
 

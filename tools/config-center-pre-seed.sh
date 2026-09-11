@@ -108,7 +108,7 @@ PY
 
   # 3) PutKey 到目标环境(管理 token)
   body=$(jq -n --arg ns "$svc" --arg env "$ENVIRONMENT" --arg key "$KEY" --arg v "$new_value" \
-    '{namespace:$ns, environment:$env, key:$key, format:"CONFIG_FORMAT_YAML", value:$v, is_secret:true,
+    '{namespace:$ns, environment:$env, key:$key, format:"CONFIG_FORMAT_YAML", value:$v, is_secret:false,
       comment:"seed from dev by tools/config-center-pre-seed.sh: cluster-local redis password/ca", description:"由 dev 复制, redis 凭据为本集群 Dragonfly"}')
   resp=$(rpc PutKey "$body" -H "Authorization: Bearer $ADMIN_TOKEN")
   rpc_ok "$resp" "$svc: PutKey $ENVIRONMENT(管理 token 无效/过期?)"
@@ -120,10 +120,11 @@ PY
   NEW_TOKENS[$svc]=$(jq -r '.token' <<<"$resp")
   [[ -n ${NEW_TOKENS[$svc]} && ${NEW_TOKENS[$svc]} != null ]] || die "$svc: 未返回 token"
 
-  # 5) 用新 token 读回, 证明键+token 都生效
+  # 5) 用新 machine token 读回(数据面视角), 证明键+token 都生效。
+  #    注意 is_secret 必须与 dev 一致(false): 置 true 时管理面 GetKey 返回 ****** 脱敏, 数据面 SDK 也拿不到真值。
   resp=$(rpc GetKey "{\"namespace\":\"$svc\",\"environment\":\"$ENVIRONMENT\",\"key\":\"$KEY\"}" -H "x-config-center-service-token: ${NEW_TOKENS[$svc]}")
   rpc_ok "$resp" "$svc: 新 token 读回 $ENVIRONMENT"
-  [[ $(jq -r '.entry.value' <<<"$resp") == "$new_value" ]] || die "$svc: 读回内容与写入不一致"
+  [[ $(jq -r '.entry.value' <<<"$resp") == "$new_value" ]] || die "$svc: 读回内容与写入不一致(is_secret 脱敏? 版本冲突?)"
   log "$svc: machine token 已签发并读回校验通过"
 done
 [[ $DRY == true ]] && { log "dry-run 结束: 未写 Config Center、未建 Secret、未改 Deployment"; exit 0; }

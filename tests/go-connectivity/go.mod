@@ -2,6 +2,9 @@ module github.com/lens077/kubernetes/tests/go-connectivity
 
 go 1.26.0
 
+// The published API module retains a monorepo-local placeholder requirement.
+replace github.com/cilium/tetragon => github.com/cilium/tetragon v1.7.1
+
 require (
 	github.com/cilium/tetragon/api v1.7.1
 	github.com/hashicorp/consul/api v1.34.4

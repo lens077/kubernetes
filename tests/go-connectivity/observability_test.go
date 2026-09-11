@@ -191,3 +191,62 @@ func TestGatewayVIP(t *testing.T) {
 	}
 	t.Logf("Gateway VIP %s: Host=%s 200/envoy, 未匹配 404/envoy, 80→443 301 OK", vip, host)
 }
+
+// 应用层(与内网 node101~103 对齐后新增): config-center 管理面/数据面、control-tower-gateway、ecommerce 后端。
+// 路径都经共享 Gateway VIP + Host 头, 与公网 Pangolin 走的是同一条路。
+func TestApplicationLayer(t *testing.T) {
+	skipIf(t, "APPS")
+	vip := requireEnv(t, "GATEWAY_VIP")
+	// 证书是 *.dev.test 泛域名; .app.com 这类 Host 只用于路由匹配, SNI 固定用一个证书覆盖的名字做校验
+	sni := env("GATEWAY_SNI", "probe.dev.test")
+	tlsClient := &http.Client{Timeout: 15 * time.Second, Transport: &http.Transport{TLSClientConfig: tlsConfig(t, sni)},
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	cases := []struct {
+		name, host, path string
+		want             int
+	}{
+		{"config-center-web", "config.app.com", "/", 200},
+		{"config-center-api-healthz", "config-api.app.com", "/healthz", 200},
+		{"config-center-api-needs-token", "config-api.app.com", "/config.v1.ConfigService/ListNamespaces", 401},
+		{"control-tower-gateway", "gateway.dev.test", "/healthz", 200},
+		{"ecommerce-payment", "payment.dev.test", "/healthz", 200},
+		{"ecommerce-user", "user.dev.test", "/healthz", 200},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			code, hdr, body := httpGet(t, tlsClient, "https://"+vip+tc.path, tc.host)
+			if code != tc.want {
+				t.Fatalf("Host=%s %s → %d (期望 %d) server=%q: %.200s", tc.host, tc.path, code, tc.want, hdr.Get("server"), body)
+			}
+			t.Logf("Host=%s %s → %d", tc.host, tc.path, code)
+		})
+	}
+	// 数据面: 用 pre 环境 machine token 从 Config Center 读一个服务的 bootstrap.yaml(Secret 注入, 缺失则 Skip)
+	tok := requireEnv(t, "CONFIG_CENTER_SERVICE_TOKEN")
+	svc := env("CONFIG_CENTER_SERVICE", "payment")
+	envName := env("CONFIG_CENTER_ENV", "pre")
+	req := fmt.Sprintf(`{"namespace":%q,"environment":%q,"key":"bootstrap.yaml"}`, svc, envName)
+	r, err := http.NewRequestWithContext(ctx(t, 15*time.Second), http.MethodPost, "https://"+vip+"/config.v1.ConfigService/GetKey", strings.NewReader(req))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.Host = "config-api.app.com"
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("x-config-center-service-token", tok)
+	resp, err := tlsClient.Do(r)
+	if err != nil {
+		t.Fatalf("GetKey: %v", err)
+	}
+	defer resp.Body.Close()
+	var out struct {
+		Code  *string `json:"code"`
+		Entry struct {
+			Version int    `json:"version"`
+			Value   string `json:"value"`
+		} `json:"entry"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil || out.Code != nil || out.Entry.Version == 0 || !strings.Contains(out.Entry.Value, "data:") {
+		t.Fatalf("GetKey %s/%s 失败: http=%d err=%v code=%v version=%d", svc, envName, resp.StatusCode, err, out.Code, out.Entry.Version)
+	}
+	t.Logf("Config Center 数据面: %s/%s/bootstrap.yaml v%d 读取 OK(machine token)", svc, envName, out.Entry.Version)
+}

@@ -18,7 +18,8 @@ SKIP_OPENFGA=1 bash tests/go-connectivity/run-in-cluster.sh   # 组件未装时�
 `/var/cache/conntest-gopath`（首跑约 1 分钟，之后十几秒）。退出码就是 `go test` 的退出码；日志末尾有 `=== SUMMARY ===`。
 
 凭据只从集群 Secret 复制到 `conntest` 命名空间再以环境变量注入：`postgresql/pg-main-app`（`uri`）、
-`consul/consul-bootstrap-acl-token`（`token`）、`dragonfly/dragonfly-password-secret`（`password`）。
+`consul/consul-bootstrap-acl-token`（`token`）、`dragonfly/dragonfly-password-secret`（`password`）、
+`ecommerce/ecommerce-config-source-pre`（取 `payment.yaml` 的 `service_token`，`CONFIG_CENTER_ENV/SERVICE` 可改）。
 Secret 不存在时对应用例 `Skip`，不会假装通过。TLS 校验用 trust-manager 分发的 `global-root-ca`。
 
 ## 用例与判据
@@ -38,6 +39,7 @@ Secret 不存在时对应用例 `Skip`，不会假装通过。TLS 校验用 trus
 | `TestHTTPEndpoints` | net/http | argocd `/api/version`、spegel/tetragon `/metrics` 含自有指标、gatus/healthchecks/bugsink 健康接口 |
 | `TestGatewayVIP` | net/http | 从 Pod 到固定 VIP：匹配 Host 200/envoy、未匹配 404/envoy、80→443 301（与 `CILIUM.md` §8.1 第三层验收一致） |
 | `TestKubernetesAPI` | `k8s.io/client-go` | 节点全 Ready；算子命名空间的 Deployment 全部可用 |
+| `TestApplicationLayer` | net/http | 经 VIP+Host 头：config-center web/api、control-tower-gateway、payment/user `/healthz`；再用 ecommerce 的 pre machine token 从 Config Center 数据面读 `bootstrap.yaml`（Secret 缺失则该部分 Skip） |
 | `TestTetragonGRPC`（`--host`） | `cilium/tetragon/api` | `GetVersion` + `GetHealth`=RUNNING |
 
 ## 踩坑
@@ -47,3 +49,5 @@ Secret 不存在时对应用例 `Skip`，不会假装通过。TLS 校验用 trus
 - `/metrics` 正文里组件自有指标排在 Go 运行时指标之后，只读前几 KB 会误判"缺少指标"。
 - Job 内 `go test | tee` 必须 `set -o pipefail`，否则有 FAIL 的 Job 也会 Complete。
 - Tetragon gRPC 只监听节点 `localhost`，必须 hostNetwork + `ClusterFirstWithHostNet` 才能在 Job 里测。
+- 经 VIP 访问 `*.app.com` 这类 Host 时证书校验要用 `*.dev.test` 覆盖的 SNI（`GATEWAY_SNI`，默认 `probe.dev.test`），Host 头只管路由。
+- 这套测试抓过真实回归：节点重启后 OpenBao 重新 sealed（组件按设计需手工解封 `examples/unseal.sh`），以及 DaemonSet Pod 卡在旧 IP。
