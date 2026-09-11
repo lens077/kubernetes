@@ -129,34 +129,42 @@ PY
 done
 [[ $DRY == true ]] && { log "dry-run 结束: 未写 Config Center、未建 Secret、未改 Deployment"; exit 0; }
 
-# 6) 组装 selector Secret: 复制 dev 的 selector, 改 environment 与 service_token
-log "组装 Secret $NS/$DST_SECRET"
-args=()
+# 6) 组装 selector Secret: 复制 dev 的 selector, 改 environment 与 service_token。
+#    只更新本次 SERVICES 里的 key, 其余 key 保留(部分重播种时不能把别的服务的 token 抹掉——2026-09-11 踩过)。
+log "更新 Secret $NS/$DST_SECRET(只改本次 ${#NEW_TOKENS[@]} 个服务的 key)"
 tmp=$(mktemp -d); chmod 700 "$tmp"; trap 'rm -rf "$tmp"' EXIT
+kubectl -n "$NS" get secret "$DST_SECRET" -o json 2>/dev/null > "$tmp/existing.json" \
+  || jq -n --arg n "$DST_SECRET" --arg ns "$NS" '{apiVersion:"v1",kind:"Secret",type:"Opaque",metadata:{name:$n,namespace:$ns},data:{}}' > "$tmp/existing.json"
 for svc in $SERVICES; do
   kubectl -n "$NS" get secret "$SRC_SECRET" -o jsonpath="{.data.$svc\.yaml}" | base64 -d \
     | sed -E "s/^(\s*environment:\s*).*/\1$ENVIRONMENT/; s/^(\s*service_token:\s*).*/\1${NEW_TOKENS[$svc]}/" > "$tmp/$svc.yaml"
   grep -qE "^\s*environment:\s*$ENVIRONMENT$" "$tmp/$svc.yaml" || die "$svc: selector 替换 environment 失败"
-  args+=(--from-file="$svc.yaml=$tmp/$svc.yaml")
+  jq --arg k "$svc.yaml" --arg v "$(base64 -w0 < "$tmp/$svc.yaml")" '.data[$k]=$v' "$tmp/existing.json" > "$tmp/next.json" && mv "$tmp/next.json" "$tmp/existing.json"
 done
-kubectl -n "$NS" create secret generic "$DST_SECRET" "${args[@]}" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+jq '{apiVersion, kind, type, metadata:{name:.metadata.name, namespace:.metadata.namespace}, data}' "$tmp/existing.json" | kubectl apply -f - >/dev/null
+log "Secret 现有 key: $(kubectl -n "$NS" get secret "$DST_SECRET" -o jsonpath='{.data}' | jq -r 'keys|join(" ")')"
 rm -rf "$tmp"; trap - EXIT
 
-# 7) 切换 Deployment(与 ecommerce deploy/overlays/pre/patch-env.yaml 等价, 按名字定位而不是按下标)
+# 7) 切换 Deployment(与 ecommerce deploy/overlays/pre/patch-env.yaml 等价, 按名字定位而不是按下标)。
+#    卷可能已经指向目标 Secret(重播种), 两个名字都接受。
 for svc in $SERVICES; do
   dep="ecommerce-$svc-deploy"
   idx=$(kubectl -n "$NS" get deploy "$dep" -o json | jq '.spec.template.spec.containers[0].env | map(.name) | index("DEPLOYMENT_MODE")')
-  vol=$(kubectl -n "$NS" get deploy "$dep" -o json | jq '.spec.template.spec.volumes | map(.secret.secretName // "") | index("'"$SRC_SECRET"'")')
-  [[ $idx != null && $vol != null ]] || die "$dep: 找不到 DEPLOYMENT_MODE 环境变量或 $SRC_SECRET 卷"
+  vol=$(kubectl -n "$NS" get deploy "$dep" -o json | jq --arg a "$SRC_SECRET" --arg b "$DST_SECRET" '.spec.template.spec.volumes | map(.secret.secretName // "") | (index($a) // index($b))')
+  [[ $idx != null && $vol != null ]] || die "$dep: 找不到 DEPLOYMENT_MODE 环境变量或 $SRC_SECRET/$DST_SECRET 卷"
   kubectl -n "$NS" patch deploy "$dep" --type=json -p "[
     {\"op\":\"replace\",\"path\":\"/spec/template/spec/containers/0/env/$idx/value\",\"value\":\"$ENVIRONMENT\"},
     {\"op\":\"replace\",\"path\":\"/spec/template/spec/volumes/$vol/secret/secretName\",\"value\":\"$DST_SECRET\"}]" >/dev/null
-  log "$dep: DEPLOYMENT_MODE=$ENVIRONMENT, selector=$DST_SECRET"
+  kubectl -n "$NS" rollout restart deploy "$dep" >/dev/null   # 引用未变时 patch 不触发滚动, token 已换必须重启
+  log "$dep: DEPLOYMENT_MODE=$ENVIRONMENT, selector=$DST_SECRET, 已触发滚动"
 done
 
 log "等待滚动完成..."
 fail=0
 for svc in $SERVICES; do
+  if [[ $(kubectl -n "$NS" get deploy "ecommerce-$svc-deploy" -o jsonpath='{.spec.replicas}') == 0 ]]; then
+    log "· ecommerce-$svc-deploy 副本为 0(缩容中), 跳过等待"; continue
+  fi
   kubectl -n "$NS" rollout status "deploy/ecommerce-$svc-deploy" --timeout=180s >/dev/null 2>&1 \
     && log "✔ ecommerce-$svc-deploy 就绪" || { log "✘ ecommerce-$svc-deploy 未就绪: kubectl -n $NS logs deploy/ecommerce-$svc-deploy"; fail=1; }
 done
