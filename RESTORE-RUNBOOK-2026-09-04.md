@@ -163,6 +163,28 @@ ssh node4 'kubectl -n pangolin exec deploy/newt -- wget -S -qO- --no-check-certi
 应用层的数据面本来就不在集群里：config-center 与各服务通过 `pg.apikv.com:30001` / `redis.apikv.com:30002`
 （node3 Pigsty 经 Pangolin 暴露）访问 PG/Redis，机房照旧可用；切到集群内 CNPG 属于 node3 重装时的迁移决策（§4）。
 
+### 2.3 执行记录：2026-09-11 Pangolin 切流到机房集群
+
+前提变化：三台机房节点（node3/4/5）都以 **systemd** 方式跑 newt（`/etc/newt/newt.env`，站点 node3=7 / node5=9 / node4=10），
+集群里不再装 newt 组件；内网集群 node101~103 已删除，Pangolin 上 9 个资源仍指向已离线的站点 4（`k8s-cluster`）。
+
+| 资源 | 原 target（站点 4） | 现 target | 公网结果 |
+|---|---|---|---|
+| config / config-api / gateway / shop / qqbot / argocd / consul / search / cart-api `.apikv.com` | `10.110.51.106:443`（旧 VIP）或 `192.168.3.121:443` | **站点 10（node4）→ `https://10.10.31.240:443`** | config 200；config-api 401（需 token）；gateway `/healthz` 200；shop/qqbot 503（后端 0 副本，等 amd64 镜像）；argocd/consul/search/cart-api 401 = Pangolin SSO 墙（资源自身策略） |
+| node3 Pigsty 相关（站点 7） | 不变 | 不变 | — |
+| scorpius.apikv.com | 站点 4 `127.0.0.1:8787` | **未动**，机房无此服务 | 仍 offline，需决定去向 |
+
+操作方式与坑（Pangolin 1.22.2）：
+1. API 登录被拒（账号/密码校验失败），改用团队文档的 sqlite 路径：先 `sqlite3 backup` API 备份（`db.sqlite.bak-idc-cutover-<ts>`），再改 `targets.siteId/ip/port/method`。
+2. **https target 必须设 `resources.tlsServerName`**（=资源域名），Pangolin 才会给 Traefik 生成带 `insecureSkipVerify` 的 `serversTransport`；否则 Traefik 校验集群自签证书失败 → 502。
+3. **直接改库不会推送到 newt**：Pangolin 只在 newt 注册时下发 target 列表。改完要 `docker restart pangolin`，再 **重启对应节点的 newt**（`systemctl restart newt`），才能看到 `Started tcp proxy … to 10.10.31.240:443`。只重启 Pangolin 不够。
+4. 新版 API 的 POST/PUT 需要头 `X-CSRF-Token: x-csrf-protection`（固定值，源码 `csrfProtectionMiddleware`）。
+5. IDC 的 4 条 HTTPRoute 追加了 `argocd/consul/search/cart-api.apikv.com` hostname（原只有 `*.dev.test`）。
+
+顺带修掉的集群外故障：node3 的 `10.10.21.172` 原是 **DHCP 租约**（netplan 同时写了 `dhcp4: yes` 与静态 `.163`），租约失效后 Pigsty 的
+patroni/pgbouncer/redis/dnsmasq 全部绑定失效，`pg.apikv.com`/`redis.apikv.com` 只剩 TCP 通、TLS EOF，config-center 与所有 ecommerce
+服务连锁 CrashLoop。已把 `.172` 改为静态第二地址（`dhcp4: false`），重启 patroni/pgbouncer/redis 后恢复。
+
 **待拍板**（config-center 是共享配置，按 control-tower 规矩先征询）：
 - A. 机房用独立环境（`pre`）：在管理台为 `pre` 播种各服务的 redis CA/密码等键、签发 machine token、换 `ecommerce-config-source-*` Secret —— 与 control-tower `deploy/pre` 的设计一致，两集群隔离；
 - B. 共用 `dev`：把机房根 CA 追加进 dev 环境各服务 `redis.tls.ca_pem`（bundle，对内网无害），机房 Dragonfly 密码改成内网的同一个 —— 快，但两集群继续共享一份可变配置。
