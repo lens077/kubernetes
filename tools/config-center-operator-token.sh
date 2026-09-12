@@ -4,7 +4,7 @@
 #
 #   在控制面节点执行(需要 /root/.casdoor-login, 见 config-center-admin-token.sh 头注释):
 #     bash tools/config-center-operator-token.sh                 # environment=pre, Secret config-center/config-center-operator
-#     ENVIRONMENT=dev bash tools/config-center-operator-token.sh
+#     ENVIRONMENT=dev bash tools/config-center-operator-token.sh   # → Secret config-center/config-center-operator-dev
 #   之后所有 harvest / 轮换都不再需要 Casdoor 会话:
 #     ADMIN_TOKEN_SECRET=config-center/config-center-operator:token bash tools/config-center-harvest.sh
 #
@@ -20,7 +20,8 @@ export KUBECONFIG=${KUBECONFIG:-/etc/kubernetes/admin.conf}; [[ -r $KUBECONFIG ]
 
 ENVIRONMENT=${ENVIRONMENT:-pre}
 SECRET_NS=${SECRET_NS:-config-center}
-SECRET_NAME=${SECRET_NAME:-config-center-operator}
+# pre 用无后缀名(既有引用), 其它环境带后缀 —— 不然签第二个环境会覆盖第一个的明文(2026-09-12 踩过)
+SECRET_NAME=${SECRET_NAME:-$([[ $ENVIRONMENT == pre ]] && echo config-center-operator || echo "config-center-operator-$ENVIRONMENT")}
 SERVICE_NAME=${SERVICE_NAME:-harvest}          # 主体名会是 operator:harvest, 落审计与 revision author
 CC_URL=${CONFIG_CENTER_URL:-http://$(kubectl -n config-center get svc config-center -o jsonpath='{.spec.clusterIP}'):30010}
 
@@ -51,7 +52,7 @@ log "已签发 operator token id=$id (environment=$ENVIRONMENT, namespaces=*)"
 # 3) 存成 Secret(覆盖)
 kubectl -n "$SECRET_NS" create secret generic "$SECRET_NAME" --from-literal=token="$tok" \
   --dry-run=client -o yaml | kubectl apply -f - >/dev/null
-kubectl -n "$SECRET_NS" annotate secret "$SECRET_NAME" "config-center/machine-token-id=$id" --overwrite >/dev/null
+kubectl -n "$SECRET_NS" annotate secret "$SECRET_NAME" "config-center/machine-token-id=$id" "config-center/environment=$ENVIRONMENT" --overwrite >/dev/null
 log "Secret $SECRET_NS/$SECRET_NAME 已写入(注解记录 token id, 便于吊销)"
 
 # 4) 用它读一次、写一次(读回), 证明真的能当管理面用
