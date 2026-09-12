@@ -19,6 +19,8 @@
 | `pre`（默认） | 集群内 Pod | `SVC:PORT`（`<svc>.<ns>.svc`；外部实例是域名） | 集群 DNS 不需要；外部实例按 `CA_REF` |
 | `dev` | 本机 / 内网，经 Cilium Gateway | `HOSTNAME:DEV_PORT`（`*.dev.test`） | 必须带 `ca_pem`（私有 CA） |
 
+`dev` 策略的前提：开发机在集群 LAN 上（网关 VIP `10.10.31.x` 只在机房 L2 可达，家里的 Mac 经隧道只到 API server），且 `/etc/hosts` 把 `*.dev.test` 指到 VIP（RFC 6761 保留域，公网永不解析）。2026-09-12 在节点宿主机实测：`consul.dev.test:443` 经共享网关 HTTPS 200、证书链过私有 CA（CN `dev.test`）；`redis.dev.test:6380` 经 dragonfly-gateway TLS 校验通过、`AUTH` +OK / `PING` +PONG、错密码 `-WRONGPASS`。写入 Config Center `dev` 环境需要一枚 `ENVIRONMENT=dev` 的 operator token。
+
 「优先 HTTPRoute > LB > Svc」的自动发现已放弃：对集群内消费方那是错的（control-tower `docs/operations/service-interconnect.md`）。声明优先、发现校验。
 
 ## 文件
