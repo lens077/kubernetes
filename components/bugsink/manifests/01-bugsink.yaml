@@ -1,0 +1,114 @@
+# Bugsink —— Sentry 协议兼容的错误追踪(单用户, 关闭注册)。
+# 取值沿用 node3 的 compose(2026-09-03 收割): SINGLE_USER, 注册/建团队关闭, webhook 只允许白名单,
+# 事件保留 90 天, 2 个 snappea worker, dummy 邮件后端。
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: bugsink-data
+  namespace: ${NAMESPACE}
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: ${SC_NAME}
+  resources:
+    requests:
+      storage: ${BUGSINK_STORAGE_SIZE}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: bugsink
+  namespace: ${NAMESPACE}
+  labels:
+    app.kubernetes.io/name: bugsink
+spec:
+  selector:
+    app.kubernetes.io/name: bugsink
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bugsink
+  namespace: ${NAMESPACE}
+  labels:
+    app.kubernetes.io/name: bugsink
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate                 # sqlite(WAL) 单写者
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: bugsink
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: bugsink
+    spec:
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+        # 镜像以 uid/gid 14237(bugsink) 运行; PVC(xfs) 挂上来是 root:root 755, 不给 fsGroup 就
+        # "unable to open database file" CrashLoop(2026-09-06 机房实测)。fsGroup 让 kubelet 把卷 chgrp 成组可写。
+        runAsUser: 14237
+        runAsGroup: 14237
+        fsGroup: 14237
+        fsGroupChangePolicy: OnRootMismatch
+      containers:
+        - name: bugsink
+          # node3 上验证过的镜像 digest(bugsink 官方只发 latest 与 digest)
+          image: docker.io/bugsink/bugsink@sha256:b697016950d8aa7d94020def15bc2727e8fc40148f079884ae4cdacf7ea1e9a3
+          imagePullPolicy: IfNotPresent
+          env:
+            - { name: PORT, value: "8000" }
+            - { name: BASE_URL, value: "https://${HOSTNAME}" }        # 也决定 ALLOWED_HOSTS
+            - { name: SITE_TITLE, value: "Ecommerce Bugsink" }
+            - { name: BEHIND_HTTPS_PROXY, value: "True" }             # 网关终结 TLS
+            - { name: SINGLE_USER, value: "True" }
+            - { name: USER_REGISTRATION, value: CB_NOBODY }
+            - { name: TEAM_CREATION, value: CB_NOBODY }
+            - { name: TIME_ZONE, value: "${TIMEZONE}" }
+            - { name: SNAPPEA_NUM_WORKERS, value: "2" }
+            - { name: EMAIL_BACKEND, value: django.core.mail.backends.dummy.EmailBackend }
+            - { name: ALERTS_WEBHOOK_OUTBOUND_MODE, value: allowlist_only }
+            - { name: ALERTS_WEBHOOK_ALLOW_LIST, value: "alert-bridge.observability.svc.cluster.local" }
+            - { name: ALERTS_WEBHOOK_DENY_NON_GLOBAL, value: "False" }   # 白名单是集群内地址(非公网)
+            - { name: MAX_EVENT_AGE_DAYS, value: "${BUGSINK_EVENT_RETENTION_DAYS}" }
+            - { name: DATABASE_PATH, value: /data/db.sqlite3 }
+            - name: SECRET_KEY
+              valueFrom:
+                secretKeyRef: { name: bugsink-secret, key: SECRET_KEY }
+            - name: CREATE_SUPERUSER                                    # 首次启动建 admin, 已存在则跳过
+              valueFrom:
+                secretKeyRef: { name: bugsink-secret, key: CREATE_SUPERUSER }
+          ports:
+            - { name: http, containerPort: 8000 }
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: 8000
+              httpHeaders: [{ name: Host, value: "${HOSTNAME}" }]   # ALLOWED_HOSTS 只认 BASE_URL 的域名
+            periodSeconds: 10
+            initialDelaySeconds: 15
+          livenessProbe:
+            httpGet:
+              path: /health/ready
+              port: 8000
+              httpHeaders: [{ name: Host, value: "${HOSTNAME}" }]
+            periodSeconds: 30
+            initialDelaySeconds: 30
+          securityContext:
+            allowPrivilegeEscalation: false
+          volumeMounts:
+            - { name: data, mountPath: /data }
+          resources:
+            requests: { cpu: 50m, memory: 256Mi }
+            limits: { memory: 768Mi }
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: bugsink-data

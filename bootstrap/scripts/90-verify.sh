@@ -2,8 +2,8 @@
 # =============================================================================
 # 90-verify —— 全局验收与报告
 #   - 控制面/CNI/存储/组件逐项复检(核心项失败即报错, 可选组件仅警告)
-#   - 冒烟测试: PVC 读写(默认开) / LoadBalancer L2 通告(默认关)
-#               可观测链路 OTLP 打点→后端查回(默认开, 只测已启用的 vm/loki/jaeger)
+#   - 冒烟测试: PVC 读写 / LoadBalancer IPAM+BPF+L2 / OTLP 打点→后端查回
+#               均由 config.env 开关控制, 默认开; 观测只测已启用的 VM/VL/VT 或 Loki/Jaeger
 #   - 生成 /root/k8s-install-report.txt
 #   注意: 本阶段所有步骤不做状态跳过(每次执行都完整复检)
 # =============================================================================
@@ -49,6 +49,26 @@ check_kube_proxy_free() {
   grep -qiE 'KubeProxyReplacement:[[:space:]]*True' <<<"$status_out" \
     || die "Cilium KubeProxyReplacement 未生效"
   log_info "kube-proxy 已完全移除, Cilium eBPF 接管服务转发"
+}
+
+check_shared_gateway() {
+  [[ $CILIUM_ENABLE_GATEWAY_API == true ]] || { log_info "Gateway API 未启用, 跳过共享 Gateway 检查"; return 0; }
+  if ! kctl -n default get gateway cilium-gateway >/dev/null 2>&1; then
+    grep -qx gateway "$STATE_DIR/components.selected" 2>/dev/null \
+      && die "80 阶段已选 gateway, 但 default/cilium-gateway 不存在"
+    log_warn "共享 Gateway 未安装, 跳过(未选组件时属正常)"
+    return 0
+  fi
+  # 完整对象 + 生成的 Service 一起校验(lib/common.sh shared_gateway_problems):
+  # Programmed 必须是当前 generation 的结论; Service 的请求注解与实际分配都必须是固定 VIP。
+  local gw_json svc_json problems
+  gw_json=$(kctl -n default get gateway cilium-gateway -o json 2>/dev/null) \
+    || die "读取 default/cilium-gateway 失败"
+  svc_json=$(kctl -n default get svc cilium-gateway-cilium-gateway -o json 2>/dev/null) || svc_json=""
+  problems=$(shared_gateway_problems "$gw_json" "$svc_json" "$CILIUM_GATEWAY_LB_IP")
+  [[ -z $problems ]] || die "共享 Gateway 验收未通过(检查 LB-IPAM 池/固定 VIP/证书/listener):"$'\n'"$problems"
+  log_info "共享 Gateway 验收通过: $CILIUM_GATEWAY_LB_IP (固定 VIP, 当前 generation Programmed=True, LB-IPAM 请求已满足)"
+  log_info "以上只证明控制面与地址分配; newt Pod → VIP:443 → HTTPRoute 的实际路径按 components/gateway/README.md §5 从 newt Pod 内实测"
 }
 
 # --- 3. 系统调优抽检 ---------------------------------------------------------------------
@@ -144,10 +164,10 @@ EOF
   log_info "存储链路冒烟测试通过(创建→写→读→清理)"
 }
 
-# --- 5. LoadBalancer L2 冒烟(可选) -----------------------------------------------------------
+# --- 5. LoadBalancer 冒烟(可选; 需要 LB-IPAM 池, 与 L2 通告是否开启无关) -----------------------
 smoke_loadbalancer() {
-  if [[ $VERIFY_LB_SMOKE_TEST != true || $CILIUM_ENABLE_L2_ANNOUNCEMENTS != true ]]; then
-    log_info "LB 冒烟测试未启用, 跳过"
+  if [[ $VERIFY_LB_SMOKE_TEST != true ]] || ! lb_ipam_enabled; then
+    log_info "LB 冒烟测试未启用或 LB-IPAM 关闭, 跳过"
     return 0
   fi
   kctl delete ns lb-smoke --ignore-not-found --timeout=120s
@@ -196,22 +216,28 @@ EOF
   [[ -n $ip ]] || die "LoadBalancer 服务未分配到外部 IP(检查 CiliumLoadBalancerIPPool)"
   kctl -n lb-smoke rollout status deploy/web --timeout=300s
 
-  # L2 通告的 VIP 面向局域网"其他"主机(ARP 应答), 节点自访不走该路径 —— 已知行为,
-  # 因此判定标准是: Cilium 已编程该 LB 服务 + L2 通告租约存在; 节点自访通了算加分
-  local svc_prog
+  # 本冒烟只覆盖两层: ① LB-IPAM 分配 ② Cilium eBPF service map 已编程该 VIP。
+  # L2 租约与节点自访是附加观测, 分别记录; 都不能替代"外部主机/newt Pod 实际访问"这一层。
+  local svc_prog lease_state="缺失" self_state="未通"
   svc_prog=$(kctl -n kube-system exec ds/cilium -c cilium-agent -- cilium-dbg service list 2>/dev/null) || true
   grep -q "$ip" <<<"$svc_prog" || die "Cilium 未编程 LB 服务($ip), 数据面异常"
-  if ! kctl -n kube-system get lease cilium-l2announce-lb-smoke-web &>/dev/null; then
-    log_warn "未见 L2 通告租约(cilium-l2announce-lb-smoke-web), 外部可达性存疑"
+  if kctl -n kube-system get lease cilium-l2announce-lb-smoke-web &>/dev/null; then
+    lease_state="存在"
+    l2_enabled || log_warn "L2 通告已关闭却仍有租约 cilium-l2announce-lb-smoke-web: 旧 L2Policy 可能残留, 检查 kubectl get ciliuml2announcementpolicies"
+  elif l2_enabled; then
+    log_warn "未见 L2 通告租约(cilium-l2announce-lb-smoke-web): 该 VIP 当前无节点应答 ARP; 跨网段集群内 VIP 可接受, 同网段 LAN 直达模式下属异常"
+  else
+    lease_state="无(L2 关闭, 预期)"
   fi
   local lb_body=""
   if lb_body=$(curl -fsS --max-time 5 "http://$ip/" 2>/dev/null) && grep -qi nginx <<<"$lb_body"; then
-    log_info "节点自访 VIP 也通(加分项)"
+    self_state="通"
   else
-    log_info "节点自访 VIP 未通 —— L2 通告的已知行为(ARP 只应答外部主机); 从局域网其他机器执行 curl http://$ip/ 验证"
+    log_info "节点自访 VIP 未通: 单独记录, 不据此判定外部或 Pod 路径成败"
   fi
   kctl delete ns lb-smoke --timeout=120s
-  log_ok "LoadBalancer 冒烟通过: VIP $ip 已分配并由 Cilium 编程(外部可达性从局域网内其他主机验证)"
+  log_ok "LoadBalancer 冒烟: VIP $ip 已分配并由 Cilium 编程(已验证); L2 租约=$lease_state, 节点自访=$self_state(附加观测)"
+  log_info "未验证层: 局域网其他主机 / newt Pod 到 VIP 的实际访问 —— 按 components/gateway/README.md §5 另行实测"
 }
 
 # --- 6. 可观测链路冒烟(OTLP 打点 → 回查后端确认落库) ---------------------------------------
@@ -225,6 +251,8 @@ OTEL_SMOKE_NS="otel-smoke"
 VM_SVC="vm-single-victoria-metrics-single-server.victoriametrics.svc.cluster.local:8428"
 LOKI_SVC="loki.logging.svc.cluster.local:3100"
 JAEGER_SVC="jaeger.observability.svc.cluster.local"
+VL_SVC="vl-victoria-logs-single-server.logging.svc.cluster.local:9428"
+VT_SVC="victoria-traces.observability.svc.cluster.local:10428"
 
 # 组件是否在 80 阶段被选中(编排器把选择结果落在 components.selected, 本阶段自带一份判断)
 comp_on() { grep -qx "$1" "$STATE_DIR/components.selected" 2>/dev/null; }
@@ -244,16 +272,23 @@ smoke_observability() {
   fi
 
   # 三条 pipeline 各自独立可选: 后端没装就不打对应信号(collector 里根本没有那条 pipeline,
-  # 打过去会 404), 也不回查
-  local ck_vm=false ck_loki=false ck_jaeger=false signals=()
+  # 打过去会 404), 也不回查。优先级与 components/opentelemetry/install.sh 一致:
+  # logs→victoria-logs > loki, traces→victoria-traces > jaeger(collector 只写优先级高的那个)
+  local ck_vm=false ck_loki=false ck_jaeger=false ck_vl=false ck_vt=false signals=()
   comp_on victoriametrics && kctl -n victoriametrics get svc vm-single-victoria-metrics-single-server &>/dev/null \
     && { ck_vm=true;     signals+=("metrics→VictoriaMetrics"); }
-  comp_on loki            && kctl -n logging get svc loki &>/dev/null \
-    && { ck_loki=true;   signals+=("logs→Loki"); }
-  comp_on jaeger          && kctl -n observability get svc jaeger &>/dev/null \
-    && { ck_jaeger=true; signals+=("traces→Jaeger"); }
+  if comp_on victoria-logs && kctl -n logging get svc vl-victoria-logs-single-server &>/dev/null; then
+    ck_vl=true; signals+=("logs→VictoriaLogs")
+  elif comp_on loki && kctl -n logging get svc loki &>/dev/null; then
+    ck_loki=true; signals+=("logs→Loki")
+  fi
+  if comp_on victoria-traces && kctl -n observability get svc victoria-traces &>/dev/null; then
+    ck_vt=true; signals+=("traces→VictoriaTraces")
+  elif comp_on jaeger && kctl -n observability get svc jaeger &>/dev/null; then
+    ck_jaeger=true; signals+=("traces→Jaeger")
+  fi
   if (( ${#signals[@]} == 0 )); then
-    log_info "未启用任何观测后端(vm/loki/jaeger), 跳过可观测链路冒烟"
+    log_info "未启用任何观测后端(vm/victoria-logs/loki/victoria-traces/jaeger), 跳过可观测链路冒烟"
     return 0
   fi
   log_info "可观测链路冒烟: ${signals[*]}"
@@ -280,9 +315,13 @@ spec:
         - {name: CK_VM,     value: "$ck_vm"}
         - {name: CK_LOKI,   value: "$ck_loki"}
         - {name: CK_JAEGER, value: "$ck_jaeger"}
+        - {name: CK_VL,     value: "$ck_vl"}
+        - {name: CK_VT,     value: "$ck_vt"}
         - {name: VM_SVC,    value: "$VM_SVC"}
         - {name: LOKI_SVC,  value: "$LOKI_SVC"}
         - {name: JAEGER_SVC, value: "$JAEGER_SVC"}
+        - {name: VL_SVC,    value: "$VL_SVC"}
+        - {name: VT_SVC,    value: "$VT_SVC"}
       command: [sh, -c]
       args:
         - |
@@ -327,6 +366,17 @@ spec:
               "curl -sG --connect-timeout 3 --max-time 5 'http://\$VM_SVC/api/v1/query' --data-urlencode 'query=otel_smoke_probe{run=\\"\$RUN\\"}'"
           fi
 
+          if [ "\$CK_VL" = true ]; then
+            cat > /tmp/l.json <<JSON
+          {"resourceLogs":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"\$SVC"}}]},
+          "scopeLogs":[{"logRecords":[{"timeUnixNano":"\$TS","severityText":"INFO",
+          "body":{"stringValue":"otel pipeline smoke \$RUN"}}]}]}]}
+          JSON
+            # VictoriaLogs: LogsQL 按 OTLP resource 属性 service.name 过滤(VL 把点号原样保留为字段名)
+            push logs /v1/logs /tmp/l.json && poll logs "otel pipeline smoke \$RUN" \\
+              "curl -sG --connect-timeout 3 --max-time 5 'http://\$VL_SVC/select/logsql/query' --data-urlencode 'query=service.name:=\"\$SVC\"' --data-urlencode 'limit=5'"
+          fi
+
           if [ "\$CK_LOKI" = true ]; then
             cat > /tmp/l.json <<JSON
           {"resourceLogs":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"\$SVC"}}]},
@@ -335,6 +385,17 @@ spec:
           JSON
             push logs /v1/logs /tmp/l.json && poll logs "otel pipeline smoke \$RUN" \\
               "curl -sG --connect-timeout 3 --max-time 5 'http://\$LOKI_SVC/loki/api/v1/query_range' --data-urlencode 'query={service_name=\\"\$SVC\\"}' --data-urlencode 'limit=5'"
+          fi
+
+          if [ "\$CK_VT" = true ]; then
+            cat > /tmp/t.json <<JSON
+          {"resourceSpans":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"\$SVC"}}]},
+          "scopeSpans":[{"spans":[{"traceId":"5b8efff798038103d269b633813fc60c","spanId":"eee19b7ec3c1b174",
+          "name":"smoke-span","kind":1,"startTimeUnixNano":"\$TS","endTimeUnixNano":"\$TS"}]}]}]}
+          JSON
+            # VictoriaTraces 的 Jaeger 兼容查询 API(Grafana 数据源也走这条路)
+            push traces /v1/traces /tmp/t.json && poll traces "\$SVC" \\
+              "curl -s --connect-timeout 3 --max-time 5 'http://\$VT_SVC/select/jaeger/api/services'"
           fi
 
           if [ "\$CK_JAEGER" = true ]; then
@@ -390,7 +451,8 @@ Cilium      : $CILIUM_V (CLI $CILIUM_CLI_V)  路由: $CILIUM_ROUTING_MODE
 Helm        : $HELM_V   Gateway-API: $GATEWAY_API_V
 OpenEBS     : $OPENEBS_V (VG: $LVM_VG_NAME → SC: $SC_NAME/$SC_FS_TYPE)
 Pod CIDR    : $POD_CIDR    Service CIDR: $SERVICE_CIDR
-LB IP 池    : $CILIUM_LB_POOL_START - $CILIUM_LB_POOL_STOP (L2 通告: $CILIUM_ENABLE_L2_ANNOUNCEMENTS)
+LB IP 池    : $CILIUM_LB_POOL_START - $CILIUM_LB_POOL_STOP (LB-IPAM: $(lb_ipam_enabled && echo on || echo off), L2 通告: $CILIUM_ENABLE_L2_ANNOUNCEMENTS)
+Gateway VIP : $CILIUM_GATEWAY_LB_IP (固定, Pangolin/newt HTTPRoute target)
 已装组件    : ${addons:-无}
 
 常用入口:
@@ -469,6 +531,7 @@ main() {
   else
     add_step cp       "控制面与节点健康检查"            check_control_plane
     add_step nokp     "kube-proxy 替代确认(eBPF)"       check_kube_proxy_free
+    add_step gateway  "共享 Gateway 固定 VIP 检查"      check_shared_gateway
     add_step tuning   "系统调优抽检"                    check_tuning
     add_step shutdown "GracefulNodeShutdown 一致性检查" check_graceful_node_shutdown
     add_step podgc    "终态 Pod GC 一致性检查"          check_terminated_pod_gc

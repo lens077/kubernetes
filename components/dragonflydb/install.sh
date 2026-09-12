@@ -10,13 +10,17 @@ DIR=$(comp_dir "${BASH_SOURCE[0]}")
 comp_load_meta "$DIR"
 comp_require_cluster
 
-pass=$(get_cred dragonfly-password)
-
 log_step "安装 $ID → 命名空间 $NAMESPACE (maxmemory ${DRAGONFLY_MAXMEMORY} / ${DRAGONFLY_PROACTOR_THREADS} 线程)"
 ns_ensure "$NAMESPACE"
-kctl -n "$NAMESPACE" create secret generic dragonfly-password-secret \
-  --from-literal=password="$pass" \
-  --dry-run=client -o yaml | kctl apply -f -
+
+# 密码: ESO 从 OpenBao/Vault 物化(externalsecret.yaml); store 未就绪或 OFFLINE=1 时退回 get_cred
+ESO_SECRET_CHANGED=0
+if ! cred_via_eso "$DIR" "$NAMESPACE" dragonfly-password-secret; then
+  pass=$(get_cred dragonfly-password)
+  kctl -n "$NAMESPACE" create secret generic dragonfly-password-secret \
+    --from-literal=password="$pass" \
+    --dry-run=client -o yaml | kctl apply -f -
+fi
 
 # 原生 TLS(与 redis 组件同构): cert-manager 签发, Pod 启动前 secret 必须就绪
 kctl get clusterissuer global-ca-issuer >/dev/null 2>&1 \
@@ -35,4 +39,16 @@ log_info "chart 版本: $ver"
 helm_install_component "$DIR" --version "$ver"
 
 routes_apply "$DIR"
-log_ok "$ID 安装完成(集群内 rediss://dragonfly.$NAMESPACE.svc:6379 原生 TLS; 密码见 creds/dragonfly-password, 2026-08-20 起与 redis 组件同值以便切换)"
+
+# Deployment 引用的 Secret 名没变时 helm/kubectl 都不会触发滚动; 密码从 env 读取, 值变了必须重启。
+# 没装 reloader 时这里显式做; 装了 reloader 的话它也会做同一件事(注解见下), 二者幂等。
+if [[ $ESO_SECRET_CHANGED == 1 ]]; then
+  log_info "密码值已变, 滚动 deploy/dragonfly 让新值生效(消费方在 Config Center 里的密码请跑 tools/config-center-harvest.sh)"
+  kctl -n "$NAMESPACE" rollout restart deploy/dragonfly >/dev/null
+  kctl -n "$NAMESPACE" rollout status deploy/dragonfly --timeout=180s >/dev/null || log_warn "dragonfly 滚动未就绪"
+fi
+# Reloader 点名注解(chart 只有 podAnnotations, Deployment 级注解只能事后加; kubectl annotate 是 metadata
+# 合并, helm 三方 merge 不会冲突 —— 与 README §6 说的「别 kubectl patch args」不是一回事)
+kctl -n "$NAMESPACE" annotate deploy/dragonfly secret.reloader.stakater.com/reload=dragonfly-password-secret --overwrite >/dev/null
+
+log_ok "$ID 安装完成(集群内 rediss://dragonfly.$NAMESPACE.svc:6379 原生 TLS; 密码真相源 OpenBao k8s/${CLUSTER_NAME:-<集群>}/dragonfly, 降级时见 creds/dragonfly-password)"

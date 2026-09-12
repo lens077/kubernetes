@@ -1,0 +1,74 @@
+# 三节点、单业务命名空间的观察模式；不在此处定义阻断策略。
+nodeSelector: {}
+
+# Tetragon 必须使用 hostNetwork 和 privileged 才能读取节点内核事件。
+hostNetwork: true
+
+tetragon:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 100m
+      memory: 250Mi
+  debug: false
+  processCacheSize: 16384
+  enableProcessCred: true
+  enableProcessNs: true
+  processAncestors:
+    enabled: ""
+  prometheus:
+    enabled: true
+    metricsLabelFilter: "namespace,workload"
+    serviceMonitor:
+      enabled: false
+  grpc:
+    enabled: true
+    address: "localhost:54321"
+  pprof:
+    enabled: false
+  # 仅导出 ecommerce 的进程事件与 audit-only TracingPolicy 事件。
+  exportAllowList: |-
+    {"namespace":["ecommerce"],"event_set":["PROCESS_EXEC","PROCESS_EXIT","PROCESS_KPROBE"]}
+  exportDenyList: |-
+    {"health_check":true}
+  # 防止常见命令行凭据进入日志。
+  redactionFilters: |-
+    {"redact":["--password(?:\\s+|=)(\\S*)","--token(?:\\s+|=)(\\S*)","--secret(?:\\s+|=)(\\S*)"]}
+
+# 事件直接写 stdout，交给现有 Vector/VictoriaLogs 管线；不在节点落持久文件。
+export:
+  mode: stdout
+  resources:
+    requests:
+      cpu: 5m
+      memory: 16Mi
+    limits:
+      cpu: 25m
+      memory: 64Mi
+
+tetragonOperator:
+  replicas: 1
+  # 单副本 operator 不增加节点覆盖，固定 hostname 只会制造无谓的恢复依赖。
+  nodeSelector: {}
+  resources:
+    requests:
+      cpu: 10m
+      memory: 64Mi
+    limits:
+      cpu: 50m
+      memory: 128Mi
+  podInfo:
+    enabled: false
+  tracingPolicy:
+    enabled: true
+  prometheus:
+    enabled: true
+    serviceMonitor:
+      enabled: false
+
+crds:
+  installMethod: operator
+rthooks:
+  enabled: false

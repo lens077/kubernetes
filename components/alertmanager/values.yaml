@@ -1,0 +1,51 @@
+# Alertmanager —— 路由/分组/抑制/静默。receiver 只有一个: 告警桥(alert-bridge → ntfy)。
+# 分组与重复间隔沿用 node3 Pigsty 的取值(2026-09-03 收割): group_by [alertname],
+# group_wait 30s, group_interval 5m, repeat_interval 1h。
+baseURL: https://${HOSTNAME}
+
+persistence:
+  enabled: true
+  storageClass: ${SC_NAME}
+  size: ${ALERTMANAGER_STORAGE_SIZE}   # nflog + silences, 很小
+
+resources:
+  requests: { cpu: 10m, memory: 32Mi }
+  limits: { memory: 128Mi }
+
+service:
+  type: ClusterIP
+  port: 9093
+
+config:
+  enabled: true
+  global:
+    resolve_timeout: 5m
+  templates:
+    - '/etc/alertmanager/*.tmpl'
+  route:
+    receiver: alert-bridge
+    group_by: ['alertname']
+    group_wait: 30s
+    group_interval: 5m
+    repeat_interval: 1h
+    routes:
+      # Watchdog 是 vmalert 里一条永远 firing 的规则: 它出现在 Alertmanager 里就证明
+      # vmalert→Alertmanager 这段活着(gatus 查 /api/v2/alerts 验证)。不推手机。
+      - matchers: ['alertname="Watchdog"']
+        receiver: 'null'
+        repeat_interval: 4h
+  receivers:
+    - name: 'null'
+    - name: alert-bridge
+      webhook_configs:
+        - url: http://alert-bridge.observability.svc.cluster.local:9099/alerts
+          send_resolved: true
+          max_alerts: 20            # 一次 webhook 最多带 20 条, 桥会逐条落日志
+  inhibit_rules:
+    # 节点没了就别再报这个节点上的其他事(Pigsty node.yml 同款)
+    - source_matchers: ['alertname="K8sNodeNotReady"']
+      target_matchers: ['category="kubernetes"']
+      equal: ['k8s_node_name']
+    # 采集断了(absent 兜底规则)时, 同类别的其它告警多半是假的
+    - source_matchers: ['alertname="K8sClusterMetricsMissing"']
+      target_matchers: ['category="kubernetes"']

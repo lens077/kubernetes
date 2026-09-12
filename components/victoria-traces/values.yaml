@@ -1,0 +1,17 @@
+# VictoriaTraces 单机版 —— 与 VM/VL 同一家族的链路后端(2026-09-03 从 node3 Pigsty 收割回集群)。
+# node3 上的取值: -retentionPeriod=15d -retention.maxDiskSpaceUsageBytes=50GiB；集群内按 PVC 缩。
+server:
+  fullnameOverride: victoria-traces   # svc/statefulset 都叫 victoria-traces, 少一层 chart 前缀
+  replicaCount: 1
+  retentionPeriod: ${VT_RETENTION}
+  # 按磁盘用量的保留上限(单位 GiB)。PVC 撑满时 VictoriaTraces 会 panic 退出, 必须留出余量。
+  retentionDiskSpaceUsage: ${VT_DISK_CAP}
+  persistentVolume:
+    enabled: true
+    storageClassName: ${SC_NAME}
+    size: ${VT_STORAGE_SIZE}
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { memory: 1Gi }        # 与 VM/VL 同款: 只限内存, CPU 是突发型
+  service:
+    type: ClusterIP

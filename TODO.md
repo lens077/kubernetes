@@ -1,5 +1,31 @@
 # TODO
 
+## 2026-09-11 · Config Center 自动填充 + 凭据真相源迁 OpenBao + Reloader
+
+> 起因:每次集群重建都要人肉重取各组件地址/凭据写进 Config Center 十份 `bootstrap.yaml`(09-06 为此写了 `config-center-pre-seed.sh`,09-11 又补两次)。定稿:**声明优先、发现校验**——组件在 `component.env` 声明契约(`PROVIDES/SVC/PORT/SCHEME/CRED_SECRET/CA_REF/VAULT_PATH`),集群外实例在 `components/_external/*` 同形声明;凭据真相源 OpenBao(`ESO_STORE`),路径按集群分 `k8s/<CLUSTER_NAME>/…`;地址策略 pre→Svc DNS、dev→`.dev.test`+CA,放弃「优先 HTTPRoute」。全套手顺:`tools/config-center/README.md`。
+
+- [x] P0 契约字段 + `CLUSTER_NAME`/`CC_PROVIDERS`/`ESO_STORE` + `_external/{postgres,redis,otlp,elasticsearch}-node3`、`casdoor` + `tools/verify-contracts.sh`(80 阶段 `contract` 步;机房集群六项全绿)
+- [x] P2 `tools/config-center/mapping.yaml` + `harvest.py`(schema `$defs` 推导要填哪些块、只改映射路径、往返等价自检、jsonschema 校验、脱敏 diff)+ `tests/mapping_test.sh` 门禁;机房集群 dry-run:10 服务唯一差异是 `postgres.host` IP→`pg.apikv.com`(契约声明的域名,集群内已核对可解析)
+- [x] P1 dragonflydb/grafana/bugsink/healthchecks 改 `externalsecret.yaml`(`cred_via_eso`:ESO 优先、store 未就绪或 `OFFLINE=1` 降级 get_cred、值变则显式 rollout);`tools/openbao-seed.sh`(集群内取现值、外部依赖从 Config Center 现值反向抽取);cert-manager 根 CA `PushSecret`(eso-push 只写 `ca/*`);**机房集群已播种 8 条路径并把 dragonfly Secret 切到 ESO(值未变、Pod 未重启)**
+- [x] P3 `mapping.yaml consumers.config-center`:同一映射喂 config 服务自举 Secret(redis←redis-node3、otlp←集群内 collector);dry-run 与现值**零差异**(契约链能逐字重现手写配置)
+- [x] Reloader 组件 `components/reloader/`(`ADDON_RELOADER` 默认关;只滚带注解的工作负载;dragonflydb install 已打点名注解);描述文档在 ecommerce `docs/reports/2026-09-11-reloader-reference.md`,博客「基础设施篇:Reloader 让 Secret 变更自动滚动 Pod」
+- [x] **P4 control-tower operator machine token 已发版**:control-tower `babd5e8` + tag `0.2.11`(CI 全绿),机房 config 服务 09-12 01:12 滚到 0.2.11,`goose: successfully migrated database to version: 3`,healthz 200(集群内/公网)。operator 只限自身 environment、不能签/吊 operator、不能 DeleteKey/Rollback
+- [x] **签 operator token**:09-12 09:42 `tools/config-center-operator-token.sh` 签发 id `2005f656…`(environment=pre, namespaces=*),存 Secret `config-center/config-center-operator`,读键/列 token 自检通过;`/root/.casdoor-login` 已 shred
+- [x] **dev 策略真集群实测 + dev 环境已重写**(09-12):`ENVIRONMENT=dev` 签 operator(id `856b338c…`,Secret `config-center-operator-dev`),`ENV=dev harvest --no-restart` 重写 10 份 dev bootstrap(各 9 处:redis→`redis.dev.test:6380`、consul→`consul.dev.test:443` https+CA、PG IP→域名;v4/v5→v5/v6),原来存的是已消亡内网集群的值。消费方闭环:用 dev selector 的 service token 读回 cart/dev v6,按其中的值从 node4 宿主机(LAN)真连——Redis TLS+AUTH `+OK`/`PING +PONG`,Consul 经网关 `200`。**发现**:Mac 不在机房 LAN,VIP 不可达,dev 策略服务的是 LAN 开发机;`.dev.test` 解析要逐条写 /etc/hosts 或 split DNS(**/etc/hosts 不支持通配**)。**踩坑**:operator-token 脚本第二个环境覆盖了同名 Secret 里 pre 的明文——已改为非 pre 环境带 `-<env>` 后缀,pre 重签为 `1f6b0baf…`,被覆盖的 `2005f656…` 已吊销
+- [x] **从零合成 + 装完就填好**(09-12):`tools/config-center/templates/` 10 份脱敏骨架(映射路径与非空机密为 `__HARVEST__`,现网为空的支付/gorse key 保持空),键不存在时 harvest 用骨架合成整份→契约填满→schema 校验→拒绝残留占位符(pre 下假 namespace dry-run 34 处全填、schema 通过);`CC_AUTO_HARVEST=true` 让 80 阶段末尾自动 harvest(节点上隔离验证两种取值)。`config-center-pre-seed.sh` 的「从 dev 复制」不再是新环境前置。**约束**:operator 按 environment 收窄,新环境要先 `ENVIRONMENT=<env> config-center-operator-token.sh`
+- [x] **正式写入 + dragonfly 轮换已完成**(09-12):harvest 写 10 份 bootstrap.yaml(唯一改动 `postgres.host` IP→`pg.apikv.com`,v3/v4)并滚动全绿;`rotate-credential.sh dragonfly` 09:46:30→09:49:10 四段跑通:OpenBao 新值 → ESO 物化 + dragonfly 滚动(顺带 chart v1.40.1→v1.40.2,resolve_version 取了最新) → 10 份 bootstrap 再写一版(v4/v5) → 11 个 Deployment 就绪;三方哈希一致(OpenBao = Secret = Config Center `e41768a33f62`),cart 日志零 AUTH 错误。**旧密码(`376a2edb4a28`)至此作废,含历史上漏进 git 的那份**
+- [ ] ecommerce 仓 `backend/services/*/configs/pre.yml` 本地工作副本含 Dragonfly 旧密码(已 gitignore, 但历史上漏进过 git —— 其 `.gitignore` 注释记的 4a3eb70b):轮换是唯一彻底的处置。09-11 顺手把 20 份每服务 `.gitignore` 合并成 `backend/.gitignore` 一份
+- [x] `ClusterSecretStore vault`(VPS)死接线 09-11 删除;`components/external-secrets/install.sh` 改为「有 AppRole 凭据才建」,README/README.md/config.env 注释改为 OpenBao 定稿;ecommerce TECH.md/STACK.md/DEVOPS.md 回填,TECH-RADAR §4.9 加复审附记
+- [ ] OpenBao 成为正式凭据后端 ⇒ 触发 ecommerce TECH-RADAR 10.3 Velero 条款③(其 file 存储里是真凭据);在那之前重装后靠 `openbao-seed.sh` 从现网反向重建
+- [ ] harvest 自动触发(CronJob 或 ESO 事件)落地后再把 `ADDON_RELOADER` 打开,否则只会把「密码不一致」从提供方挪到消费方(reloader README §1)
+
+## 2026-09-04 · Meilisearch 运行时退役
+
+- [x] ecommerce 搜索链已切到 Elasticsearch，回滚窗口结束后卸载 `search/meilisearch` Helm release。
+- [x] 删除 StatefulSet、Service、ServiceAccount、ConfigMap、master-key Secret、两条 HTTPRoute、10 GiB PVC/PV 与 `search` namespace；全集群工作负载、历史 Job 与 NetworkPolicy 不再引用 `7700`。
+- [x] 保留 `components/meilisearch/` 作为显式人工回滚安装器，但 `ADDON_MEILISEARCH` 和 `DEFAULT_ENABLED` 均改为 `false`，默认重装不得重建该组件。
+- [x] 旧安装状态不得复活组件：`install.sh` 对旧 `components.selected` fail-closed（仅 `config.env` 显式 `ADDON_MEILISEARCH=true` + 重置阶段，或单独执行时 `MEILISEARCH_RETIREMENT_ROLLBACK=true` 才放行）；`--reset-state 80-components` 现在连带删除 `components.selected`；node101 的残留选择已手工删除。
+
 ## 2026-08-21 · 与代码对账 + 重装准备(组件数据不保留)
 
 > 本文件自 08-18 后停更,期间仓库完成整形重构与四天组件工作;本段先补账,再为即将执行的集群重装固定「什么会自动重建、什么需要手动」。下方 08-06/08-17 各段引用的旧目录(`kafka/strimzi-kafka/`、`jaeger/`、`minio/yaml/`、`loki/helm/`、`victoriametrics/single/`、`opentelemetry/server/helm/`)已不存在——或按组件契约重写为 `components/<组件>/`,或删除;`archive/` 冻结的是历史清单(原 cloud-native-deploy 资产与本仓旧存档),不再部署。
@@ -31,7 +57,7 @@
 
 ### 重装后仅存的手动动作(非 git 状态,已知且接受)
 
-- [ ] 先把 STATE_DIR `creds/` 整目录带走(节点 `/var/lib/k8s-installer/creds/`,Mac 回退 `~/.local/state/k8s-installer/creds/`)——尤其 `dragonfly-password`,ecommerce 十份 bootstrap 与 config-center 自举配置写的是它(重建须知 #1)
+- [x] ~~先把 STATE_DIR `creds/` 整目录带走~~ **2026-09-11 起不再是第一条**:凭据真相源迁到 OpenBao(`k8s/<CLUSTER_NAME>/<组件>`,ESO 物化),`creds/` 只剩 `OFFLINE=1` 降级路径与 `openbao-init`(它仍要带走或重 init)。重装后:`tools/openbao-seed.sh` → `components/_external/apply.sh` → 各组件 install.sh 自动切 ESO → `tools/config-center-harvest.sh`。手顺见 `tools/config-center/README.md`
 - [ ] external-secrets 装好后**注入 AppRole 凭据**→密钥自动流回(Vault 在 VPS,真相源本就在集群外——这正是 08-17 L3 设计的兑现点)
 - [ ] OpenBao 数据随集群亡:重新 init/unseal,`creds/openbao-init` 作废重生成(components/openbao README)
 - [ ] `ADDON_NEWT` 如启用:Pangolin 面板站点凭据重配(组件 README)
@@ -41,7 +67,7 @@
 
 - **08-06 三段(Kafka/Debezium、Jaeger、可观测底座)的集群状态类条目整体作废**:所写集群已于 08-16 重建亡故,且 Strimzi/Kafka/Debezium 栈 08-20 定稿退役(`ADDON_STRIMZI=false`)——Connect 构建加速、build pod 资源、VPA 校准、Debezium 换 Final、metadataVersion 风险、broker PVC 钉节点、node1 untaint、entity-operator 重启排查等不再有载体;streaming-pipeline 仓随 Kafka 退役失去载体(其 GOIMAGE/namespace/明文密码三条同废,ecommerce TODO 搜索小节已记),替代实现为 ecommerce `pkg/outbox` + `pkg/searchindex` + NATS JetStream
 - **minio/loki 凭据轮换 9 步 runbook 整段不再执行**:老集群 loki S3 key 已随集群死亡(08-17 段已记),MinIO root 08-17 已迁线上 Vault 经 ESO 物化,集群内 minio 08-20 定稿移除;日志侧现为 loki 组件 + victoria-logs/vector 双写过渡
-- **ES/elastic-stack 全部条目作废**(索引 yellow、TLS 待决策、docker.elastic.co 加速):ES 已退役,搜索定稿 Meilisearch(components/meilisearch),应用侧迁移在 ecommerce TODO
+- **ES/elastic-stack 旧条目整体作废**(索引 yellow、TLS 待决策、docker.elastic.co 加速):后续搜索链已改用 node3 Elasticsearch 并于 2026-09-03 切流；Meilisearch 于 2026-09-04 完整退役，安装器仅保留默认关闭的人工回滚能力
 - 「缺文件 vs 集群对账机制」→ 应用侧已由 ArgoCD GitOps 覆盖;组件侧靠 install.sh 幂等 + `90-verify` 验收,imperative 残余风险知情保留
 - 「collector 自监控无人抓」仍成立,载体变更:components/opentelemetry 按后端动态生成 pipelines,自采配置应改该组件
 - 「遥测端点是否匿名可达」仍成立,范围以 components/gateway 路由约定 + 各组件 README 为准

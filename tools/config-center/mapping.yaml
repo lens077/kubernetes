@@ -1,0 +1,101 @@
+# =============================================================================
+# 依赖能力 → Config Center bootstrap.yaml 路径 的映射表(2026-09-11)
+#
+# 键 = component.env 的 PROVIDES 值; 由 tools/config-center-harvest.sh 消费。
+# 「消费者需要什么」不在这里维护: 每个服务的 JSON Schema($defs)里出现 schema_marker 才填这一块,
+# ecommerce 新增依赖时不用改这个文件。schema 改字段名时 tests/mapping_test.sh 会红。
+#
+# 每条字段的值来源(只能选一种):
+#   from: address.host | address.port | address.hostport | address.url   —— 按 --env 策略解析
+#                                                                          pre → SVC:PORT, dev → HOSTNAME:DEV_PORT
+#         cred.<key>        —— CRED_SECRET 里的键(凭据值, diff 里脱敏)
+#         cred.user         —— CRED_USER(非机密固定用户名), 没有时退回 cred 里的 user/username 键
+#         ca.pem            —— CA_REF 指向的 PEM
+#         overrides.<key>   —— overrides.yaml 里 <能力>.<key>(非机密但集群无法推导的值, 如 casdoor client_id)
+#   const: <值>            —— 固定值
+#   default: <值>          —— 只在路径缺失时写, 已有值原样保留(不覆盖人工调过的字段)
+# fields_pre / fields_dev: 按策略叠加/覆盖 fields(dev 走网关必须带 CA, pre 走集群 DNS 不需要)。
+# =============================================================================
+
+redis:
+  schema_marker: conf.v1.Data.Cache.Redis
+  fields:
+    data.cache.redis.host:                 {from: address.host}
+    data.cache.redis.port:                 {from: address.port}
+    data.cache.redis.username:             {from: cred.user}
+    data.cache.redis.password:             {from: cred.password}
+    data.cache.redis.tls.enable:           {const: true}
+    data.cache.redis.tls.insecure_skip_verify: {const: false}
+    data.cache.redis.tls.ca_pem:           {from: ca.pem}
+
+postgres:
+  schema_marker: conf.v1.Data.Database.Postgres
+  fields:
+    data.database.postgres.host:           {from: address.host}
+    data.database.postgres.port:           {from: address.port}
+    data.database.postgres.user:           {from: cred.user}
+    data.database.postgres.password:       {from: cred.password}
+    data.database.postgres.tls.enable:     {const: true}
+    data.database.postgres.tls.ssl_mode:   {default: verify-full}   # 现网是 verify-ca(IP 主机名), 不强改
+    data.database.postgres.tls.ca_pem:     {from: ca.pem}
+
+consul:
+  schema_marker: conf.v1.Discovery.Consul
+  fields:
+    discovery.consul.addr:                 {from: address.hostport}
+    discovery.consul.scheme:               {from: address.scheme}
+  fields_pre:                              # 集群内明文 http; 从零合成时三个 tls 字段都要有值(schema 是 boolean/string)
+    discovery.consul.tls.enable:           {const: false}
+    discovery.consul.tls.insecure_skip_verify: {const: false}
+    discovery.consul.tls.ca_pem:           {const: ""}
+  fields_dev:                              # dev 经共享网关 https://consul.<域>, 私有 CA
+    discovery.consul.tls.enable:           {const: true}
+    discovery.consul.tls.insecure_skip_verify: {const: false}
+    discovery.consul.tls.ca_pem:           {from: ca.pem}
+
+otlp:
+  schema_marker: conf.v1.Observability.Trace
+  fields:
+    observability.trace.endpoint:          {from: address.hostport}
+    observability.metric.endpoint:         {from: address.hostport}
+    observability.log.endpoint:            {from: address.hostport}
+    observability.trace.tls.enable:        {from: address.tls}      # https → true, http → false
+    observability.metric.tls.enable:       {from: address.tls}
+    observability.log.tls.enable:          {from: address.tls}
+    observability.trace.tls.ca_pem:        {from: ca.pem, optional: true}   # 没声明 CA_REF 就不动
+    observability.metric.tls.ca_pem:       {from: ca.pem, optional: true}
+    observability.log.tls.ca_pem:          {from: ca.pem, optional: true}
+
+casdoor:
+  schema_marker: conf.v1.Auth.Casdoor
+  fields:
+    auth.casdoor.endpoint:                 {from: address.url}
+    auth.casdoor.client_secret:            {from: cred.client_secret}
+    auth.casdoor.certificate:              {from: cred.certificate}
+    auth.casdoor.client_id:                {from: overrides.client_id}
+    auth.casdoor.organization_name:        {from: overrides.organization_name}
+    auth.casdoor.application_name:         {from: overrides.application_name}
+
+elasticsearch:
+  schema_marker: conf.v1.Search.ElasticsearchCatalog
+  fields:
+    search.catalog.endpoint:               {from: address.url}
+    search.catalog.api_key:                {from: cred.api_key}
+    search.catalog.index:                  {default: ecommerce_catalog_products}
+
+# =============================================================================
+# 非 Config Center 键的消费方(harvest --consumer <名>): 目前只有 control-tower config 服务自身的自举配置
+# (它不能从 Config Center 读自己的配置, 由 K8s Secret 挂载)。路径形状与 ecommerce 同属 conf.v1, 复用上面的能力映射。
+#   kind: secret         —— 目标是 K8s Secret 里的一个键(YAML 文本)
+#   caps                 —— 没有 schema 可推导, 显式列出要填的能力
+#   providers            —— 覆盖全局 CC_PROVIDERS 的提供方选择(config 服务的 redis 是 node3 Redis, OTLP 是集群内 collector)
+#   restart              —— 写入后滚动(CONFIG_FILE 启动时读一次)
+# =============================================================================
+consumers:
+  config-center:
+    kind: secret
+    secret: config-center/config-center-bootstrap
+    key: config.yaml
+    caps: [postgres, redis, consul, otlp]
+    providers: { redis: redis-node3, otlp: opentelemetry }
+    restart: config-center/deploy/config-center

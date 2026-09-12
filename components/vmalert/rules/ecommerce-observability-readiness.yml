@@ -1,0 +1,23 @@
+groups:
+  - name: ecommerce-observability-readiness
+    interval: 15s
+    rules:
+      - alert: VectorDaemonSetReadyBelowExpected
+        expr: '(max(k8s_daemonset_ready_nodes{k8s_namespace_name="logging",k8s_daemonset_name="vector"}) or vector(0)) < 3'
+        for: 2m
+        labels:
+          severity: critical
+          category: observability
+        annotations:
+          summary: Vector DaemonSet Ready 节点数低于 3
+          description: Vector 连续 2 分钟少于 3 个 Ready 节点，或 k8s_cluster 指标已缺失。检查 logging/vector Pod、节点状态与日志写入链路。
+
+      - alert: OTelClusterCollectorReadyBelowExpected
+        expr: '(max(k8s_deployment_available{k8s_namespace_name="opentelemetry",k8s_deployment_name="otel-opentelemetry-collector"}) or vector(0)) < 1'
+        for: 2m
+        labels:
+          severity: critical
+          category: observability
+        annotations:
+          summary: 集群内 OTel Collector Ready 副本数低于 1
+          description: OTel Collector 连续 2 分钟没有可用副本，或 k8s_cluster 指标已缺失。Kubernetes 对象指标与 Event 采集链路已经中断。

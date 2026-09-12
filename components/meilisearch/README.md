@@ -1,10 +1,12 @@
-# meilisearch —— 商品即时搜索
+# meilisearch —— 退役回滚组件
+
+> **退役状态（2026-09-04）**：ecommerce 已切到 Elasticsearch；本组件的 Helm release、运行资源、Secret、HTTPRoute、PVC/PV 与 `search` namespace 均已删除。`ADDON_MEILISEARCH` 与 `DEFAULT_ENABLED` 默认为 `false`。本目录只保留显式人工回滚安装能力，不属于现役拓扑。
 
 ## 1. 定位
 
-ecommerce 的搜索后端（商品即时搜索）。2026-08 从 OpenSearch/Elasticsearch 改判过来的：
-elastic v9 客户端的产品头校验连不上 OpenSearch，而搜索面只有一条查询，
-Meilisearch 中文分词开箱可用、还省 1G+ 内存。
+历史搜索后端的可重建安装器。旧索引数据已经删除；若紧急回退，必须显式启用本组件、重新构建索引，并恢复与旧 search 镜像匹配的 Bootstrap。不得把它重新加入现役服务矩阵。
+
+已有安装器状态的主机可能在 `$STATE_DIR/components.selected` 留有旧选择；拉取本次退役变更后，先运行 `bootstrap/start.sh --reset-state 80-components` 删除旧选择，再重跑 `80-components` 阶段，让 `ADDON_MEILISEARCH=false` 重新生成选择。安装脚本本身也会 fail-closed：只有把 `bootstrap/config.env` 显式改为 `ADDON_MEILISEARCH=true` 并重置阶段，或单独执行时显式传入 `MEILISEARCH_RETIREMENT_ROLLBACK=true`，才允许安装。
 
 ## 2. 上游最佳实践
 
@@ -24,13 +26,13 @@ Meilisearch 中文分词开箱可用、还省 1G+ 内存。
 | Service 默认 | ClusterIP + HTTPRoute | 对外只经共享网关（`search.dev.test`）。 |
 | 无 limits | `limits.memory 1Gi` | 索引构建期内存峰值；1Gi 对当前商品量级有余量。 |
 
-## 4. 暴露方式
+## 4. 显式启用后的暴露方式
 
 - 集群内：`meilisearch.search.svc.cluster.local:7700`
 - 对外：`https://search.dev.test`（共享网关）
-- 认证：`Authorization: Bearer <master key>`，key 见 `/root/.k8s-installer-credentials`
+- 认证：`Authorization: Bearer <master key>`，key 由安装器凭据目录提供
 
-## 5. 验证
+## 5. 回滚重建后的验证
 
 ```bash
 KEY=$(cat /var/lib/k8s-installer/creds/meili-master-key)
@@ -55,6 +57,4 @@ kubectl -n search exec statefulset/meilisearch -- sh -c \
 - **启动即退出、日志说要 master key**：`MEILI_ENV=production` 下 key 是必需的，
   secret 没建好就会这样。
 - **客户端 401**：master key 与应用侧配置不一致。重装不会换 key，但删过 creds 文件就会。
-- **迁移待办**：ecommerce 仓的 search 服务要从 elastic 客户端换成 meilisearch-go，
-  address 服务要删 ES 残留 DI，CDC 管道要从 BulkIndexer 改成 documents 批量 + index swap。
-  详见 ecommerce 仓的 TODO.md。
+- **退役边界**：默认安装流程不得创建本组件。只有明确的人工回滚决策才能把开关改为 `true`；回滚结束后再次卸载，并确认全集群工作负载、Job 与 NetworkPolicy 都不引用 `7700`。

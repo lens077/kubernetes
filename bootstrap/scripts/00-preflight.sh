@@ -110,8 +110,11 @@ check_config() {
   esac
   if is_worker; then
     [[ $SINGLE_NODE == true ]] && log_warn "worker 节点忽略 SINGLE_NODE 设置"
-    # 非交互模式必须在启动前就备齐加入参数(交互模式可在 50 阶段粘贴 join 命令)
-    if ! is_interactive && [[ ! -f $STATE_DIR/join.params ]] \
+    # 非交互模式必须在启动前就备齐加入参数(交互模式可在 50 阶段粘贴 join 命令)。
+    # 本次范围不含 50-kubernetes(如 --to 40-container-runtime 先并行做系统准备)时不要求。
+    local will_join=true
+    [[ -z ${K8S_RUN_LIST:-} ]] || grep -qw 50-kubernetes <<<"$K8S_RUN_LIST" || will_join=false
+    if [[ $will_join == true ]] && ! is_interactive && [[ ! -f $STATE_DIR/join.params ]] \
        && [[ -z $JOIN_TOKEN || -z $JOIN_ENDPOINT || -z $JOIN_CA_CERT_HASH ]]; then
       die "worker 非交互模式需要 JOIN_ENDPOINT/JOIN_TOKEN/JOIN_CA_CERT_HASH — 在控制面执行: kubeadm token create --print-join-command"
     fi
@@ -130,17 +133,37 @@ check_config() {
   if cidr_contains "$POD_CIDR" "${SERVICE_CIDR%/*}" || cidr_contains "$SERVICE_CIDR" "${POD_CIDR%/*}"; then
     die "POD_CIDR 与 SERVICE_CIDR 相互重叠"
   fi
-  if [[ $CILIUM_ENABLE_L2_ANNOUNCEMENTS == true ]]; then
+  # 池(LB-IPAM)与 L2 通告解耦(lib/common.sh): GatewayClass cilium 生成 LoadBalancer Service, 没有池就永远
+  # <pending>/Programmed=False; L2 通告没有池则无物可通告。两种组合都在这里拒绝, 不留到 80 阶段才发现。
+  if [[ $CILIUM_ENABLE_GATEWAY_API == true ]] && ! lb_ipam_enabled; then
+    die "CILIUM_ENABLE_GATEWAY_API=true 需要 LB-IPAM 池(CILIUM_ENABLE_LB_IPAM=true 或 auto), 否则共享 Gateway 拿不到地址"
+  fi
+  if l2_enabled && ! lb_ipam_enabled; then
+    die "CILIUM_ENABLE_L2_ANNOUNCEMENTS=true 需要 LB-IPAM 池(CILIUM_ENABLE_LB_IPAM=true 或 auto), 没有池就没有可通告的地址"
+  fi
+  if lb_ipam_enabled; then
+    # 地址只有使用者能决定: config.env 没写 → 有终端就问(答案存状态目录, 重跑复用), 无终端就停下
+    if lb_ipam_addresses_missing; then
+      prompt_lb_ipam_addresses \
+        || die "LB-IPAM 已启用但 CILIUM_GATEWAY_LB_IP / CILIUM_LB_POOL_START / CILIUM_LB_POOL_STOP 未填写, 且无终端可询问: 写进 config.env(或 $LB_IPAM_ANSWERS)后重跑"
+    fi
     local ip_re='^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'
     [[ $CILIUM_LB_POOL_START =~ $ip_re ]] || die "CILIUM_LB_POOL_START 不是合法 IP: $CILIUM_LB_POOL_START"
     [[ $CILIUM_LB_POOL_STOP  =~ $ip_re ]] || die "CILIUM_LB_POOL_STOP 不是合法 IP: $CILIUM_LB_POOL_STOP"
-    local start_n stop_n node_n
-    start_n=$(ip2int "$CILIUM_LB_POOL_START"); stop_n=$(ip2int "$CILIUM_LB_POOL_STOP"); node_n=$(ip2int "$NODE_IP")
+    [[ $CILIUM_GATEWAY_LB_IP =~ $ip_re ]] || die "CILIUM_GATEWAY_LB_IP 不是合法 IP: $CILIUM_GATEWAY_LB_IP"
+    local start_n stop_n node_n gateway_n
+    start_n=$(ip2int "$CILIUM_LB_POOL_START"); stop_n=$(ip2int "$CILIUM_LB_POOL_STOP")
+    node_n=$(ip2int "$NODE_IP"); gateway_n=$(ip2int "$CILIUM_GATEWAY_LB_IP")
     (( start_n <= stop_n )) || die "LB 地址池起止颠倒: $CILIUM_LB_POOL_START > $CILIUM_LB_POOL_STOP"
-    # 池内地址会被 LB-IPAM 随意分配并做 ARP 通告, 覆盖到在用地址会造成 IP 冲突
-    if (( node_n >= start_n && node_n <= stop_n )); then
-      die "LB 地址池($CILIUM_LB_POOL_START-$CILIUM_LB_POOL_STOP)包含节点 IP $NODE_IP, 会引发地址冲突, 请缩小范围"
+    # Gateway 用独立 /32 selector 池，必须与给其它 LB Service 的 default-pool 分开；
+    # 否则组件并行安装时 Consul/其它 Gateway 可能先拿走固定 VIP，或两个 pool 因范围重叠进入 CONFLICTING。
+    (( gateway_n < start_n || gateway_n > stop_n )) \
+      || die "共享 Gateway VIP($CILIUM_GATEWAY_LB_IP)与 default-pool($CILIUM_LB_POOL_START-$CILIUM_LB_POOL_STOP)重叠"
+    # 两池内地址都会被编程/通告，覆盖节点地址会造成冲突。
+    if (( node_n >= start_n && node_n <= stop_n )) || (( node_n == gateway_n )); then
+      die "LB 地址池包含节点 IP $NODE_IP, 会引发地址冲突, 请调整 Gateway VIP/default-pool"
     fi
+    log_info "LB-IPAM: Gateway VIP $CILIUM_GATEWAY_LB_IP/32, 默认池 $CILIUM_LB_POOL_START-$CILIUM_LB_POOL_STOP | L2 通告: $CILIUM_ENABLE_L2_ANNOUNCEMENTS"
   fi
   log_info "节点: $NODE_NAME($NODE_IP) 角色: $NODE_ROLE | Pod网段: $POD_CIDR | Service网段: $SERVICE_CIDR"
 }
@@ -168,6 +191,8 @@ check_network() {
 
 main() {
   stage_begin "00-preflight" "环境预检"
+  # 配置校验是 config.env 的纯函数, 每次重跑都要重新做: 改了地址池/开关不能被首次的完成标记跳过
+  rm -f "$STATE_DIR/state/00-preflight:config.done"
   add_step os     "操作系统与运行环境检查"          check_os
   add_step hw     "硬件资源检查"                    check_hw
   add_step kernel "内核版本与 eBPF 特性检查"        check_kernel

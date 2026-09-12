@@ -1,7 +1,12 @@
 # PostgreSQL 的对外暴露（TLS passthrough + SNI 分流）
 
-数据库实例是按需创建的（`examples/pg-cluster.yaml`），所以这里**不放会自动 apply 的清单**，
-只给出模板与说明。要暴露时把下面的内容按实际实例名改好再 `kubectl apply`。
+默认配置会创建 `pg-main`；`postgres/install.sh` 等待 `pg-main-rw` 就绪后，自动应用
+[`tlsroute.yaml`](tlsroute.yaml)，并等待 Gateway `Programmed`、TLSRoute `Accepted` 和
+`ResolvedRefs`。网关不终结 TLS，数据库仍使用 CNPG 原生服务端证书。
+
+不支持 direct TLS negotiation 的旧客户端可手工应用
+[`../examples/pg-tcproute.yaml`](../examples/pg-tcproute.yaml)。TCPRoute 是兼容入口，不会由
+安装器自动创建，因为它会额外占用一个 LoadBalancer VIP。
 
 ## 为什么是 TLS passthrough 而不是 TCPRoute
 
@@ -15,8 +20,8 @@
 | 客户端要求 | 无 | 必须发 SNI（`sslmode=verify-full` + `host=` 域名） |
 
 PostgreSQL 走 TLSRoute 的价值在于：**一个 IP + 一个 5432 端口，按域名区分多个数据库实例**。
-只有一个实例、也不打算加的话，用 TCPRoute 更简单（参考
-[dragonflydb/gateway/tcproute.yaml](../../dragonflydb/gateway/tcproute.yaml)）。
+只有一个实例、也不打算加，或客户端不支持 direct TLS negotiation 时，用 TCPRoute 更简单
+（见 [`../examples/pg-tcproute.yaml`](../examples/pg-tcproute.yaml)）。
 
 ## 模板
 
@@ -98,6 +103,11 @@ openssl s_client -connect $VIP:5432 -servername pg.dev.test </dev/null 2>/dev/nu
   | openssl x509 -noout -subject -ext subjectAltName
 
 # 真连一次（libpq ≥17）
-PGPASSWORD=xxx psql "host=pg.dev.test hostaddr=$VIP dbname=app user=app \
-  sslmode=verify-full sslnegotiation=direct sslrootcert=<pg-main-ca 的 ca.crt>" -c 'select 1'
+PGPASSWORD=xxx psql "host=pg.dev.test hostaddr=$VIP dbname=ecommerce user=app \
+  sslmode=verify-full sslnegotiation=direct sslrootcert=<pg-main-ca 的 ca.crt>" \
+  -c 'SELECT ssl, version FROM pg_stat_ssl WHERE pid=pg_backend_pid()'
 ```
+
+`hostaddr` 负责连接当前 VIP，`host` 仍用于 SNI 和证书主机名校验。GUI 客户端如果没有
+`hostaddr`/server-name 分离配置，需要在宿主机 DNS 或 hosts 中把 `pg.dev.test` 指向 VIP。
+VIP 由地址池动态分配，集群重建后应重新查询 Gateway status。

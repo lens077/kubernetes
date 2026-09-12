@@ -9,6 +9,8 @@
 #   sudo bash start.sh --yes           # 非交互(按 config.env 取值, 危险项需显式配置)
 #   sudo bash start.sh --worker        # 按工作节点安装(不改 config.env; 节点名=本机 hostname)
 #   sudo bash start.sh --from 60-cilium
+#   sudo bash start.sh --to 70-storage # 控制面先到存储, 加完 worker 再 --from 80-components
+#   bash start.sh --dry-run --to 70-storage # 只打印将执行的阶段, 无需 root, 不写系统
 #   sudo bash start.sh --only 30-download
 #   sudo bash start.sh --verify        # 只跑验收
 #   sudo bash start.sh --list          # 查看阶段与完成进度
@@ -41,10 +43,61 @@ STAGES=(
   "90-verify|全局验收"
 )
 
-usage() { sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,/^set -Eeuo pipefail/{ /^#/p; }' "$0" | sed 's/^# \{0,1\}//'; }
+
+# 参数校验发生在 require_root/ensure_dirs 之前, 不能调用会写日志目录的 die/log_error。
+cli_error() { printf '参数错误: %s\n' "$*" >&2; exit 2; }
+
+require_option_value() {
+  [[ -n ${2:-} && ${2:0:1} != - ]] || cli_error "$1 需要参数值"
+}
 
 stage_ids()   { local e; for e in "${STAGES[@]}"; do echo "${e%%|*}"; done; }
 stage_title() { local e; for e in "${STAGES[@]}"; do [[ ${e%%|*} == "$1" ]] && { echo "${e#*|}"; return; }; done; echo "$1"; }
+stage_known() { local e; for e in "${STAGES[@]}"; do [[ ${e%%|*} == "$1" ]] && return 0; done; return 1; }
+
+# worker 角色跳过集群级阶段(阶段脚本内部也有守卫, 此处过滤只为进度显示干净)
+WORKER_SKIP_STAGES=(45-etcd-disk 60-cilium 80-components)
+stage_skipped_for_role() {
+  local s
+  is_worker || return 1
+  for s in "${WORKER_SKIP_STAGES[@]}"; do [[ $s == "$1" ]] && return 0; done
+  return 1
+}
+
+# 由 FROM/TO/ONLY 与节点角色计算 RUN_LIST(纯函数, 不读系统状态; tests/test-stage-range.sh 直接调用)。
+# --to 的终点即使被角色跳过(worker --to 60-cilium)也是合法范围终点, 只是不进入列表。
+build_run_list() {
+  RUN_LIST=()
+  if [[ -n $ONLY ]]; then
+    [[ -z $FROM && -z $TO ]] || cli_error "--only 不能与 --from/--to 同时使用"
+    stage_known "$ONLY" || cli_error "未知阶段: $ONLY (--list 查看)"
+    stage_skipped_for_role "$ONLY" && cli_error "阶段 $ONLY 在 worker 角色下不执行"
+    RUN_LIST=("$ONLY")
+    return 0
+  fi
+  [[ -z $FROM ]] || stage_known "$FROM" || cli_error "未知阶段: $FROM (--list 查看)"
+  [[ -z $TO ]] || stage_known "$TO" || cli_error "未知阶段: $TO (--list 查看)"
+  local e id in_range=true to_found=false
+  [[ -z $FROM ]] || in_range=false
+  for e in "${STAGES[@]}"; do
+    id=${e%%|*}
+    [[ $in_range == false && $id == "$FROM" ]] && in_range=true
+    if [[ $in_range == true ]] && ! stage_skipped_for_role "$id"; then RUN_LIST+=("$id"); fi
+    if [[ $in_range == true && -n $TO && $id == "$TO" ]]; then
+      to_found=true
+      break
+    fi
+  done
+  [[ -z $TO || $to_found == true ]] || cli_error "--to $TO 位于 --from $FROM 之前"
+  (( ${#RUN_LIST[@]} > 0 )) || cli_error "所选范围在角色 $NODE_ROLE 下没有可执行阶段"
+}
+
+print_run_list() {
+  local id
+  printf '阶段范围(角色 %s, dry-run 不执行):\n' "$NODE_ROLE" >&2
+  for id in "${RUN_LIST[@]}"; do printf '%s\t%s\n' "$id" "$(stage_title "$id")"; done
+}
 
 list_stages() {
   local e id n
@@ -105,7 +158,7 @@ unpack_offline() {
 }
 
 # --------------------------- 参数解析 ---------------------------------------
-FROM="" ONLY=""
+FROM="" TO="" ONLY="" DRY_RUN=false
 while (( $# > 0 )); do
   case $1 in
     -y|--yes)      export ASSUME_YES=true ;;
@@ -115,9 +168,11 @@ while (( $# > 0 )); do
       NODE_ROLE=worker
       NODE_NAME=$(hostname | tr '[:upper:]' '[:lower:]')
       ;;
-    --from)        FROM=${2:?--from 需要阶段名}; shift ;;
-    --only)        ONLY=${2:?--only 需要阶段名}; shift ;;
+    --from)        require_option_value "$1" "${2:-}"; FROM=$2; shift ;;
+    --to)          require_option_value "$1" "${2:-}"; TO=$2; shift ;;
+    --only)        require_option_value "$1" "${2:-}"; ONLY=$2; shift ;;
     --verify)      ONLY="90-verify" ;;
+    --dry-run)     DRY_RUN=true ;;
     --list)        list_stages; exit 0 ;;
     --reset-state)
       require_root
@@ -130,45 +185,28 @@ while (( $# > 0 )); do
     --pack-offline)   pack_offline "${2:?--pack-offline 需要输出文件名}"; exit 0 ;;
     --unpack-offline) unpack_offline "${2:?--unpack-offline 需要离线包路径}"; exit 0 ;;
     -h|--help)     usage; exit 0 ;;
-    *)             die "未知参数: $1 (见 --help)" ;;
+    *)             cli_error "未知参数: $1 (见 --help)" ;;
   esac
   shift
 done
 
+# --------------------------- 运行列表 ---------------------------------------
+# 范围校验与 dry-run 都在取 root/建目录/加锁之前: 参数错误不留痕, dry-run 不写系统。
+build_run_list
+if [[ $DRY_RUN == true ]]; then
+  print_run_list
+  exit 0
+fi
+
 require_root
 ensure_dirs
 resolve_node_ip
+# 阶段脚本可据此判断本次是否会跑到某阶段(00-preflight 只在范围含 50 时要求 worker 的 JOIN_*)
+export K8S_RUN_LIST="${RUN_LIST[*]}"
 
 # 防重入(后台下载器是子进程, 不受影响)
 exec 200>"$STATE_DIR/.lock"
 flock -n 200 || die "检测到另一个安装进程正在运行, 中止"
-
-# --------------------------- 运行列表 ---------------------------------------
-# worker 角色跳过集群级阶段(阶段脚本内部也有守卫, 此处过滤只为进度显示干净)
-WORKER_SKIP_STAGES=(45-etcd-disk 60-cilium 80-components)
-stage_skipped_for_role() {
-  local s
-  is_worker || return 1
-  for s in "${WORKER_SKIP_STAGES[@]}"; do [[ $s == "$1" ]] && return 0; done
-  return 1
-}
-
-RUN_LIST=()
-if [[ -n $ONLY ]]; then
-  stage_ids | grep -qx "$ONLY" || die "未知阶段: $ONLY (--list 查看)"
-  RUN_LIST=("$ONLY")
-else
-  local_found=true
-  if [[ -n $FROM ]]; then
-    stage_ids | grep -qx "$FROM" || die "未知阶段: $FROM (--list 查看)"
-    local_found=false
-  fi
-  for e in "${STAGES[@]}"; do
-    id=${e%%|*}
-    [[ $local_found == false && $id == "$FROM" ]] && local_found=true
-    [[ $local_found == true ]] && ! stage_skipped_for_role "$id" && RUN_LIST+=("$id")
-  done
-fi
 
 # --------------------------- 后台并行下载 -----------------------------------
 DL_PID=""

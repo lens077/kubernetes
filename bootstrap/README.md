@@ -16,13 +16,18 @@ kubernetes/bootstrap/
 │   ├── 40-container-runtime.sh # runc/containerd/crictl + 镜像加速(certs.d)
 │   ├── 45-etcd-disk.sh         # etcd 专用磁盘(可选; 支持已运行集群在线迁移)
 │   ├── 50-kubernetes.sh        # apt 仓库/kubeadm init(skip kube-proxy)/defrag 定时器
-│   ├── 60-cilium.sh            # Cilium(KPR/native路由/BBR/netkit/Hubble/GatewayAPI/L2)
+│   ├── 60-cilium.sh            # Cilium(KPR/native路由/BBR/netkit/GatewayAPI/L2；见 CILIUM.md)
 │   ├── 70-storage.sh           # LVM 卷组(交互选盘)+OpenEBS+StorageClass
 │   ├── 80-components.sh        # 组件编排器(扫描 ../components/*/component.env,
 │   │                           #   拓扑排序后并行调用各 install.sh; 不含任何 values)
 │   └── 90-verify.sh            # 全局验收+冒烟测试+报告
-├── tests/
-│   └── test-node-shutdown.sh   # 节点关机预算与终态 Pod GC 一致性回归
+├── tests/                      # 离线回归(不需要 root/集群): bash tests/<名>.sh
+│   ├── test-node-shutdown.sh   #   节点关机预算与终态 Pod GC 一致性
+│   ├── test-stage-range.sh     #   start.sh --from/--to/--only/--worker/--dry-run 阶段范围矩阵
+│   ├── test-lb-config.sh       #   preflight 对 Gateway VIP/default-pool/L2 开关的合法性判定
+│   ├── test-l2-policy.sh       #   LB-IPAM 池/L2Policy/共享 Gateway 状态校验(喂 JSON)
+│   ├── test-lb-ipam-prompt.sh  #   地址留空时的询问/答案持久化/开关推导
+│   └── test-state-fingerprint.sh #  Cilium 期望状态指纹与下游步骤失效
 └── files/                      # 运行时生成: kubeadm.yml / cilium-values.yaml / 示例
 ```
 
@@ -43,10 +48,34 @@ sudo bash start.sh
 #    真正无终端(systemd/cron)才回退显式配置(盘符 + 对应 WIPE_OK=true), 否则跳过/兜底
 sudo bash start.sh --yes
 ```
-重新生成token
+重新生成 token：
 ```bash
 kubeadm token create --print-join-command
 ```
+
+### 机房 node4/node5/node3
+
+完整手顺见仓库根目录 [`RESTORE-RUNBOOK-2026-09-04.md`](../RESTORE-RUNBOOK-2026-09-04.md)。
+三台使用同一个完整配置副本：
+
+```bash
+cp config.hosting.env config.env
+# node4: control-plane, 先只到存储阶段(不装组件: 31 个组件不能挤进单节点)
+sudo bash start.sh --to 70-storage
+# node5/node3: worker（50 阶段粘贴 node4 的 join 命令）
+sudo bash start.sh --worker
+# node4: 三节点齐后 operator 扩到 2 副本(values 指纹变化 → 自动 helm upgrade), 再装组件与验收
+sed -i 's/^CILIUM_OPERATOR_REPLICAS="1"/CILIUM_OPERATOR_REPLICAS="2"/' config.env
+sudo bash start.sh --only 60-cilium
+sudo bash start.sh --from 80-components        # = 80-components + 90-verify
+```
+
+任何范围都可以先 `bash start.sh --dry-run <同样参数>` 看将执行的阶段（不需要 root，不写系统）。
+
+机房版仍启用 Cilium L2/LB-IPAM：共享 Gateway 独占 `10.10.31.240/32`，其它 LB 用 `.241-.249`，
+`default/cilium-gateway` 固定 `.240`。公网 HTTP target 用 `https://10.10.31.240:443`；
+节点服务可由 newt target `10.10.21.161/.162/.163:<port>` 直接暴露。原理、验收层次与已知边界见 [`CILIUM.md`](CILIUM.md) §8.1
+与 [`CILIUM-UPSTREAM-VERIFICATION.md`](CILIUM-UPSTREAM-VERIFICATION.md)。
 
 ### 工作负载
 自动跳过 etcd 盘/Cilium 安装/helm/全部组件/重型验收
@@ -77,8 +106,11 @@ bash start.sh --worker --yes
 |---|---|
 | `sudo bash start.sh --list` | 查看阶段与已完成步骤数 |
 | `sudo bash start.sh --from 60-cilium` | 从指定阶段开始 |
+| `sudo bash start.sh --to 70-storage` | 执行到指定阶段为止（含）；可与 `--from` 组合，不能与 `--only` 同用 |
+| `bash start.sh --dry-run [范围参数]` | 只打印将执行的阶段（stdout 每行 `id<TAB>标题`），参数错误退出码 2；不需要 root |
 | `sudo bash start.sh --only 90-verify` / `--verify` | 只跑某阶段/验收 |
 | `sudo bash start.sh --reset-state 80-components` | 清某阶段状态(如重新选组件) |
+| `sudo bash start.sh --only 60-cilium` | 重生 Cilium values；版本/values 指纹变化时自动执行 preflight 与 Helm upgrade |
 | `sudo bash start.sh --reset-cluster` | kubeadm reset 重置集群(保留系统调优/缓存) |
 | `sudo bash start.sh --pack-offline x.tgz` | 打离线包(工件+versions.lock+核心 chart) |
 | `sudo bash start.sh --unpack-offline x.tgz` | 目标机展开离线包后正常安装 |
@@ -126,9 +158,9 @@ token 过期重join：控制面重新生成命令，worker 上 `sudo bash start.
 - **kube-proxy 零残留**：kubeadm `skipPhases: addon/kube-proxy` + Cilium `kubeProxyReplacement: "true"` + 兜底删除 DS/ConfigMap + 验收阶段检查 iptables 无 KUBE-SVC 链。
 - **Cilium 按内核自动分级**：eBPF Host-Routing(≥5.10)、BBR 带宽管理(≥5.18)、BIG-TCP(≥6.3, 默认关)、**netkit(默认 auto：内核≥6.8 且 CONFIG_NETKIT 已编译时自动启用)**；native 路由 + eBPF masquerade 时启用 `installNoConntrackIptablesRules` 绕过 iptables conntrack。netkit 是 Guest 内核内部特性(替代 veth)，与宿主机/虚拟化平台无关；XDP 加速则依赖网卡驱动，虚拟机保持 disabled。
 - **L7/流量控制**：内置 Envoy(L7Proxy) + Gateway API CRD + 带宽管理器(Pod annotation 限速) + maglev 一致性哈希；Hubble(+UI) 提供流量观测。
-- **LoadBalancer 可用**：L2 通告 + `CiliumLoadBalancerIPPool`（`CILIUM_LB_POOL_START`/`STOP` 显式 IP 范围，预检拒绝覆盖节点 IP 的范围），局域网内直接访问 LoadBalancer 服务。
+- **LoadBalancer 可用**：`CiliumLoadBalancerIPPool`（`CILIUM_ENABLE_LB_IPAM`，默认 auto）给 LoadBalancer/Gateway 分地址，与 L2 通告（`CILIUM_ENABLE_L2_ANNOUNCEMENTS`，让局域网主机 ARP 到该地址）是两个独立开关；Gateway 固定 VIP 与默认池起止留空时 00 阶段有终端会询问并存到 `/var/lib/k8s-installer/lb-ipam.env`，预检拒绝两池重叠或覆盖节点 IP。
 - **存储面向数据库**：xfs + WaitForFirstConsumer；宿主机侧 THP=never、IO 调度(none/mq-deadline)、`vm.dirty_*` 平滑刷盘、`fs.aio-max-nr`、`vm.max_map_count`(ES 硬性要求)、`vm.overcommit_memory=1`(Redis/PG fork)。
-- **国内网络（四条独立通道）**：① `PROXY_URL` 按需代理——每次执行前 TCP 探活，代理没开自动降级直连，"要用就开、不用就关"无需改配置；只作用于脚本自身下载（GitHub 工件/helm 仓库/版本解析），从不污染 apt 与集群流量。② `GITHUB_PROXY` URL 前缀加速，是没有本地代理时的替代品，与 ① 二选一。③ containerd 拉镜像走 certs.d registry mirror——**支持原样导入你自己维护的完整 certs.d 目录**（`CONTAINERD_CERTS_SRC` 指定路径，或直接放到安装器 `files/certs.d/`，优先级高于 `USE_CN_MIRRORS` 自动生成的 DaoCloud 系）。④ `K8S_IMAGE_REPO` 独立指定 kubeadm 镜像仓库（如阿里云），与 mirror 通道解耦。另有 `PREPULL_VIA_PROXY=auto`：kubeadm init 前的预拉阶段若代理在线，临时给 containerd 挂代理、**拉完即撤**（中断残留会在重跑时自动清理），不留常驻代理配置。
+- **国内网络（四条独立通道）**：① `PROXY_URL` 按需代理——每次执行前 TCP 探活，代理没开自动降级直连，"要用就开、不用就关"无需改配置；只作用于脚本自身下载（GitHub 工件/helm 仓库/版本解析），从不污染 apt 与集群流量。② `GITHUB_PROXY` URL 前缀加速，是没有本地代理时的替代品，与 ① 二选一。③ containerd 拉镜像走 certs.d registry mirror——**支持原样导入你自己维护的完整 certs.d 目录**（`CONTAINERD_CERTS_SRC` 指定路径，或直接放到安装器 `files/certs.d/`，优先级高于 `USE_CN_MIRRORS` 自动生成的 DaoCloud 系）。④ `K8S_IMAGE_REPO` 独立指定 kubeadm 镜像仓库（如阿里云），与 mirror 通道解耦。另有 `PREPULL_VIA_PROXY=auto`：kubeadm init 前的预拉阶段若代理在线，临时给 containerd 挂代理、**拉完即撤**（中断残留会在重跑时自动清理），不留常驻代理配置。`CONTAINERD_USE_PROXY=true` 是独立的常驻开关；已验证可直连的仓库必须加入 `CONTAINERD_NO_PROXY_EXTRA`。当前 TCR `ccr.ccs.tencentyun.com`、GHCR `ghcr.io` 与其 blob 重定向域 `.githubusercontent.com` 已列入该值，避免本地代理停机时业务 Pod 全部进入 `ImagePullBackOff`。〔实测 2026-08-31〕三节点分别直拉 27.8 MB 的 config-web 镜像，耗时 108～117 秒（237～257 kB/s），超过 100 kB/s 门槛。
 
 ## 节点优雅关机（GracefulNodeShutdown）
 
@@ -161,7 +193,7 @@ unattended-upgrades 自带的 30 秒 logind drop-in。
 ### 终态 Pod GC
 
 `KCM_TERMINATED_POD_GC_THRESHOLD` 控制集群最多保留多少个 `Succeeded/Failed` Pod，默认值为
-`100`。该值必须是正整数；`0` 和负数会关闭终态 Pod GC，因此安装器直接拒绝。新建控制面时，
+`20`。该值必须是正整数；`0` 和负数会关闭终态 Pod GC，因此安装器直接拒绝。新建控制面时，
 50 阶段通过 kubeadm 写入 `--terminated-pod-gc-threshold`。已有控制面每次执行都会重新调和：
 先为 live ClusterConfiguration 和静态 Pod 清单创建本次快照，再原子替换
 `/etc/kubernetes/manifests/kube-controller-manager.yaml`，等待本节点具名控制器恢复 Ready，最后只
@@ -178,10 +210,10 @@ ClusterConfiguration 字段保持不变；中途失败会同时回滚运行清�
 找回已经被 PodGC 删除的 Pod、容器日志或现场状态。需要更长排障窗口时，提高正整数阈值；不要
 把 `shutdownGracePeriod` 改为 `0s`，也不要把 PodGC 阈值设为 `0`。
 
-回归检查：
+回归检查（全部离线，不需要 root）：
 
 ```bash
-bash tests/test-node-shutdown.sh
+for t in tests/*.sh; do bash "$t"; done
 ```
 
 ## etcd 维护(45 阶段 + defrag 定时器)

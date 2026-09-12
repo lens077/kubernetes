@@ -1,8 +1,7 @@
-# pg-main 的对外暴露(TLS passthrough + SNI 分流),与 pg-cluster.yaml 配套:
-#   kubectl apply -f pg-gateway.yaml
-# 模板与选型说明见 ../gateway/README.md(为什么是 TLSRoute 而不是 TCPRoute)。
-# 实例按需创建,所以这份清单不进自动 apply 的 gateway/ 目录 —— 算子刚装完时
-# pg-main-rw Service 还不存在,路由会一直 ResolvedRefs=False。
+# pg-main 的默认宿主网入口：TLS passthrough + SNI 分流。
+# postgres/install.sh 在 pg-main-rw 就绪后通过 routes_apply 自动应用本清单。
+# 网关不解密；客户端必须使用 pg.dev.test、verify-full 和 direct TLS negotiation。
+# 传统 PostgreSQL SSLRequest 客户端改用 examples/pg-tcproute.yaml 兼容入口。
 ---
 apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway

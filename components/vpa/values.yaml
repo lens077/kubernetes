@@ -11,7 +11,12 @@ updater:
 
 recommender:
   enabled: true
-  replicas: 1                    # chart 默认 2 —— 两节点集群里第二个副本只是占内存
+  replicas: 1                    # recommender 非数据面，三节点集群仍只需一个副本
+  # 上游默认 25m/250Mi 会把低负载 Go 服务的推荐值全部顶成同一个地板，伪装成测量结果。
+  # 10m/32Mi 来自当前集群低负载组件实测；具体安全下限仍由各工作负载在压测后决定。
+  extraArgs:
+    - --pod-recommendation-min-cpu-millicores=10
+    - --pod-recommendation-min-memory-mb=32
   podDisruptionBudget:
     enabled: false               # 单副本下 PDB(minAvailable:1) 会挡住节点排空,
                                  # 与 kured 的自动重启窗口直接打架

@@ -31,9 +31,10 @@
 | 上游默认/建议 | 本集群 | 原因 |
 |---|---|---|
 | 三组件全装 | **只装 recommender** | 关掉 admission-controller 就没有 webhook——连带整个证书链（certgen job / cert-manager 签发 / CA 注入）和「webhook 挂了导致全集群 Pod 创建失败」的经典事故一起消失。关掉 updater 就没人驱逐 Pod：单控制面集群里自动驱逐的风险远大于收益。 |
-| 各组件 `replicas: 2` | **1** | 两节点集群，第二个副本只是占内存；recommender 挂了最多是推荐值停止更新，不影响任何工作负载。 |
+| 各组件 `replicas: 2` | **1** | recommender 不在数据面；三节点集群也不需要用第二个副本换取推荐值高可用。recommender 挂了只会停止更新推荐值，不影响工作负载。 |
 | `podDisruptionBudget.enabled: true` | **false** | 单副本 + `minAvailable: 1` 会让节点永远排空不掉，与 [kured](../kured/) 的自动重启窗口直接打架。 |
 | 无 resources 默认值 | requests 50m/200Mi，limits.memory 500Mi | recommender 在内存里为每个容器建直方图模型，Pod 越多越涨，必须给上限。 |
+| 推荐地板 25m/250Mi | 10m/32Mi | 默认内存地板会把当前低负载 Go 服务全部顶到 250Mi，产生看似一致但不可用的推荐值；工作负载自身的安全下限必须在压测后确定。 |
 | chart 自动跟最新 | 钉 `VPA_CHART_VERSION`（0.11.0 / app 1.7.1） | 官方 chart README 至今写着 "under development"；只装 recommender 风险面虽小，版本仍要可控。 |
 
 > chart 的官方仓库是 `https://kubernetes.github.io/autoscaler`（SIG Autoscaling 维护）。
@@ -69,20 +70,26 @@ kubectl -n observability describe vpa grafana | sed -n '/Recommendation/,$p'
 > 两个 CR 的 `PROVIDED=True`，四档推荐值（Lower Bound / Target / Uncapped Target /
 > Upper Bound）齐全；`resourcePolicy.minAllowed` 生效可见——grafana 的
 > Uncapped Target 12m 被抬到 Target 25m。CNPG 的 `Cluster` 直接作 targetRef 可用。
+>
+> **ecommerce 发布证据（2026-08-29）**：Helm revision 2 仍只渲染一个 recommender
+> Deployment，容器参数包含 `10m/32Mi` 推荐地板，且不存在 VPA mutating webhook。
+> ecommerce 的 15 个 VPA 全部为 `Off` 并满足 `RecommendationProvided=True`；发布前后的
+> 15 个业务 Deployment 和 17 个 active Pod 身份完全一致，没有发生业务 rollout 或 eviction。
+> 完整证据、经验、回滚与下一步记录在同级仓
+> `../ecommerce/docs/reports/2026-08-29-vpa-recommendation-only.md`。
 
 推荐值怎么读：
 
 | 档位 | 含义 | 怎么用 |
 |---|---|---|
-| **Target** | 推荐的 requests | 直接抄进 `resources.requests` |
-| Lower Bound | 低于它会明显影响性能 | 压成本时的下限 |
-| Upper Bound | 再高就是浪费 | 设 limits 的参考上界 |
-| Uncapped Target | 忽略 min/maxAllowed 的原始推荐 | 判断你的边界是否卡住了推荐 |
+| **Target** | 当前观测窗口给出的 requests 候选值 | 与启动峰值、k6 容量窗口和 OOM 记录交叉验证，不能直接照抄 |
+| Lower Bound | 短窗口中的保守下界 | 只用于判断压缩空间，不等于已验证的安全下限 |
+| Upper Bound | 当前模型覆盖波动后的上界 | 用于评估 headroom，不直接等同于 limits |
+| Uncapped Target | 忽略 `minAllowed`/`maxAllowed` 的原始推荐 | 判断人为边界或全局地板是否把 Target 顶住 |
 
 ## 6. 踩坑
 
-- **推荐值要"养"**：recommender 按滑动窗口建直方图，**至少一天**才有参考价值，一周更稳。
-  刚 apply 完 status 是空的，别当成坏了。
+- **推荐值要「养」**：recommender 按滑动窗口建直方图。容量定稿至少观察 7 天，并覆盖一次正常发布启动窗口和一次 k6 容量窗口；刚 apply 完 status 为空不是故障。
 - **推荐值反映的是"当前配置下的行为"**：TODO.md 里 kafka-connect 那条踩过——
   给它挂 VPA 时 `resources` 根本没应用到集群，于是 VPA 观察到的是**无 limit 状态**下的
   用量，推荐值不能用来校准有 limit 的配置。**先确认目标负载的现状与文件一致**（`kubectl diff`）。
