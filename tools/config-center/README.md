@@ -33,6 +33,7 @@
 | `../rotate-credential.sh` | 轮换四段编排：OpenBao 写新值 → ESO 同步 + 提供方滚动 → 消费方重写 → 验收 |
 | `../../components/_external/` | 集群外实例的契约声明 + 通用 ExternalSecret 模板 + `apply.sh` |
 | `../../tests/mapping_test.sh` | 门禁：映射路径必须能在 control-tower schema 里找到（schema 改名先红） |
+| `templates/<svc>.bootstrap.yaml` | 每服务的脱敏骨架（`--export-templates` 从现网导出）：映射覆盖的路径与非空机密叶子是 `__HARVEST__`，其余（`server.addr`、超时、池、日志级别、`store`/`pay`/`recommend` 等服务固有配置）原样。键不存在时 harvest 用它从零合成整份，再按契约填满、校验 schema、拒绝残留占位符 |
 
 ## 日常操作
 
@@ -54,6 +55,10 @@ bash tools/rotate-credential.sh dragonfly
 K8S_CONFIG_ENV=bootstrap/config.hosting.env PYTHON=<venv>/bin/python \
 CONFIG_CENTER_URL=http://127.0.0.1:30010 bash tools/config-center-harvest.sh --dry-run   # 先 port-forward
 ```
+
+**从零（新集群 / 新环境）**：键不存在时自动走骨架合成，不再需要 `config-center-pre-seed.sh` 从 dev 复制。注意 operator token 按 environment 收窄——给新环境播种要先为那个环境签一枚（`ENVIRONMENT=<env> bash tools/config-center-operator-token.sh`）。骨架过时时（服务新增了固有字段）从有现值的环境 `--export-templates` 重新导出并入库。
+
+**装完就填好**：`config.env` 的 `CC_AUTO_HARVEST="true"` 让 80 阶段末尾自动跑 harvest（含 config-center 消费方）；前提是 Config Center 在跑、operator token Secret 已存在，否则该步只警告不阻断。默认关，因为它会滚动业务服务。
 
 节点上 schema 副本在 `$STATE_DIR/config-center/schemas/`（从 control-tower `services/config/internal/schema/schemas/` rsync）；没有 schema 时 harvest 拒绝运行——不知道 cart 不该有 `search.catalog`。
 

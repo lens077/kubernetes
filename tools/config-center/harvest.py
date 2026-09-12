@@ -22,6 +22,7 @@ import argparse
 import base64
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -41,6 +42,7 @@ REPO_ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
 DEFAULT_SERVICES = "address behavior cart inventory merchant order payment product search user"
 KEY = "bootstrap.yaml"
 SECRET_FIELDS = ("password", "client_secret", "api_key", "certificate", "ca_pem", "token", "service_token")
+PLACEHOLDER = "__HARVEST__"   # 模板里「必须由 harvest 填」的值; 播种后若还残留即报错
 
 
 def log(msg: str) -> None:
@@ -140,7 +142,7 @@ class Provider:
 
     def __init__(self, contract: dict, env: str, overrides: dict):
         self.c = contract
-        self.env = env
+        self.env = "dev" if env == "dev" else "pre"   # 地址策略只有两种; 环境名可以是任意值
         self.overrides = overrides.get(contract["provides"], {}) or {}
         self._cred: dict[str, str] | None = None
         self._ca: str | None = None
@@ -230,8 +232,11 @@ def deep_set(doc: dict, path: str, value: Any) -> None:
 
 
 def is_secret_path(path: str) -> bool:
+    """按叶子名判定机密: 显式清单 + 命名约定(…password/…secret/…token/…_key/…cert/…pem)。key_prefix 之类不算。"""
     last = path.rsplit(".", 1)[-1]
-    return last in SECRET_FIELDS
+    if last in SECRET_FIELDS:
+        return True
+    return bool(re.search(r"(password|secret|token|_key$|^key$|cert$|_cert$|pem$)", last))
 
 
 def mask(path: str, v: Any) -> str:
@@ -340,7 +345,7 @@ def extract_externals(cc: "ConfigCenter", mapping: dict, providers: dict, servic
             continue
         m = mapping[cap]
         fields: dict = dict(m.get("fields") or {})
-        fields.update(m.get(f"fields_{env}") or {})
+        fields.update(m.get("fields_dev" if env == "dev" else "fields_pre") or {})
         bucket: dict = {}
         for path, spec in fields.items():
             src = spec.get("from", "")
@@ -382,10 +387,12 @@ def apply_caps(doc: dict, orig: dict, caps: list[str], mapping: dict, prov: dict
     for cap in caps:
         m = mapping[cap]
         fields: dict = dict(m.get("fields") or {})
-        fields.update(m.get(f"fields_{env}") or {})
+        fields.update(m.get("fields_dev" if env == "dev" else "fields_pre") or {})
         p = prov[cap]
         for path, spec in fields.items():
             has_old, old = deep_get(doc, path)
+            if has_old and old == PLACEHOLDER:
+                has_old, old = False, None   # 骨架占位符视为缺失: default 会填、diff 显示为新增
             if "const" in spec:
                 new = spec["const"]
             elif "default" in spec:
@@ -396,6 +403,9 @@ def apply_caps(doc: dict, orig: dict, caps: list[str], mapping: dict, prov: dict
                 ok, new = p.resolve(spec["from"])
                 if not ok:
                     if spec.get("optional"):
+                        if deep_get(doc, path) == (True, PLACEHOLDER):
+                            deep_set(doc, path, ""); deep_set(orig, path, "")
+                            changes.append((path, None, ""))
                         continue
                     if spec["from"].startswith("overrides."):
                         reason = f"overrides 文件缺少 {cap}.{spec['from'][10:]}(--overrides / CC_OVERRIDES)"
@@ -470,6 +480,78 @@ def harvest_secret_consumer(name: str, spec: dict, mapping: dict, providers: dic
     return 0
 
 
+def mapped_paths(mapping: dict, caps: list[str]) -> set[str]:
+    out: set[str] = set()
+    for cap in caps:
+        m = mapping[cap]
+        for block in ("fields", "fields_pre", "fields_dev"):
+            out.update((m.get(block) or {}).keys())
+    return out
+
+
+def redact_template(doc: dict, paths: set[str]) -> dict:
+    """机密叶子与映射覆盖的路径全部替换为占位符, 其余(端口、超时、池大小、日志级别…)原样保留。"""
+    def walk(o: Any, prefix: str) -> Any:
+        if isinstance(o, dict):
+            return {k: walk(v, f"{prefix}{k}.") for k, v in o.items()}
+        path = prefix[:-1]
+        if path in paths:
+            return PLACEHOLDER
+        if is_secret_path(path) and o not in ("", None):
+            return PLACEHOLDER          # 现网为空的机密(如未接入的支付 key)保持为空, 不是「待填」
+        return o
+    return walk(doc, "")
+
+
+def export_templates(cc: "ConfigCenter", mapping: dict, services: list[str], env: str, admin: str,
+                     svc_tokens: dict[str, str], out_dir: str, schemas_dir: str) -> int:
+    os.makedirs(out_dir, exist_ok=True)
+    n = 0
+    for svc in services:
+        headers = admin_headers(admin) if admin else (
+            {"x-config-center-service-token": svc_tokens[svc]} if svc in svc_tokens else None)
+        if headers is None:
+            log(f"⚠ {svc}: 没有可用 token, 跳过")
+            continue
+        try:
+            doc = yaml.safe_load(cc.get_key(svc, env, KEY, headers).get("value") or "") or {}
+        except RuntimeError as e:
+            log(f"⚠ {svc}: {e}")
+            continue
+        caps = needed_caps(load_schema(schemas_dir, svc), mapping)
+        tpl = redact_template(doc, mapped_paths(mapping, caps))
+        text = ("# 由 harvest.py --export-templates 从 Config Center " + env + " 现值导出的脱敏骨架(" + time.strftime('%F') + ")。\n"
+                "# __HARVEST__ 处由 tools/config-center-harvest.sh 按组件契约填; 其余是非机密的服务固有配置, 可手改。\n"
+                "# 新集群/空环境播种时用它合成整份 bootstrap.yaml; 已有键时 harvest 只改映射路径, 不看本文件。\n"
+                + dump_yaml(tpl))
+        with open(os.path.join(out_dir, f"{svc}.bootstrap.yaml"), "w", encoding="utf-8") as f:
+            f.write(text)
+        n += 1
+        log(f"{svc}: 骨架已导出({sum(1 for _ in re.finditer(PLACEHOLDER, text))} 处占位)")
+    log(f"共 {n} 份 → {out_dir}")
+    return 0
+
+
+def load_template(templates_dir: str, svc: str) -> dict | None:
+    p = os.path.join(templates_dir, f"{svc}.bootstrap.yaml")
+    if not os.path.isfile(p):
+        return None
+    with open(p, encoding="utf-8") as f:
+        return yaml.safe_load(f) or {}
+
+
+def leftover_placeholders(doc: dict) -> list[str]:
+    out: list[str] = []
+    def walk(o: Any, prefix: str) -> None:
+        if isinstance(o, dict):
+            for k, v in o.items():
+                walk(v, f"{prefix}{k}.")
+        elif o == PLACEHOLDER:
+            out.append(prefix[:-1])
+    walk(doc, "")
+    return out
+
+
 def selector_tokens(ns: str, secret: str) -> dict[str, str]:
     """ecommerce-config-source-<env> Secret 里每个 <svc>.yaml 的 service_token。"""
     try:
@@ -489,7 +571,7 @@ def selector_tokens(ns: str, secret: str) -> dict[str, str]:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--env", default="pre", choices=("pre", "dev"), help="Config Center 环境 = 地址策略(pre 集群内 DNS / dev 网关域名+CA)")
+    ap.add_argument("--env", default="pre", help="Config Center 环境名; 地址策略: dev → 网关域名+CA, 其它 → 集群内 DNS")
     ap.add_argument("--services", default=os.environ.get("SERVICES", DEFAULT_SERVICES))
     ap.add_argument("--namespace", default=os.environ.get("ECOMMERCE_NAMESPACE", "ecommerce"))
     ap.add_argument("--mapping", default=os.path.join(HERE, "mapping.yaml"))
@@ -503,6 +585,10 @@ def main() -> int:
     ap.add_argument("--dry-run", action="store_true", help="只读: 打印脱敏 diff, 不写 Config Center / Secret / Deployment")
     ap.add_argument("--rotate-tokens", action="store_true", help="为每个服务重新签发 machine token(默认沿用 selector Secret 里的)")
     ap.add_argument("--no-restart", action="store_true", help="写完不滚动 Deployment")
+    ap.add_argument("--templates-dir", default=os.path.join(HERE, "templates"),
+                    help="每服务 bootstrap 骨架(<svc>.bootstrap.yaml, 机密与映射路径为 __HARVEST__); 键不存在时用它从零合成")
+    ap.add_argument("--export-templates", action="store_true",
+                    help="从 Config Center 现值导出脱敏骨架到 --templates-dir(入库用; 机密与映射覆盖路径替换为 __HARVEST__)")
     ap.add_argument("--consumer", default="", help="只处理 mapping.yaml consumers.<名>(如 config-center: 目标是 K8s Secret 而不是 Config Center 键)")
     ap.add_argument("--check-mapping", action="store_true", help="离线门禁: 映射路径 ↔ schema, 不连集群")
     ap.add_argument("--extract-externals", action="store_true",
@@ -572,6 +658,8 @@ def main() -> int:
 
     if args.extract_externals:
         return extract_externals(cc, mapping, providers, services, args.env, admin, svc_tokens)
+    if args.export_templates:
+        return export_templates(cc, mapping, services, args.env, admin, svc_tokens, args.templates_dir, schemas_dir)
 
     schema_warned = False
     new_tokens: dict[str, str] = {}
@@ -585,17 +673,27 @@ def main() -> int:
             headers = {"x-config-center-service-token": svc_tokens[svc]}
         else:
             die(f"{svc}: 既没有管理 token, {ns}/{selector} 里也没有它的 service_token, 读不了现值")
+        seeded = False
         try:
             entry = cc.get_key(svc, args.env, KEY, headers)
+            cur_text = entry.get("value") or ""
         except RuntimeError as e:
-            die(f"{svc}: {e}")
-        cur_text = entry.get("value") or ""
+            if "not_found" not in str(e):
+                die(f"{svc}: {e}")
+            entry, cur_text = {"version": 0}, ""
         if not cur_text:
-            die(f"{svc}: {args.env}/{KEY} 为空(新环境请先用 config-center-pre-seed.sh 从 dev 复制)")
-        doc = yaml.safe_load(cur_text)
-        if not isinstance(doc, dict):
-            die(f"{svc}: {KEY} 不是映射结构")
-        orig = yaml.safe_load(cur_text)
+            # 键不存在/为空: 用脱敏骨架从零合成(新集群、新环境)
+            tpl = load_template(args.templates_dir, svc)
+            if tpl is None:
+                die(f"{svc}: {args.env}/{KEY} 不存在, 且没有骨架 {args.templates_dir}/{svc}.bootstrap.yaml"
+                    f"(从有现值的环境 --export-templates 导出并入库)")
+            doc, orig, seeded = tpl, yaml.safe_load(dump_yaml(tpl)), True
+            log(f"{svc}: {args.env}/{KEY} 不存在 → 用骨架从零合成")
+        else:
+            doc = yaml.safe_load(cur_text)
+            if not isinstance(doc, dict):
+                die(f"{svc}: {KEY} 不是映射结构")
+            orig = yaml.safe_load(cur_text)
 
         # 2) 按 schema 决定要填哪些能力
         schema = load_schema(schemas_dir, svc)
@@ -613,7 +711,14 @@ def main() -> int:
         for r in unresolved:
             pending_all.setdefault(r.split(" ← ", 1)[1], []).append(f"{svc}:{r.split(' ← ', 1)[0]}")
 
-        if not changes:
+        if seeded:
+            left = leftover_placeholders(doc)
+            if left and not args.dry_run:
+                die(f"{svc}: 骨架里仍有 {len(left)} 处 {PLACEHOLDER} 没被映射填上(需要 overrides 或映射补条目): " + ", ".join(left))
+            for pth in left:
+                unresolved.append(f"{pth} ← 骨架占位符无映射来源")
+                pending_all.setdefault("骨架占位符无映射来源(补 mapping.yaml 或 overrides)", []).append(f"{svc}:{pth}")
+        if not changes and not seeded:
             log(f"· {svc}: v{entry.get('version')} 无差异" + (f"(另有 {len(unresolved)} 处待补齐)" if unresolved else ""))
             continue
 
@@ -637,7 +742,7 @@ def main() -> int:
                     die(f"{svc}: 合成结果不符合 schema: {'/'.join(str(x) for x in e.absolute_path)}: {e.message}")
 
         # 6) 脱敏 diff
-        log(f"{svc}: v{entry.get('version')} → 改动 {len(changes)} 处" + (f", 待补齐 {len(unresolved)} 处" if unresolved else ""))
+        log(f"{svc}: " + ("从零合成" if seeded else f"v{entry.get('version')}") + f" → 改动 {len(changes)} 处" + (f", 待补齐 {len(unresolved)} 处" if unresolved else ""))
         for path, old, new in changes:
             print(f"    {path}: {mask(path, old)} → {mask(path, new)}")
         if args.dry_run:
@@ -646,7 +751,7 @@ def main() -> int:
         # 7) 写入 + 读回校验
         try:
             put = cc.put_key(svc, args.env, KEY, new_text, admin,
-                             comment=f"harvest {args.env}: " + ", ".join(caps))
+                             comment=("seed from template + " if seeded else "") + f"harvest {args.env}: " + ", ".join(caps))
         except RuntimeError as e:
             die(f"{svc}: {e}(管理 token 无效/过期?)")
         log(f"{svc}: {args.env}/{KEY} 已写入 v{put.get('version')}")

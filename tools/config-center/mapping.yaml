@@ -44,8 +44,10 @@ consul:
   fields:
     discovery.consul.addr:                 {from: address.hostport}
     discovery.consul.scheme:               {from: address.scheme}
-  fields_pre:
+  fields_pre:                              # 集群内明文 http; 从零合成时三个 tls 字段都要有值(schema 是 boolean/string)
     discovery.consul.tls.enable:           {const: false}
+    discovery.consul.tls.insecure_skip_verify: {const: false}
+    discovery.consul.tls.ca_pem:           {const: ""}
   fields_dev:                              # dev 经共享网关 https://consul.<域>, 私有 CA
     discovery.consul.tls.enable:           {const: true}
     discovery.consul.tls.insecure_skip_verify: {const: false}
