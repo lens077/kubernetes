@@ -10,7 +10,14 @@ DIR=$(comp_dir "${BASH_SOURCE[0]}")
 comp_load_meta "$DIR"
 comp_require_cluster
 
-pass=$(get_cred grafana-admin)     # 只生成一次, 重复执行密码不变
+# admin 口令: ESO 从 OpenBao 物化 Secret grafana-admin(externalsecret.yaml, chart 走 admin.existingSecret);
+# 降级时 get_cred + 自建同名 Secret。Grafana 只在首次初始化读它, 之后改值不换密码(README §6)。
+ns_ensure "$NAMESPACE"
+if ! cred_via_eso "$DIR" "$NAMESPACE" grafana-admin; then
+  kctl -n "$NAMESPACE" create secret generic grafana-admin \
+    --from-literal=admin-user=admin --from-literal=admin-password="$(get_cred grafana-admin)" \
+    --dry-run=client -o yaml | kctl apply -f -
+fi
 
 ds="" sources=()
 if comp_installed victoriametrics vm-single-victoria-metrics-single-server; then
@@ -82,7 +89,7 @@ log_step "安装 $ID → 命名空间 $NAMESPACE (数据源: ${sources[*]:-无})
 
 dyn=$(mktemp)
 {
-  echo "adminPassword: \"$pass\""
+  echo "admin: { existingSecret: grafana-admin, userKey: admin-user, passwordKey: admin-password }"
   if (( ${#plugins[@]} > 0 )); then
     echo "plugins:"
     printf '  - %s\n' "${plugins[@]}"

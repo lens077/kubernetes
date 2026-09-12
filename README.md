@@ -62,7 +62,7 @@ README.md       解决方案文档：定位 / 上游最佳实践 / **本集群�
 | [meilisearch](components/meilisearch/) | 已退役；仅保留显式人工回滚安装能力，默认关闭 | — |
 | [minio](components/minio/) | S3 对象存储（pgsty/silo） | `minio-ui` / `s3` |
 | [argo](components/argo/) | ArgoCD (GitOps) | `argocd.dev.test` |
-| [external-secrets](components/external-secrets/) | ESO：线上 Vault(`vault.apikv.com`) → k8s Secret（密钥不入 Git/明文） | — |
+| [external-secrets](components/external-secrets/) | ESO：凭据后端（定稿集群内 OpenBao，`ESO_STORE`）→ k8s Secret（密钥不入 Git/明文）；VPS Vault 仅作可选集群外副本 | — |
 | [kured](components/kured/) | 维护窗口内自动重启 | — |
 | [vpa](components/vpa/) | 只装 recommender：出 `resources` 推荐值，不自动改 Pod | — |
 | [newt](components/newt/) | Pangolin 隧道客户端，把集群服务暴露到 `*.apikv.com` | 纯出站 |

@@ -10,22 +10,21 @@ DIR=$(comp_dir "${BASH_SOURCE[0]}")
 comp_load_meta "$DIR"
 comp_require_cluster
 
-# SECRET_KEY 要求 >= 50 字符; get_cred 只给 24 个十六进制字符, 这里单独生成并持久化
-mkdir -p "$STATE_DIR/creds"
-if [[ ! -f $STATE_DIR/creds/bugsink-secret-key ]]; then
-  openssl rand -base64 60 | tr -d '\n=/+' | cut -c1-64 > "$STATE_DIR/creds/bugsink-secret-key"
-  chmod 600 "$STATE_DIR/creds/bugsink-secret-key"
-fi
-secret_key=$(cat "$STATE_DIR/creds/bugsink-secret-key")
-admin_pass=$(get_cred bugsink-admin)
-admin_email="admin@$HOSTNAME"
-
 log_step "安装 $ID → 命名空间 $NAMESPACE (PVC ${BUGSINK_STORAGE_SIZE}/${SC_NAME}, 事件保留 ${BUGSINK_EVENT_RETENTION_DAYS} 天)"
 ns_ensure "$NAMESPACE"
-kctl -n "$NAMESPACE" create secret generic bugsink-secret \
-  --from-literal=SECRET_KEY="$secret_key" \
-  --from-literal=CREATE_SUPERUSER="$admin_email:$admin_pass" \
-  --dry-run=client -o yaml | kctl apply -f -
+# SECRET_KEY / 超级用户口令: ESO 从 OpenBao 物化(externalsecret.yaml, CREATE_SUPERUSER 由模板拼出);
+# 降级: get_cred。SECRET_KEY 要求 >= 50 字符, get_cred 只给 24 个十六进制字符, 降级路径单独生成并持久化。
+if ! cred_via_eso "$DIR" "$NAMESPACE" bugsink-secret; then
+  mkdir -p "$STATE_DIR/creds"
+  if [[ ! -f $STATE_DIR/creds/bugsink-secret-key ]]; then
+    openssl rand -base64 60 | tr -d '\n=/+' | cut -c1-64 > "$STATE_DIR/creds/bugsink-secret-key"
+    chmod 600 "$STATE_DIR/creds/bugsink-secret-key"
+  fi
+  kctl -n "$NAMESPACE" create secret generic bugsink-secret \
+    --from-literal=SECRET_KEY="$(cat "$STATE_DIR/creds/bugsink-secret-key")" \
+    --from-literal=CREATE_SUPERUSER="admin@$HOSTNAME:$(get_cred bugsink-admin)" \
+    --dry-run=client -o yaml | kctl apply -f -
+fi
 
 out=$(mktemp -d)
 while read -r f; do

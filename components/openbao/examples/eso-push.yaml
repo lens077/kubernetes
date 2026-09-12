@@ -1,0 +1,38 @@
+# 反向通道: 集群内生成的派生物(cert-manager 根 CA)推回 OpenBao, 让 k8s/${CLUSTER_NAME}/ca/* 永远是现值
+# (CA 会续期, 推模型保证 OpenBao 里不过期)。写权限 token 与只读 token 分开: eso-push 策略只能写 ca/* 路径。
+apiVersion: external-secrets.io/v1
+kind: ClusterSecretStore
+metadata: { name: openbao-push }
+spec:
+  provider:
+    vault:
+      server: "http://openbao.openbao.svc:8200"
+      path: secret
+      version: v2
+      auth:
+        tokenSecretRef:
+          name: openbao-eso-push-token
+          namespace: external-secrets
+          key: token
+---
+apiVersion: external-secrets.io/v1alpha1
+kind: PushSecret
+metadata:
+  name: global-root-ca
+  namespace: cert-manager
+spec:
+  refreshInterval: 1h
+  updatePolicy: Replace
+  deletionPolicy: None
+  secretStoreRefs:
+    - name: openbao-push
+      kind: ClusterSecretStore
+  selector:
+    secret:
+      name: global-root-ca-secret
+  data:
+    - match:
+        secretKey: ca.crt
+        remoteRef:
+          remoteKey: k8s/${CLUSTER_NAME}/ca/global-root
+          property: ca.crt

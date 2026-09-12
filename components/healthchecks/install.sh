@@ -11,15 +11,21 @@ DIR=$(comp_dir "${BASH_SOURCE[0]}")
 comp_load_meta "$DIR"
 comp_require_cluster
 
-secret_key=$(get_cred healthchecks-secret-key)
-admin_pass=$(get_cred healthchecks-admin)
 admin_email="admin@$HOSTNAME"
 
 log_step "安装 $ID → 命名空间 $NAMESPACE (PVC ${HEALTHCHECKS_STORAGE_SIZE}/${SC_NAME})"
 ns_ensure "$NAMESPACE"
-kctl -n "$NAMESPACE" create secret generic healthchecks-secret \
-  --from-literal=SECRET_KEY="$secret_key" \
-  --dry-run=client -o yaml | kctl apply -f -
+# SECRET_KEY / 超级用户口令: ESO 从 OpenBao 物化 Secret healthchecks-secret(键 SECRET_KEY / ADMIN_PASSWORD);
+# 降级: get_cred。口令只在首次 createsuperuser 时用, 之后存库。
+if cred_via_eso "$DIR" "$NAMESPACE" healthchecks-secret; then
+  admin_pass=$(kctl -n "$NAMESPACE" get secret healthchecks-secret -o jsonpath='{.data.ADMIN_PASSWORD}' | base64 -d)
+else
+  admin_pass=$(get_cred healthchecks-admin)
+  kctl -n "$NAMESPACE" create secret generic healthchecks-secret \
+    --from-literal=SECRET_KEY="$(get_cred healthchecks-secret-key)" \
+    --from-literal=ADMIN_PASSWORD="$admin_pass" \
+    --dry-run=client -o yaml | kctl apply -f -
+fi
 
 out=$(mktemp -d)
 while read -r f; do
