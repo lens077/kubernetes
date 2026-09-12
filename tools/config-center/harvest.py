@@ -140,9 +140,9 @@ class ConfigCenter:
 class Provider:
     """一个能力的提供方(来自 verify-contracts --json 的一行)。值按需懒加载, 只加载一次。"""
 
-    def __init__(self, contract: dict, env: str, overrides: dict):
+    def __init__(self, contract: dict, strategy: str, overrides: dict):
         self.c = contract
-        self.env = "dev" if env == "dev" else "pre"   # 地址策略只有两种; 环境名可以是任意值
+        self.env = strategy   # pre(集群内 DNS) | gateway(LAN 开发机经 Cilium Gateway, .dev.test+CA) | pangolin(远程开发机经 Pangolin 资源)
         self.overrides = overrides.get(contract["provides"], {}) or {}
         self._cred: dict[str, str] | None = None
         self._ca: str | None = None
@@ -151,7 +151,13 @@ class Provider:
 
     @property
     def addr(self) -> dict:
-        return self.c["pre"] if self.env == "pre" else self.c["dev"]
+        if self.env == "pre":
+            return self.c["pre"]
+        if self.env == "gateway":
+            return self.c["dev"]
+        if not self.c.get("pangolin"):   # 只在真正被用到时才报, 未选中的候选提供方不影响
+            die(f"提供方 {self.c['id']} 没有 pangolin 入口(component.env 缺 REMOTE_HOST/REMOTE_PORT/REMOTE_SCHEME; 先在 Pangolin 建资源)")
+        return self.c["pangolin"]
 
     def cred(self) -> dict[str, str]:
         if self._cred is None:
@@ -189,6 +195,8 @@ class Provider:
             default_port = {"https": 443, "http": 80}.get(scheme)
             return True, f"{scheme}://{a['host']}" + ("" if a["port"] == default_port else f":{a['port']}")
         if src == "ca.pem":
+            if self.env == "pangolin" and a.get("ca") == "public":
+                return True, ""        # Traefik 终止 TLS, 公共可信证书: 清空 ca_pem, 走系统 CA
             ca = self.ca()
             return (ca is not None), ca
         if src == "cred.user":
@@ -326,7 +334,7 @@ def check_mapping(mapping: dict, schemas_dir: str) -> int:
 
 
 def extract_externals(cc: "ConfigCenter", mapping: dict, providers: dict, services: list[str],
-                      env: str, admin: str, svc_tokens: dict[str, str]) -> int:
+                      env: str, strategy: str, admin: str, svc_tokens: dict[str, str]) -> int:
     """反向映射: 对每个外部提供方, 把映射里 from: cred.<k> / ca.pem / overrides.<k> 的路径从现值里读出来。
     输出 {"<id>": {"<k>": v, "ca.crt": pem}, "_overrides": {"<cap>": {...}}}; 凭据只进 stdout(由调用方直接管进 OpenBao)。"""
     out: dict[str, dict] = {"_overrides": {}}
@@ -345,7 +353,7 @@ def extract_externals(cc: "ConfigCenter", mapping: dict, providers: dict, servic
             continue
         m = mapping[cap]
         fields: dict = dict(m.get("fields") or {})
-        fields.update(m.get("fields_dev" if env == "dev" else "fields_pre") or {})
+        fields.update(m.get("fields_pre" if strategy == "pre" else "fields_dev") or {})
         bucket: dict = {}
         for path, spec in fields.items():
             src = spec.get("from", "")
@@ -387,7 +395,7 @@ def apply_caps(doc: dict, orig: dict, caps: list[str], mapping: dict, prov: dict
     for cap in caps:
         m = mapping[cap]
         fields: dict = dict(m.get("fields") or {})
-        fields.update(m.get("fields_dev" if env == "dev" else "fields_pre") or {})
+        fields.update(m.get("fields_pre" if env == "pre" else "fields_dev") or {})
         p = prov[cap]
         for path, spec in fields.items():
             has_old, old = deep_get(doc, path)
@@ -451,7 +459,7 @@ def harvest_secret_consumer(name: str, spec: dict, mapping: dict, providers: dic
     orig = yaml.safe_load(cur_text)
     if not isinstance(doc, dict):
         die(f"{ns}/{sec}:{key} 不是映射结构")
-    changes, unresolved = apply_caps(doc, orig, caps, mapping, prov, args.env, args.dry_run, name)
+    changes, unresolved = apply_caps(doc, orig, caps, mapping, prov, args.strategy, args.dry_run, name)
     if not changes:
         log(f"· {name}: 无差异" + (f"(另有 {len(unresolved)} 处待补齐)" if unresolved else ""))
         for r in unresolved:
@@ -571,7 +579,10 @@ def selector_tokens(ns: str, secret: str) -> dict[str, str]:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--env", default="pre", help="Config Center 环境名; 地址策略: dev → 网关域名+CA, 其它 → 集群内 DNS")
+    ap.add_argument("--env", default="pre", help="Config Center 环境名(任意)")
+    ap.add_argument("--strategy", default="", choices=("", "pre", "gateway", "pangolin"),
+                    help="地址策略; 缺省由环境名推导: dev → pangolin(开发机经 Pangolin 资源, 2026-09-12 定稿), 其它 → pre(集群内 DNS)。"
+                         "gateway = 机房 LAN 上的开发机经 Cilium Gateway(.dev.test + 私有 CA)")
     ap.add_argument("--services", default=os.environ.get("SERVICES", DEFAULT_SERVICES))
     ap.add_argument("--namespace", default=os.environ.get("ECOMMERCE_NAMESPACE", "ecommerce"))
     ap.add_argument("--mapping", default=os.path.join(HERE, "mapping.yaml"))
@@ -620,7 +631,9 @@ def main() -> int:
             die(f"overrides 文件不存在: {args.overrides}")
         with open(args.overrides, encoding="utf-8") as f:
             overrides = yaml.safe_load(f) or {}
-    providers_all = {c["id"]: Provider(c, args.env, overrides) for c in contracts}
+    strategy = args.strategy or ("pangolin" if args.env == "dev" else "pre")
+    args.strategy = strategy
+    providers_all = {c["id"]: Provider(c, strategy, overrides) for c in contracts}
     providers = {c["provides"]: providers_all[c["id"]] for c in contracts if c.get("chosen", True)}
     unknown = [cap for cap in providers if cap not in mapping]
     if unknown:
@@ -652,12 +665,12 @@ def main() -> int:
     selector = f"ecommerce-config-source-{args.env}"
     svc_tokens = selector_tokens(ns, selector)
     services = args.services.split()
-    log(f"Config Center {cc_url} | 环境 {args.env} | 服务 {' '.join(services)} | 提供方 "
+    log(f"Config Center {cc_url} | 环境 {args.env} | 策略 {strategy} | 服务 {' '.join(services)} | 提供方 "
         + ", ".join(f"{cap}←{p.c['id']}" for cap, p in providers.items())
         + (" | dry-run(只读)" if args.dry_run else ""))
 
     if args.extract_externals:
-        return extract_externals(cc, mapping, providers, services, args.env, admin, svc_tokens)
+        return extract_externals(cc, mapping, providers, services, args.env, args.strategy, admin, svc_tokens)
     if args.export_templates:
         return export_templates(cc, mapping, services, args.env, admin, svc_tokens, args.templates_dir, schemas_dir)
 
@@ -707,7 +720,7 @@ def main() -> int:
             log(f"⚠ {svc}: schema 需要 {' '.join(missing)} 但没有启用的提供方, 这些块保持原值")
 
         # 3) 只改映射路径
-        changes, unresolved = apply_caps(doc, orig, caps, mapping, providers, args.env, args.dry_run, svc)
+        changes, unresolved = apply_caps(doc, orig, caps, mapping, providers, args.strategy, args.dry_run, svc)
         for r in unresolved:
             pending_all.setdefault(r.split(" ← ", 1)[1], []).append(f"{svc}:{r.split(' ← ', 1)[0]}")
 

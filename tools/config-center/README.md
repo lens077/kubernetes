@@ -14,12 +14,69 @@
 
 ## 地址策略
 
-| `--env` | 消费方位置 | 地址 | CA |
-|---|---|---|---|
-| `pre`（默认） | 集群内 Pod | `SVC:PORT`（`<svc>.<ns>.svc`；外部实例是域名） | 集群 DNS 不需要；外部实例按 `CA_REF` |
-| `dev` | 本机 / 内网，经 Cilium Gateway | `HOSTNAME:DEV_PORT`（`*.dev.test`） | 必须带 `ca_pem`（私有 CA） |
+环境名（`--env`）与地址策略（`--strategy`）是两件事：环境名任意；策略缺省由环境名推导（`dev` → `pangolin`，其它 → `pre`），可显式指定。
 
-`dev` 策略的前提：开发机在集群 LAN 上（网关 VIP `10.10.31.x` 只在机房 L2 可达，家里的 Mac 经隧道只到 API server），且开发机能把 `<组件>.dev.test` 解析到网关 VIP（RFC 6761 保留域，公网永不解析）。`/etc/hosts` 不支持通配，要么逐条写（`10.10.31.240 consul.dev.test`、`10.10.31.243 redis.dev.test`……每个组件一行，HOSTNAME 见各 `component.env`），要么用本机 split DNS：macOS 放一个 `/etc/resolver/dev.test` 指向跑 dnsmasq 的地址（`address=/.dev.test/10.10.31.240`，TCP 组件另指其独立 Gateway VIP），Linux 用 systemd-resolved/dnsmasq 同理。2026-09-12 在节点宿主机实测：`consul.dev.test:443` 经共享网关 HTTPS 200、证书链过私有 CA（CN `dev.test`）；`redis.dev.test:6380` 经 dragonfly-gateway TLS 校验通过、`AUTH` +OK / `PING` +PONG、错密码 `-WRONGPASS`。写入 Config Center `dev` 环境需要一枚 `ENVIRONMENT=dev` 的 operator token。
+| `--strategy` | 消费方位置 | 地址 | CA | 契约字段 |
+|---|---|---|---|---|
+| `pre` | 集群内 Pod | `<svc>.<ns>.svc:PORT`（外部实例是域名） | 集群 DNS 不需要；外部实例按 `CA_REF` | `SVC/PORT/SCHEME` |
+| `gateway` | 机房 LAN 上的开发机，直连 Cilium Gateway VIP | `HOSTNAME:DEV_PORT`（`*.dev.test`） | 必须带 `ca_pem`（私有 CA） | `HOSTNAME/DEV_PORT/DEV_SCHEME` |
+| `pangolin`（`dev` 默认，2026-09-12 定稿） | 不在机房 LAN 的开发机（这台 Mac），经 Pangolin 资源 → newt → VIP | `REMOTE_HOST:REMOTE_PORT`（`*.apikv.com`） | `REMOTE_CA=public`（Traefik 终止，清空 ca_pem）或 `private`（raw TCP 直通，带 ca_pem，证书 SAN 须含 REMOTE_HOST） | `REMOTE_HOST/REMOTE_PORT/REMOTE_SCHEME/REMOTE_CA` |
+
+`pangolin` 策略用到的 Pangolin 资源（面板 API 建，2026-09-12）：
+
+| 资源 | 类型 | 公网 | target | 备注 |
+|---|---|---|---|---|
+| `consul-dev`（id 52） | HTTP，SSO 关 | `https://consul-dev.apikv.com` | node4/node5 站点 → `10.10.31.240:443`，`tlsServerName` 与 `setHostHeader` = `consul.dev.test`（HTTPRoute 按 Host 匹配） | Traefik 终止 TLS → `ca_pem` 空 |
+| `redis-dev`（id 53） | raw TCP，`proxyPort 30005` | `redis-dev.apikv.com:30005` | node4/node5 站点 → `10.10.31.243:6380` | TLS 直通到 Dragonfly 证书；`certificate.yaml` 已把 `${REMOTE_HOST}` 加进 SAN |
+
+30005 是新开的 raw 端口：云防火墙（`tccli lighthouse CreateFirewallRules`）+ VPS `docker-compose.yml` gerbil ports + `traefik_config.yml` `tcp-30005` 三处，都在 docker-deploy 仓 `pangolin/`；重建 gerbil/traefik 时 `*.apikv.com` 中断约 10 秒。
+
+`gateway` 策略的前提：开发机在集群 LAN 上（网关 VIP `10.10.31.x` 只在机房 L2 可达，家里的 Mac 经隧道只到 API server），且开发机能把 `<组件>.dev.test` 解析到网关 VIP（RFC 6761 保留域，公网永不解析）。`/etc/hosts` 不支持通配，要么逐条写（`10.10.31.240 consul.dev.test`、`10.10.31.243 redis.dev.test`……每个组件一行，HOSTNAME 见各 `component.env`），要么用本机 split DNS：macOS 放一个 `/etc/resolver/dev.test` 指向跑 dnsmasq 的地址（`address=/.dev.test/10.10.31.240`，TCP 组件另指其独立 Gateway VIP），Linux 用 systemd-resolved/dnsmasq 同理。2026-09-12 在节点宿主机实测：`consul.dev.test:443` 经共享网关 HTTPS 200、证书链过私有 CA（CN `dev.test`）；`redis.dev.test:6380` 经 dragonfly-gateway TLS 校验通过、`AUTH` +OK / `PING` +PONG、错密码 `-WRONGPASS`。写入 Config Center `dev` 环境需要一枚 `ENVIRONMENT=dev` 的 operator token（Secret `config-center-operator-dev`）。
+
+**`make dev` 实测（2026-09-12，这台 Mac）**：`ENV=dev`（pangolin 策略）写入后，`backend/services/cart` 的 `make dev`（`source.dev.yaml` 指向 `127.0.0.1:30010`，先 `kubectl -n config-center port-forward svc/config-center 30010:30010`）：`bootstrap config loaded (config_center)` → `database connected successfully to pg.apikv.com` → `redis connected successfully {"addr": "redis-dev.apikv.com"}` → `http server starting 0.0.0.0:30006`，`/healthz` 200。Makefile 的 `CONSUL_ENABLED=false`，Consul 注册不在本地跑；`consul-dev.apikv.com/v1/status/leader` 单独 curl 为 200。
+
+### macOS split DNS 配置
+
+`/etc/hosts` 不支持 `*.dev.test`。本机需要输入管理员密码执行一次：
+
+```bash
+brew install dnsmasq
+sudo ifconfig lo0 alias 10.0.0.1 255.255.255.255
+sudo mkdir -p /opt/homebrew/etc/dnsmasq.d /etc/resolver
+sudo tee /opt/homebrew/etc/dnsmasq.conf >/dev/null <<'EOF'
+listen-address=10.0.0.1
+bind-interfaces
+port=53
+no-resolv
+server=192.168.3.1
+conf-dir=/opt/homebrew/etc/dnsmasq.d,*.conf
+EOF
+sudo tee /opt/homebrew/etc/dnsmasq.d/dev.test.conf >/dev/null <<'EOF'
+# HTTPRoute/shared Gateway
+address=/.dev.test/10.10.31.240
+# 独立 TCP Gateway：更具体的规则覆盖上面的后缀规则
+address=/redis.dev.test/10.10.31.243
+address=/pg.dev.test/10.10.31.242
+EOF
+sudo tee /etc/resolver/dev.test >/dev/null <<'EOF'
+nameserver 10.0.0.1
+timeout 2
+search_order 1
+EOF
+sudo brew services restart dnsmasq
+```
+
+以后新增走共享 HTTP Gateway 的 `a.dev.test`，只要 DNS 记录仍符合这条规则，就不需要再改 `/etc/hosts` 或 dnsmasq；新增独立 TCP/TLS Gateway 时，必须在 `dev.test.conf` 增加该组件的具体 VIP 规则。macOS 的 `/etc/resolver/dev.test` 是按域转发，不是通配 hosts 记录。
+
+验证不要用 `dig`（它通常绕过 `/etc/resolver`）：
+
+```bash
+dscacheutil -q host -a name a.dev.test
+dscacheutil -q host -a name redis.dev.test
+curl --cacert /path/to/global-root-ca.crt --resolve consul.dev.test:443:10.10.31.240 https://consul.dev.test/v1/status/leader
+```
+
+`make dev` 使用 Go 纯解析器时，应以真实启动验证为准；若服务不读取 `/etc/resolver`，给服务设置 `GODEBUG=netdns=cgo`，或把需要的主机逐条写入 `/etc/hosts`。
 
 「优先 HTTPRoute > LB > Svc」的自动发现已放弃：对集群内消费方那是错的（control-tower `docs/operations/service-interconnect.md`）。声明优先、发现校验。
 

@@ -26,9 +26,13 @@ fi
 kctl get clusterissuer global-ca-issuer >/dev/null 2>&1 \
   || die "ClusterIssuer global-ca-issuer 不存在, 先装 cert-manager 组件"
 _cert=$(mktemp)
-render_tpl "$DIR/certificate.yaml" "$_cert"
+_tls_before=$(kctl -n "$NAMESPACE" get secret dragonfly-tls -o jsonpath='{.data.tls\.crt}' 2>/dev/null | sha256sum | cut -c1-12 || true)
+render_tpl "$DIR/certificate.yaml" "$_cert" REMOTE_HOST
 kctl apply -f "$_cert"; rm -f "$_cert"
 kctl -n "$NAMESPACE" wait certificate/dragonfly-tls --for=condition=Ready --timeout=120s
+sleep 3   # SAN 变了 cert-manager 会重签, 给它把新 Secret 写回的时间
+_tls_after=$(kctl -n "$NAMESPACE" get secret dragonfly-tls -o jsonpath='{.data.tls\.crt}' | sha256sum | cut -c1-12)
+TLS_CHANGED=$([[ -n $_tls_before && $_tls_before != "$_tls_after" ]] && echo 1 || echo 0)
 
 # OCI chart 必须带显式版本: registry 不解析 latest, 不给 --version 会报
 # "unable to locate any tags in provided repository"(实测)。
@@ -42,8 +46,8 @@ routes_apply "$DIR"
 
 # Deployment 引用的 Secret 名没变时 helm/kubectl 都不会触发滚动; 密码从 env 读取, 值变了必须重启。
 # 没装 reloader 时这里显式做; 装了 reloader 的话它也会做同一件事(注解见下), 二者幂等。
-if [[ $ESO_SECRET_CHANGED == 1 ]]; then
-  log_info "密码值已变, 滚动 deploy/dragonfly 让新值生效(消费方在 Config Center 里的密码请跑 tools/config-center-harvest.sh)"
+if [[ $ESO_SECRET_CHANGED == 1 || ${TLS_CHANGED:-0} == 1 ]]; then
+  log_info "密码或证书已变, 滚动 deploy/dragonfly 让新值生效(消费方在 Config Center 里的密码请跑 tools/config-center-harvest.sh)"
   kctl -n "$NAMESPACE" rollout restart deploy/dragonfly >/dev/null
   kctl -n "$NAMESPACE" rollout status deploy/dragonfly --timeout=180s >/dev/null || log_warn "dragonfly 滚动未就绪"
 fi

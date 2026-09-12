@@ -137,6 +137,7 @@ comp_load_meta() {  # comp_load_meta <组件目录>
   # 只认这些字段, 不猜 svc 名/端口/凭据在哪。没有 PROVIDES 的组件不参与。
   PROVIDES="" SVC="" PORT="" SCHEME="" DEV_PORT="" DEV_SCHEME=""
   CRED_SECRET="" CRED_KEYS="" CRED_USER="" CA_REF="" VAULT_PATH="" EXTERNAL=false
+  REMOTE_HOST="" REMOTE_PORT="" REMOTE_SCHEME="" REMOTE_CA=public
   # shellcheck disable=SC1090
   source "$dir/component.env"
   [[ -n $ID ]] || die "$dir/component.env 未定义 ID"
@@ -210,9 +211,12 @@ contract_json() {  # contract_json → 单行 JSON
     --arg svc "$SVC" --arg port "$PORT" --arg scheme "$SCHEME" \
     --arg host "$HOSTNAME" --arg dport "$DEV_PORT" --arg dscheme "$DEV_SCHEME" \
     --arg cs "$CRED_SECRET" --arg ck "$CRED_KEYS" --arg cu "$CRED_USER" --arg ca "$CA_REF" --arg vp "$vp" \
+    --arg rh "$REMOTE_HOST" --arg rp "$REMOTE_PORT" --arg rs "$REMOTE_SCHEME" --arg rca "$REMOTE_CA" \
     '{id:$id, provides:$provides, external:($external=="true"),
       pre:{host:$svc, port:($port|tonumber? // $port), scheme:$scheme},
       dev:{host:(if $external=="true" then $svc else $host end), port:($dport|tonumber? // $dport), scheme:$dscheme},
+      pangolin:(if $external=="true" then {host:$svc, port:($port|tonumber? // $port), scheme:$scheme, ca:"external"}
+                elif $rh!="" then {host:$rh, port:($rp|tonumber? // $rp), scheme:$rs, ca:$rca} else null end),
       cred:{secret:$cs, keys:($ck|split(" ")|map(select(.!=""))), user:$cu}, ca_ref:$ca, vault_path:$vp}'
 }
 
