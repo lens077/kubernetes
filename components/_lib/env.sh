@@ -82,6 +82,50 @@ get_cred() {  # get_cred <名字>
   cat "$f"
 }
 
+# --------------------------- 凭据: ESO 优先, get_cred 显式降级 ----------------
+# 2026-09-11 起凭据真相源是 OpenBao/Vault(config.env ESO_STORE 指定的 ClusterSecretStore),
+# 组件不再自己 create secret; 改为 apply 同目录的 externalsecret.yaml, 由 ESO 物化成同名 Secret。
+# 降级: OFFLINE=1 或 store 未就绪 → 退回 get_cred + create secret(旧路径), 但要显式警告——
+#   这时集群里的值与 OpenBao 不一致, 后续 openbao-seed.sh 会以集群现值为准回填。
+eso_store_ready() {  # eso_store_ready [store名]
+  local store=${1:-${ESO_STORE:-openbao}}
+  [[ $(kctl get clustersecretstore "$store" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null) == True ]]
+}
+
+# 让 ESO 立刻刷新(不等 refreshInterval): 改 force-sync 注解
+eso_force_sync() {  # eso_force_sync <ns> <externalsecret名>
+  kctl -n "$1" annotate externalsecret "$2" "force-sync=$(date +%s)" --overwrite >/dev/null
+}
+
+_es_synced() { [[ $(kctl -n "$1" get externalsecret "$2" -o jsonpath='{.status.conditions[?(@.type=="Ready")].reason}' 2>/dev/null) == SecretSynced ]]; }
+
+# 用 ESO 物化凭据 Secret。成功返回 0 且 Secret 已 SecretSynced; 降级返回 2(调用方自己走 get_cred)。
+#   cred_via_eso <组件目录> <ns> <ExternalSecret名(=目标 Secret 名)>
+# 前置: <组件目录>/externalsecret.yaml 存在(模板, ${CLUSTER_NAME}/${ESO_STORE} 等由 render_tpl 替换)。
+cred_via_eso() {  # cred_via_eso <dir> <ns> <name>
+  local dir=$1 ns=$2 name=$3 out before after
+  [[ -f $dir/externalsecret.yaml ]] || { log_warn "$ID: 没有 externalsecret.yaml, 走 get_cred"; return 2; }
+  if [[ ${OFFLINE:-0} == 1 ]]; then
+    log_warn "$ID: OFFLINE=1, 跳过 ESO, 走 get_cred(集群值与 OpenBao 可能不一致)"; return 2
+  fi
+  if ! eso_store_ready; then
+    log_warn "$ID: ClusterSecretStore ${ESO_STORE:-openbao} 未就绪(OpenBao sealed? token 过期?), 走 get_cred 降级
+  → 恢复后重跑本组件 install.sh 即切回 ESO; 或 OFFLINE=1 明确接受降级"
+    return 2
+  fi
+  before=$(kctl -n "$ns" get secret "$name" -o jsonpath='{.data}' 2>/dev/null | sha256sum | cut -c1-12 || true)
+  out=$(mktemp); render_tpl "$dir/externalsecret.yaml" "$out"
+  retry 3 5 kctl apply -f "$out" >/dev/null; rm -f "$out"
+  eso_force_sync "$ns" "$name"
+  wait_for "ESO 物化 $ns/$name" 90 _es_synced "$ns" "$name" \
+    || { log_warn "$ID: ExternalSecret $ns/$name 未同步: $(kctl -n "$ns" get externalsecret "$name" -o jsonpath='{.status.conditions[0].message}' 2>/dev/null)
+  → OpenBao 里 $(comp_vault_path 2>/dev/null || echo 'k8s/<集群>/'"$ID") 是否已 seed(tools/openbao-seed.sh)?"; return 2; }
+  after=$(kctl -n "$ns" get secret "$name" -o jsonpath='{.data}' | sha256sum | cut -c1-12)
+  ESO_SECRET_CHANGED=$([[ -n $before && $before != "$after" ]] && echo 1 || echo 0)
+  log_ok "$ID: 凭据 Secret $ns/$name 由 ESO 物化(${ESO_STORE:-openbao} ← $(comp_vault_path 2>/dev/null || true))$([[ $ESO_SECRET_CHANGED == 1 ]] && echo ', 值已变')"
+  return 0
+}
+
 # --------------------------- 组件元数据 -------------------------------------
 # component.env 字段见 components/_template/component.env
 comp_load_meta() {  # comp_load_meta <组件目录>
@@ -89,10 +133,87 @@ comp_load_meta() {  # comp_load_meta <组件目录>
   [[ -f $dir/component.env ]] || die "缺少 $dir/component.env"
   ID="" NAMESPACE="" DEFAULT_ENABLED=true DEPENDS_ON="" EST_MEM_MI=0
   HELM_REPO="" HELM_CHART="" RELEASE="" EXPOSE=none HOSTNAME=""
+  # 依赖契约(2026-09-11, 见 _template/component.env「依赖契约」段): 消费方(Config Center harvest)
+  # 只认这些字段, 不猜 svc 名/端口/凭据在哪。没有 PROVIDES 的组件不参与。
+  PROVIDES="" SVC="" PORT="" SCHEME="" DEV_PORT="" DEV_SCHEME=""
+  CRED_SECRET="" CRED_KEYS="" CRED_USER="" CA_REF="" VAULT_PATH="" EXTERNAL=false
   # shellcheck disable=SC1090
   source "$dir/component.env"
   [[ -n $ID ]] || die "$dir/component.env 未定义 ID"
   [[ -n $HOSTNAME ]] || HOSTNAME="$ID.${CLUSTER_DOMAIN:-dev.test}"
+  [[ -n $DEV_PORT ]] || DEV_PORT=$PORT
+  [[ -n $DEV_SCHEME ]] || DEV_SCHEME=$SCHEME
+}
+
+# --------------------------- 依赖契约 ---------------------------------------
+# Vault/OpenBao 里的 KV 路径按集群分: k8s/<CLUSTER_NAME>/<组件>。两个集群共用一条路径意味着
+# 任何一边轮换都会打断另一边(2026-09-11 定稿)。CLUSTER_NAME 来自 config.env。
+comp_vault_path() {  # comp_vault_path → k8s/<集群>/<VAULT_PATH|ID>
+  [[ -n ${CLUSTER_NAME:-} ]] || die "config.env 未定义 CLUSTER_NAME(Vault 路径按集群分, 不能省)"
+  echo "k8s/$CLUSTER_NAME/${VAULT_PATH:-$ID}"
+}
+
+# 解析 CA_REF: "secret:<ns>/<name>:<key>" 或 "configmap:<ns>/<name>:<key>" → 打印 PEM
+comp_ca_pem() {  # comp_ca_pem [CA_REF]
+  local ref=${1:-$CA_REF} kind rest ns name key
+  [[ -n $ref ]] || return 1
+  kind=${ref%%:*}; rest=${ref#*:}
+  ns=${rest%%/*}; rest=${rest#*/}; name=${rest%%:*}; key=${rest#*:}
+  case $kind in
+    secret)    kctl -n "$ns" get secret "$name" -o jsonpath="{.data.${key//./\\.}}" | base64 -d ;;
+    configmap) kctl -n "$ns" get cm "$name" -o jsonpath="{.data.${key//./\\.}}" ;;
+    *) die "CA_REF 格式错误: $ref(应为 secret:<ns>/<name>:<key> 或 configmap:<ns>/<name>:<key>)" ;;
+  esac
+}
+
+# 校验已加载组件的契约与集群现状是否一致。声明优先于发现: chart 升级改了 svc 名/端口,
+# 这里在部署阶段就报错, 不会把错地址带进 Config Center。输出问题行, 返回非 0 表示有问题。
+contract_verify() {  # contract_verify → 问题列表(stdout), 0=通过
+  [[ -n $PROVIDES ]] || return 0
+  local bad=0 k ns name key
+  [[ -n $SVC && -n $PORT && -n $SCHEME ]] || { echo "$ID: PROVIDES=$PROVIDES 但 SVC/PORT/SCHEME 不全"; bad=1; }
+  if [[ $EXTERNAL != true && -n $SVC ]]; then
+    # 集群内: SVC 形如 <name>.<ns>.svc[.cluster.local]; 必须真的有这个 Service 且开了这个端口
+    name=${SVC%%.*}; ns=${SVC#*.}; ns=${ns%%.*}
+    if ! kctl -n "$ns" get svc "$name" >/dev/null 2>&1; then
+      echo "$ID: Service $ns/$name 不存在(声明 SVC=$SVC)"; bad=1
+    else
+      # 不用 cmd | grep -q: pipefail 下 grep -q 提前退出让上游吃 SIGPIPE, 整条管道非 0(节点上实测误报)
+      local ports; ports=$(kctl -n "$ns" get svc "$name" -o jsonpath='{.spec.ports[*].port}')
+      grep -qx "$PORT" <<<"${ports// /$'\n'}" || { echo "$ID: Service $ns/$name 没有端口 $PORT(实际: $ports)"; bad=1; }
+    fi
+  fi
+  if [[ -n $CRED_SECRET ]]; then
+    ns=${CRED_SECRET%%/*}; name=${CRED_SECRET#*/}
+    if ! kctl -n "$ns" get secret "$name" >/dev/null 2>&1; then
+      echo "$ID: 凭据 Secret $CRED_SECRET 不存在(ESO 未物化? ExternalSecret 状态: $(kctl -n "$ns" get externalsecret "$name" -o jsonpath='{.status.conditions[0].reason}' 2>/dev/null || echo 无))"; bad=1
+    else
+      for k in $CRED_KEYS; do
+        [[ -n $(kctl -n "$ns" get secret "$name" -o jsonpath="{.data.${k//./\\.}}" 2>/dev/null) ]] \
+          || { echo "$ID: Secret $CRED_SECRET 缺少键 $k"; bad=1; }
+      done
+    fi
+  fi
+  if [[ -n $CA_REF ]]; then
+    local pem; pem=$(comp_ca_pem "$CA_REF" 2>/dev/null || true)
+    [[ $pem == *"BEGIN CERTIFICATE"* ]] || { echo "$ID: CA_REF=$CA_REF 取不到 PEM"; bad=1; }
+  fi
+  return $bad
+}
+
+# 契约的机器可读形态(JSON, 不含凭据值; 凭据由消费方按 cred_secret 自己去读)。
+# 地址按消费方位置给两份: pre(集群内 DNS) 与 dev(网关域名 + 必须带 CA)。
+contract_json() {  # contract_json → 单行 JSON
+  [[ -n $PROVIDES ]] || return 0
+  local vp=""; [[ -n ${CLUSTER_NAME:-} ]] && vp=$(comp_vault_path)
+  jq -nc --arg id "$ID" --arg provides "$PROVIDES" --arg external "$EXTERNAL" \
+    --arg svc "$SVC" --arg port "$PORT" --arg scheme "$SCHEME" \
+    --arg host "$HOSTNAME" --arg dport "$DEV_PORT" --arg dscheme "$DEV_SCHEME" \
+    --arg cs "$CRED_SECRET" --arg ck "$CRED_KEYS" --arg cu "$CRED_USER" --arg ca "$CA_REF" --arg vp "$vp" \
+    '{id:$id, provides:$provides, external:($external=="true"),
+      pre:{host:$svc, port:($port|tonumber? // $port), scheme:$scheme},
+      dev:{host:(if $external=="true" then $svc else $host end), port:($dport|tonumber? // $dport), scheme:$dscheme},
+      cred:{secret:$cs, keys:($ck|split(" ")|map(select(.!=""))), user:$cu}, ca_ref:$ca, vault_path:$vp}'
 }
 
 # 组件目录(供 install.sh 自定位): comp_dir "${BASH_SOURCE[0]}"
@@ -104,7 +225,7 @@ ns_ensure() { kctl create namespace "$1" --dry-run=client -o yaml | kctl apply -
 # 模板渲染: 只替换白名单里的 ${VAR}, 不做 shell 求值(避免 values 里的 $ 被误展开)
 render_tpl() {  # render_tpl <模板> <输出> [额外变量名...]
   local src=$1 out=$2; shift 2
-  local vars=(SC_NAME SC_FS_TYPE CLUSTER_DOMAIN TIMEZONE NAMESPACE RELEASE HOSTNAME
+  local vars=(SC_NAME SC_FS_TYPE CLUSTER_DOMAIN CLUSTER_NAME ESO_STORE VAULT_KV_PATH TIMEZONE NAMESPACE RELEASE HOSTNAME
               CILIUM_LB_POOL_START CILIUM_LB_POOL_STOP CILIUM_GATEWAY_LB_IP
               # config.env 里各组件的容量/保留期旋钮
               VM_STORAGE_SIZE LOKI_STORAGE_SIZE LOKI_RETENTION GRAFANA_STORAGE_SIZE

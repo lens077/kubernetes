@@ -290,12 +290,39 @@ write_creds_summary() {
   return 0
 }
 
+# --- 6b. 外部依赖(components/_external/*): ESO 把 OpenBao 里的凭据物化成 Secret external/<id> -----
+apply_externals() {
+  [[ -s $SELECTED_FILE ]] || return 0
+  if bash "$COMPONENTS_DIR/_external/apply.sh"; then
+    log_info "外部依赖凭据已物化"
+  else
+    log_warn "部分外部依赖未物化(OpenBao 未播种? 见上); 先 tools/openbao-seed.sh 再重跑 components/_external/apply.sh"
+  fi
+  return 0
+}
+
+# --- 7. 依赖契约校验 --------------------------------------------------------------------------
+# component.env 里声明了 PROVIDES 的组件(含 _external/*), 核对 Service/端口/凭据 Secret/CA 真实存在。
+# 声明优先、发现校验: chart 升级改了 svc 名在这里就红, 不会把错地址带进 Config Center。
+# 实现在 tools/verify-contracts.sh(可单独跑); 软性: 只警告不阻断(外部实例的 ESO 物化在 P1 才有)。
+verify_contracts() {
+  [[ -s $SELECTED_FILE ]] || return 0
+  if bash "$(dirname "$K8S_BASE_DIR")/tools/verify-contracts.sh" --selected "$SELECTED_FILE"; then
+    log_info "依赖契约校验通过"
+  else
+    log_warn "依赖契约有不一致项(见上); 修正 component.env 或补齐 ESO 物化后重跑 tools/verify-contracts.sh"
+  fi
+  return 0
+}
+
 main() {
   stage_begin "80-components" "组件安装(可选)"
   load_components
   add_step select  "选择组件"                select_components
   add_step install "调用各组件 install.sh"   install_selected
   add_step wait    "等待组件就绪(软性)"      wait_components
+  add_step externals "外部依赖凭据物化(ESO, 软性)" apply_externals
+  add_step contract "校验依赖契约(软性)"     verify_contracts
   add_step creds   "汇总访问凭据"            write_creds_summary
   run_steps
   stage_end

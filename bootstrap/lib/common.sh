@@ -25,7 +25,13 @@ VERSIONS_LOCK="$STATE_DIR/versions.lock"     # 首次解析后锁定版本, 保�
 MAIN_LOG="$LOG_DIR/install.log"
 
 # shellcheck source=../config.env
-source "$K8S_BASE_DIR/config.env" || { echo "无法加载 $K8S_BASE_DIR/config.env" >&2; exit 1; }
+# K8S_CONFIG_ENV: 从非节点机器(如 Mac)对着另一套集群跑组件脚本/工具时, 指定要加载的 config 文件
+#   (例 K8S_CONFIG_ENV=bootstrap/config.hosting.env bash tools/verify-contracts.sh); 节点上不用。
+_k8s_cfg=${K8S_CONFIG_ENV:-$K8S_BASE_DIR/config.env}
+[[ $_k8s_cfg == /* ]] || _k8s_cfg="$PWD/$_k8s_cfg"
+# shellcheck disable=SC1090
+source "$_k8s_cfg" || { echo "无法加载 $_k8s_cfg" >&2; exit 1; }
+unset _k8s_cfg
 
 # CLI 角色覆写(start.sh --worker): 不改 config.env 即可按工作节点安装;
 # config 里的 NODE_NAME 属于控制面机器, 覆写时节点名取本机 hostname
