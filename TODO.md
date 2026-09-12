@@ -1,5 +1,22 @@
 # TODO
 
+## 2026-09-11 · Config Center 自动填充 + 凭据真相源迁 OpenBao + Reloader
+
+> 起因:每次集群重建都要人肉重取各组件地址/凭据写进 Config Center 十份 `bootstrap.yaml`(09-06 为此写了 `config-center-pre-seed.sh`,09-11 又补两次)。定稿:**声明优先、发现校验**——组件在 `component.env` 声明契约(`PROVIDES/SVC/PORT/SCHEME/CRED_SECRET/CA_REF/VAULT_PATH`),集群外实例在 `components/_external/*` 同形声明;凭据真相源 OpenBao(`ESO_STORE`),路径按集群分 `k8s/<CLUSTER_NAME>/…`;地址策略 pre→Svc DNS、dev→`.dev.test`+CA,放弃「优先 HTTPRoute」。全套手顺:`tools/config-center/README.md`。
+
+- [x] P0 契约字段 + `CLUSTER_NAME`/`CC_PROVIDERS`/`ESO_STORE` + `_external/{postgres,redis,otlp,elasticsearch}-node3`、`casdoor` + `tools/verify-contracts.sh`(80 阶段 `contract` 步;机房集群六项全绿)
+- [x] P2 `tools/config-center/mapping.yaml` + `harvest.py`(schema `$defs` 推导要填哪些块、只改映射路径、往返等价自检、jsonschema 校验、脱敏 diff)+ `tests/mapping_test.sh` 门禁;机房集群 dry-run:10 服务唯一差异是 `postgres.host` IP→`pg.apikv.com`(契约声明的域名,集群内已核对可解析)
+- [x] P1 dragonflydb/grafana/bugsink/healthchecks 改 `externalsecret.yaml`(`cred_via_eso`:ESO 优先、store 未就绪或 `OFFLINE=1` 降级 get_cred、值变则显式 rollout);`tools/openbao-seed.sh`(集群内取现值、外部依赖从 Config Center 现值反向抽取);cert-manager 根 CA `PushSecret`(eso-push 只写 `ca/*`);**机房集群已播种 8 条路径并把 dragonfly Secret 切到 ESO(值未变、Pod 未重启)**
+- [x] P3 `mapping.yaml consumers.config-center`:同一映射喂 config 服务自举 Secret(redis←redis-node3、otlp←集群内 collector);dry-run 与现值**零差异**(契约链能逐字重现手写配置)
+- [x] Reloader 组件 `components/reloader/`(`ADDON_RELOADER` 默认关;只滚带注解的工作负载;dragonflydb install 已打点名注解);描述文档在 ecommerce `docs/reports/2026-09-11-reloader-reference.md`,博客「基础设施篇:Reloader 让 Secret 变更自动滚动 Pod」
+- [x] **P4 control-tower operator machine token 已发版**:control-tower `babd5e8` + tag `0.2.11`(CI 全绿),机房 config 服务 09-12 01:12 滚到 0.2.11,`goose: successfully migrated database to version: 3`,healthz 200(集群内/公网)。operator 只限自身 environment、不能签/吊 operator、不能 DeleteKey/Rollback
+- [ ] **签 operator token(唯一剩下的人工动作)**:`ssh node4 'umask 077; printf "%s\n%s\n" "<Casdoor 管理员用户名>" "<密码>" > /root/.casdoor-login'` → `bash tools/config-center-operator-token.sh`(签发 + 存 Secret `config-center/config-center-operator` + 读写自检;管理台 /tokens 页暂无 role 选择器)→ 删掉 `/root/.casdoor-login`
+- [ ] **正式写入 + dragonfly 轮换**(token 就绪后一条龙):`ADMIN_TOKEN_SECRET=config-center/config-center-operator:token bash tools/config-center-harvest.sh` → 同变量 `bash tools/rotate-credential.sh dragonfly`。轮换边界:只有 dragonfly/meilisearch/minio/redis 可轮换;grafana/harbor/bugsink/healthchecks 首次初始化后存库,原值迁移
+- [ ] ecommerce 仓 `backend/services/*/configs/pre.yml` 本地工作副本含 Dragonfly 旧密码(已 gitignore, 但历史上漏进过 git —— 其 `.gitignore` 注释记的 4a3eb70b):轮换是唯一彻底的处置。09-11 顺手把 20 份每服务 `.gitignore` 合并成 `backend/.gitignore` 一份
+- [x] `ClusterSecretStore vault`(VPS)死接线 09-11 删除;`components/external-secrets/install.sh` 改为「有 AppRole 凭据才建」,README/README.md/config.env 注释改为 OpenBao 定稿;ecommerce TECH.md/STACK.md/DEVOPS.md 回填,TECH-RADAR §4.9 加复审附记
+- [ ] OpenBao 成为正式凭据后端 ⇒ 触发 ecommerce TECH-RADAR 10.3 Velero 条款③(其 file 存储里是真凭据);在那之前重装后靠 `openbao-seed.sh` 从现网反向重建
+- [ ] harvest 自动触发(CronJob 或 ESO 事件)落地后再把 `ADDON_RELOADER` 打开,否则只会把「密码不一致」从提供方挪到消费方(reloader README §1)
+
 ## 2026-09-04 · Meilisearch 运行时退役
 
 - [x] ecommerce 搜索链已切到 Elasticsearch，回滚窗口结束后卸载 `search/meilisearch` Helm release。
@@ -38,7 +55,7 @@
 
 ### 重装后仅存的手动动作(非 git 状态,已知且接受)
 
-- [ ] 先把 STATE_DIR `creds/` 整目录带走(节点 `/var/lib/k8s-installer/creds/`,Mac 回退 `~/.local/state/k8s-installer/creds/`)——尤其 `dragonfly-password`,ecommerce 十份 bootstrap 与 config-center 自举配置写的是它(重建须知 #1)
+- [x] ~~先把 STATE_DIR `creds/` 整目录带走~~ **2026-09-11 起不再是第一条**:凭据真相源迁到 OpenBao(`k8s/<CLUSTER_NAME>/<组件>`,ESO 物化),`creds/` 只剩 `OFFLINE=1` 降级路径与 `openbao-init`(它仍要带走或重 init)。重装后:`tools/openbao-seed.sh` → `components/_external/apply.sh` → 各组件 install.sh 自动切 ESO → `tools/config-center-harvest.sh`。手顺见 `tools/config-center/README.md`
 - [ ] external-secrets 装好后**注入 AppRole 凭据**→密钥自动流回(Vault 在 VPS,真相源本就在集群外——这正是 08-17 L3 设计的兑现点)
 - [ ] OpenBao 数据随集群亡:重新 init/unseal,`creds/openbao-init` 作废重生成(components/openbao README)
 - [ ] `ADDON_NEWT` 如启用:Pangolin 面板站点凭据重配(组件 README)
