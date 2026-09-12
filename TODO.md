@@ -2,6 +2,8 @@
 
 ## 2026-09-11 · Config Center 自动填充 + 凭据真相源迁 OpenBao + Reloader
 
+- [x] Consul ACL 恢复自动化(09-12):`components/consul/install.sh` 幂等补 policy `ecommerce-services`；应用 token 有效则保留，缺失/失效才重签并更新 `ecommerce/consul-ecommerce-token`；机房集群实测重复安装成功，token 未变化；`ACL not found` 根因是原 Secret token 已被 Consul 服务端清除，已恢复
+
 > 起因:每次集群重建都要人肉重取各组件地址/凭据写进 Config Center 十份 `bootstrap.yaml`(09-06 为此写了 `config-center-pre-seed.sh`,09-11 又补两次)。定稿:**声明优先、发现校验**——组件在 `component.env` 声明契约(`PROVIDES/SVC/PORT/SCHEME/CRED_SECRET/CA_REF/VAULT_PATH`),集群外实例在 `components/_external/*` 同形声明;凭据真相源 OpenBao(`ESO_STORE`),路径按集群分 `k8s/<CLUSTER_NAME>/…`;地址策略 pre→Svc DNS、dev→`.dev.test`+CA,放弃「优先 HTTPRoute」。全套手顺:`tools/config-center/README.md`。
 
 - [x] P0 契约字段 + `CLUSTER_NAME`/`CC_PROVIDERS`/`ESO_STORE` + `_external/{postgres,redis,otlp,elasticsearch}-node3`、`casdoor` + `tools/verify-contracts.sh`(80 阶段 `contract` 步;机房集群六项全绿)

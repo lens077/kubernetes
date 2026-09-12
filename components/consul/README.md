@@ -90,7 +90,26 @@ kubectl -n consul create secret generic consul-ecommerce-token \
   --from-literal=CONSUL_HTTP_TOKEN="$NEW" --dry-run=client -o yaml | kubectl apply -f -
 ```
 
-## 6. 踩坑
+## 6. ACL 自动恢复
+
+`install.sh` 在 Consul Helm 安装完成后执行幂等 ACL 收敛：
+
+1. 读取 `consul/consul-bootstrap-acl-token`（root token 只在进程环境中使用）；
+2. 补齐 policy `ecommerce-services`：服务注册写权限、节点/agent/query/KV 读权限；
+3. 检查 `ecommerce/consul-ecommerce-token` 是否仍能通过 `acl token read -self`；
+4. Secret 缺失或 token 已失效时，签发新 token 并原子更新 Secret；有效 token 保留，避免每次安装泄漏一枚旧 token。
+
+应用 token 只授予服务注册发现所需权限，不授予 Consul KV 写权限。集群重建时重跑 `bash components/consul/install.sh` 即可恢复；若 root token 也不存在，脚本只告警，不伪造客户端 token，需先让 Helm 完成 ACL bootstrap。
+
+验证（不打印 token）：
+
+```bash
+kubectl -n consul exec consul-server-0 -- consul acl policy read -name ecommerce-services
+kubectl -n consul exec consul-server-0 -- env CONSUL_HTTP_TOKEN="$(kubectl -n consul get secret consul-bootstrap-acl-token -o jsonpath='{.data.token}' | base64 -d)" consul acl token read -self
+kubectl -n ecommerce get secret consul-ecommerce-token
+```
+
+## 7. 踩坑
 
 - **chart 会抢 Cilium 的 Gateway API CRD**：默认 values（`connectInject.enabled: true`）
   会安装 5 个**集群级** CRD —— `gatewayclasses` / `gateways` / `httproutes` /
