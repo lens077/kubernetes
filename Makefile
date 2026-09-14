@@ -16,7 +16,7 @@ CONFIRM ?= no
 DOCKER_DEPLOY_DIR ?= $(abspath ../docker-deploy)
 PANGOLIN_SCRIPT = $(DOCKER_DEPLOY_DIR)/pangolin/reconcile-k8s-dev-resources.sh
 
-.PHONY: help confirm bootstrap-tools contracts mapping-test cc-plan cc-apply cc-bootstrap-plan cc-bootstrap-apply cc-forward operator-issue rotate-plan rotate-apply component-install pangolin-check pangolin-apply pangolin-apply-infra pangolin-disable
+.PHONY: help confirm bootstrap-tools contracts mapping-test environment-plan environment-ensure cc-plan cc-apply cc-bootstrap-plan cc-bootstrap-apply cc-forward operator-issue rotate-plan rotate-apply component-install pangolin-check pangolin-apply pangolin-apply-infra pangolin-disable
 
 help: ## 显示帮助（默认不修改系统或集群）
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z0-9_-]+:.*## / {printf "  %-22s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -33,6 +33,12 @@ bootstrap-tools: ## 创建工具 Python 环境并安装 PyYAML/jsonschema
 	@uv venv "$(TOOLS_VENV)"
 	@uv pip install --python "$(PYTHON)" pyyaml jsonschema
 	@echo "工具环境已就绪: PYTHON=$(PYTHON)"
+
+environment-plan: ## 预览环境声明将填充的配置（ENVIRONMENT=staging）
+	@ENVIRONMENT="$(ENV)" ADMIN_TOKEN_SECRET="$(ADMIN_TOKEN_SECRET)" "$(BASH_BIN)" tools/config-center-environment-ensure.sh --dry-run
+
+environment-ensure: confirm ## 按环境声明幂等填充 Config Center
+	@ENVIRONMENT="$(ENV)" ADMIN_TOKEN_SECRET="$(ADMIN_TOKEN_SECRET)" "$(BASH_BIN)" tools/config-center-environment-ensure.sh
 
 contracts: ## 只读检查组件契约与当前集群
 	@"$(BASH_BIN)" tools/verify-contracts.sh

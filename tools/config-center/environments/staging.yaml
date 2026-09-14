@@ -1,0 +1,31 @@
+# Environment declaration consumed by tools/config-center-environment-ensure.sh.
+# This file is non-secret; credentials stay in OpenBao/ESO and Config Center.
+environment: staging
+strategy: remote-dev
+services:
+  - address
+  - behavior
+  - cart
+  - inventory
+  - merchant
+  - order
+  - payment
+  - product
+  - search
+  - user
+operator:
+  service_name: harvest-staging
+  allowed_namespaces:
+    - address
+    - behavior
+    - cart
+    - inventory
+    - merchant
+    - order
+    - payment
+    - product
+    - search
+    - user
+delivery:
+  namespace: ecommerce
+  selector_secret: ecommerce-config-source-staging

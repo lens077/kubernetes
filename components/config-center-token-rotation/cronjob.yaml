@@ -1,0 +1,36 @@
+# Skeleton only: apply after the rotation image and operator-token source are reviewed.
+# The job must use an already-issued operator token from OpenBao/ESO; it must never contain
+# Casdoor credentials or an admin JWT. Keep suspend=true until service-token rotation has
+# been exercised manually and the old-token revoke/rollback state machine is approved.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: config-center-service-token-rotation
+  namespace: config-center
+  annotations:
+    ops.kubernetes.io/status: "suspended-pending-rotation-state-machine"
+spec:
+  suspend: true
+  schedule: "17 3 * * 0"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      template:
+        spec:
+          serviceAccountName: config-center-token-rotation
+          restartPolicy: Never
+          containers:
+            - name: rotation
+              image: ghcr.io/lens077/kubernetes-tools:rotation-pending
+              imagePullPolicy: IfNotPresent
+              command: ["/app/rotate-service-tokens"]
+              env:
+                - name: CONFIG_CENTER_OPERATOR_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: config-center-operator
+                      key: token
+                      optional: false

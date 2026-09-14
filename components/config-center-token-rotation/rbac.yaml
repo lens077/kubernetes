@@ -1,0 +1,30 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: config-center-token-rotation
+  namespace: config-center
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: config-center-token-rotation
+  namespace: config-center
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "patch", "create", "update"]
+    resourceNames: ["config-center-operator", "config-center-operator-dev"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: config-center-token-rotation
+  namespace: config-center
+subjects:
+  - kind: ServiceAccount
+    name: config-center-token-rotation
+    namespace: config-center
+roleRef:
+  kind: Role
+  name: config-center-token-rotation
+  apiGroup: rbac.authorization.k8s.io
