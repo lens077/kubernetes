@@ -7,6 +7,22 @@
 > 于 2026-08-17 合并而来，cloud-native-deploy 的提交历史完整保留（按**旧路径**查询：
 > `git log --full-history -- jaeger/manifests/04-deployment.yaml`）。
 
+## 快捷运维入口
+
+仓库根目录提供统一 Makefile，默认只显示帮助：
+
+```bash
+make help
+make contracts
+make cc-plan ENV=dev
+make cc-apply ENV=dev CONFIRM=yes
+make pangolin-check
+```
+
+完整参数、写操作确认、`remote-dev`、Pangolin 资源、operator token 与轮换手顺见 [`tools/MAKE-COMMANDS.md`](tools/MAKE-COMMANDS.md)。
+
+当前开发网络策略：集群内使用 `pre`，机房 LAN 开发机使用 `gateway`，当前 Mac 使用 `remote-dev`（Mac → Pangolin resource → newt → K8s Gateway / node service）。
+
 ## 两个入口
 
 ```bash
