@@ -25,10 +25,23 @@ import os,yaml
 x=yaml.safe_load(os.environ['OLD']); x['config_center']['service_token']=os.environ['SERVICE_TOKEN']; print(yaml.safe_dump(x,allow_unicode=True,sort_keys=False))
 PY
 )
-  kubectl -n "$NS" create secret generic "$SELECTOR" --from-literal="$svc.yaml=$next" --dry-run=client -o json | jq --arg k "$svc.yaml" --arg v "$(printf %s "$next"|base64)" --arg id "$new_id" --arg s "$svc" '.data[$k]=$v | .metadata.annotations["config-center/service-token-ids"]=(.metadata.annotations["config-center/service-token-ids"]|fromjson|. + {($s):$id}|tojson)' | kubectl apply -f - >/dev/null
+  kubectl -n "$NS" get secret "$SELECTOR" -o json | jq --arg k "$svc.yaml" --arg v "$(printf %s "$next"|base64)" --arg id "$new_id" --arg s "$svc" '
+  .metadata.annotations = (.metadata.annotations // {})
+  | (.metadata.annotations["config-center/service-token-ids"] = ((.metadata.annotations["config-center/service-token-ids"] // "{}") | fromjson | . + {($s):$id} | tojson))
+  | .data[$k]=$v
+  | {apiVersion,kind,type,metadata,data}' | kubectl apply -f - >/dev/null
   verify=$(rpc GetKey "$(jq -nc --arg s "$svc" --arg e "$ENVIRONMENT" '{namespace:$s,environment:$e,key:"bootstrap.yaml"}')")
   [[ $(jq -r .entry.key <<<"$verify") == bootstrap.yaml ]] || die "$svc: 新 token 读回失败，旧 token 尚未吊销"
   revoke=$(curl -fsS --max-time 20 -X POST "$CC_URL/config.v1.ConfigService/RevokeMachineToken" -H 'Content-Type: application/json' -H "x-config-center-service-token: $operator" -d "$(jq -nc --arg id "$old_id" '{id:$id}')")
   jq -e '.code == null' <<<"$revoke" >/dev/null || die "$svc: 新 token 已生效但旧 token 吊销失败，需重试"
   echo "$svc: rotated old=$old_id new=$new_id"
 done
+# selector Secret is consumed at process startup; restart only the affected consumers after all tokens passed readback.
+for svc in $services; do
+  dep="ecommerce-$svc-deploy"
+  if kctl -n "$NS" get deploy "$dep" >/dev/null 2>&1; then
+    kctl -n "$NS" rollout restart "deploy/$dep" >/dev/null
+    kctl -n "$NS" rollout status "deploy/$dep" --timeout=180s >/dev/null
+  fi
+done
+echo "all rotated service consumers are ready"
