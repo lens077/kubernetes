@@ -580,8 +580,8 @@ def selector_tokens(ns: str, secret: str) -> dict[str, str]:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--env", default="pre", help="Config Center 环境名(任意)")
-    ap.add_argument("--strategy", default="", choices=("", "pre", "gateway", "pangolin"),
-                    help="地址策略; 缺省由环境名推导: dev → pangolin(开发机经 Pangolin 资源, 2026-09-12 定稿), 其它 → pre(集群内 DNS)。"
+    ap.add_argument("--strategy", default="", choices=("", "pre", "gateway", "remote-dev", "pangolin"),
+                    help="地址策略; remote-dev 为规范名称，pangolin 为兼容别名。缺省由环境名推导: dev → remote-dev(开发机经 Pangolin 资源, 2026-09-12 定稿), 其它 → pre(集群内 DNS)。"
                          "gateway = 机房 LAN 上的开发机经 Cilium Gateway(.dev.test + 私有 CA)")
     ap.add_argument("--services", default=os.environ.get("SERVICES", DEFAULT_SERVICES))
     ap.add_argument("--namespace", default=os.environ.get("ECOMMERCE_NAMESPACE", "ecommerce"))
@@ -631,7 +631,9 @@ def main() -> int:
             die(f"overrides 文件不存在: {args.overrides}")
         with open(args.overrides, encoding="utf-8") as f:
             overrides = yaml.safe_load(f) or {}
-    strategy = args.strategy or ("pangolin" if args.env == "dev" else "pre")
+    strategy = args.strategy or ("remote-dev" if args.env == "dev" else "pre")
+    if strategy == "remote-dev":
+        strategy = "pangolin"  # remote-dev 是对外的规范名称，内部沿用 pangolin contract block
     args.strategy = strategy
     providers_all = {c["id"]: Provider(c, strategy, overrides) for c in contracts}
     providers = {c["provides"]: providers_all[c["id"]] for c in contracts if c.get("chosen", True)}
