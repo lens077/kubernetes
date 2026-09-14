@@ -95,11 +95,11 @@ customConfig:
     victorialogs:
       type: http
       inputs: [pii_redact]
-      # 容器日志直写集群内 VictoriaLogs(不经 otel collector: collector 只承载应用侧 OTLP 日志与 K8s Event)。
-      # 2026-08-24 曾改推 node3(Pigsty)的 VL 以把观测负载挪出内网; 2026-09-03 node3 退役, 切回集群内。
+      # 容器日志直写 node3 Pigsty VictoriaLogs(不经 otel collector: collector 只承载应用侧 OTLP 日志与 K8s Event)。
+      # 2026-09-15 起切远端，验证连续写入后可停 k8s VictoriaLogs。
       # 流字段(_stream_fields)只放低基数的 namespace/node/pod/container —— 与 Pigsty 的 job,ins,ip 同一思路;
       # 高基数字段(request id、pid)进消息体, 不进流字段。
-      uri: "http://vl-victoria-logs-single-server.logging.svc.cluster.local:9428/insert/jsonline?_stream_fields=kubernetes.pod_namespace,kubernetes.pod_node_name,kubernetes.pod_name,kubernetes.container_name&_msg_field=message&_time_field=timestamp"
+      uri: "https://node3-logs.apikv.com/insert/jsonline?_stream_fields=kubernetes.pod_namespace,kubernetes.pod_node_name,kubernetes.pod_name,kubernetes.container_name&_msg_field=message&_time_field=timestamp"
       compression: gzip
       encoding: { codec: json }
       framing: { method: newline_delimited }
