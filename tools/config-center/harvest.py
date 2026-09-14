@@ -126,13 +126,14 @@ class ConfigCenter:
         }
         return self.rpc("PutKey", body, admin_headers(admin))["entry"]
 
-    def issue_token(self, service: str, env: str, note: str, admin: str) -> str:
+    def issue_token(self, service: str, env: str, note: str, admin: str) -> tuple[str, str]:
         out = self.rpc("IssueMachineToken", {"service_name": service, "environment": env, "note": note},
                        admin_headers(admin))
         tok = out.get("token")
-        if not tok:
-            raise RuntimeError(f"{service}: IssueMachineToken 未返回 token")
-        return tok
+        token_id = ((out.get("meta") or {}).get("id"))
+        if not tok or not token_id:
+            raise RuntimeError(f"{service}: IssueMachineToken 未返回 token/meta.id")
+        return tok, token_id
 
 
 # ----------------------------------------------------------------------------- 契约 → 值
@@ -678,6 +679,7 @@ def main() -> int:
 
     schema_warned = False
     new_tokens: dict[str, str] = {}
+    new_token_ids: dict[str, str] = {}
     changed_services: list[str] = []
     pending_all: dict[str, list[str]] = {}
     for svc in services:
@@ -772,7 +774,7 @@ def main() -> int:
         log(f"{svc}: {args.env}/{KEY} 已写入 v{put.get('version')}")
         if args.rotate_tokens or svc not in svc_tokens:
             note = f"{os.uname().nodename} harvest {time.strftime('%F')}"
-            new_tokens[svc] = cc.issue_token(svc, args.env, note, admin)
+            new_tokens[svc], new_token_ids[svc] = cc.issue_token(svc, args.env, note, admin)
         tok = new_tokens.get(svc) or svc_tokens[svc]
         back = cc.get_key(svc, args.env, KEY, {"x-config-center-service-token": tok})
         if back.get("value") != new_text:
@@ -805,8 +807,12 @@ def main() -> int:
             sel["config_center"]["environment"] = args.env
             sel["config_center"]["service_token"] = tok
             data[f"{svc}.yaml"] = base64.b64encode(dump_yaml(sel).encode()).decode()
+        annotations = dict(existing.get("metadata", {}).get("annotations") or {})
+        ids = json.loads(annotations.get("config-center/service-token-ids", "{}"))
+        ids.update(new_token_ids)
+        annotations["config-center/service-token-ids"] = json.dumps(ids, separators=(",", ":"), sort_keys=True)
         minimal = {"apiVersion": "v1", "kind": "Secret", "type": existing.get("type", "Opaque"),
-                   "metadata": {"name": selector, "namespace": ns}, "data": data}
+                   "metadata": {"name": selector, "namespace": ns, "annotations": annotations}, "data": data}
         kubectl("apply", "-f", "-", input_=json.dumps(minimal))
         log(f"Secret {ns}/{selector} 已更新 {len(new_tokens)} 个服务的 token")
 

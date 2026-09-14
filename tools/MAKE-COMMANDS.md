@@ -48,7 +48,19 @@ make cc-plan ENV=dev
 make cc-apply ENV=dev CONFIRM=yes
 ```
 
-签发脚本会创建新 token 并覆盖对应 Secret；它不是无变化时跳过的 ensure 操作，旧 token 不会自动吊销。operator 不能签发另一个 operator，首次签发仍需管理员授权。轮换入口仅允许 pre；底层轮换脚本会执行组件安装、服务滚动，可能涉及 Helm 变更，执行前必须安排窗口。预览不是完整的故障回滚演练。
+签发脚本会创建新 token 并覆盖对应 Secret；它不是无变化时跳过的 ensure 操作，旧 token 不会自动吊销。operator 不能签发另一个 operator，首次签发仍需管理员授权。
+
+service token 的 fail-closed 轮换入口：
+
+```bash
+# 先让 harvest --rotate-tokens 记录 selector Secret 的 service-token-ids 注解
+ENV=pre ADMIN_TOKEN_SECRET=config-center/config-center-operator:token \
+  bash tools/config-center-rotate-service-tokens.sh
+CONFIRM=yes ENV=pre ADMIN_TOKEN_SECRET=config-center/config-center-operator:token \
+  bash tools/config-center-rotate-service-tokens.sh --apply
+```
+
+它按「签发新 token → 更新 selector Secret → 新 token 读回 → 吊销旧 token」执行；缺旧 token ID、读回失败、Secret 更新失败或吊销失败都会停止，不猜测、不继续。operator token 自身不能用这个流程自我升级。轮换入口仅允许 pre；底层轮换脚本会执行组件安装、服务滚动，可能涉及 Helm 变更，执行前必须安排窗口。预览不是完整的故障回滚演练。
 
 ## Pangolin remote-dev 入口
 
