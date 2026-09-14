@@ -56,17 +56,55 @@ make cc-apply ENV=dev CONFIRM=yes
 Mac → Pangolin resource → newt → K8s Gateway / node service
 ```
 
+远程开发资源当前为：
+
+```text
+consul-dev.apikv.com       → 10.10.31.240:443
+redis-dev.apikv.com:30005  → 10.10.31.243:6380
+```
+
+### 三层配置边界
+
+新增或维护 raw TCP 端口时，配置分为三层：
+
+| 层 | 由什么维护 | 当前内容 |
+|---|---|---|
+| Pangolin API | `reconcile-k8s-dev-resources.sh` | resource、SSO、TLS Server Name、target、启用状态 |
+| node1 VPS | `--apply-infra` | gerbil 的端口映射、Traefik `tcp-30005` entryPoint |
+| 腾讯云 Lighthouse | `--apply-infra` | raw TCP `30005` 防火墙规则 |
+
+普通 API 收敛不会修改 VPS 或云防火墙；基础设施收敛需要单独显式执行。
+
+### 命令
+
 ```bash
+# 只读：检查三层是否一致
 make pangolin-check
+
+# 只收敛 Pangolin API resource/target
 make pangolin-apply CONFIRM=yes
+
+# 收敛 node1 VPS + Tencent Cloud firewall + Pangolin API
+make pangolin-apply-infra CONFIRM=yes
+
+# 临时禁用两个 remote-dev resource；不删除配置、不关闭云防火墙端口
 make pangolin-disable CONFIRM=yes
-# 启用就是再次 apply：
+
+# 恢复
 make pangolin-apply CONFIRM=yes
 ```
 
+`pangolin-apply-infra` 的安全边界：
+
+- SSH 目标只能是 `node1`；脚本拒绝 `node3`、`node4`、`node5` 和其他主机名。
+- 不读取、不修改 Kubernetes 节点的 SSH 配置和 SSH 端口。
+- 修改 node1 前备份到 `/home/docker/pangolin/.reconcile-backups/<timestamp>/`。
+- `docker compose up -d` 可能让 Pangolin/gerbil/Traefik 短暂重建；执行前应确认公网入口可接受短暂中断。
+- 云防火墙规则只允许明确声明的端口；当前是 TCP `30005`，不是 SSH 端口。
+
 这些目标调用相邻 `docker-deploy` 仓的 `pangolin/reconcile-k8s-dev-resources.sh`。位置不同时传 `DOCKER_DEPLOY_DIR=/path/to/docker-deploy`。需要 `~/.pangolin-login` 或 `PANGOLIN_LOGIN_FILE` 指定的受保护文件，内容为两行邮箱和密码；用完由操作者删除。
 
-当前 `pangolin-check` 检查 VPS 的 gerbil/Traefik 30005 配置和云防火墙规则，不自动修改它们，也不等于完整的数据面验收。`pangolin-disable` 只禁用 API 资源，不删除配置、不关闭公网监听端口、不提供自动过期机制。传播有延迟；TCP 握手成功不能证明 Redis 可用，应继续验证 TLS、AUTH、PING。
+`pangolin-disable` 只禁用 API 资源，不删除配置、不关闭公网监听端口、不提供自动过期机制。传播有延迟；TCP 握手成功不能证明 Redis 可用，应继续验证 TLS、AUTH、PING。
 
 ## 组件与本地服务
 
