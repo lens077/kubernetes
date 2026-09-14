@@ -15,7 +15,7 @@ CONFIRM ?= no
 DOCKER_DEPLOY_DIR ?= $(abspath ../docker-deploy)
 PANGOLIN_SCRIPT = $(DOCKER_DEPLOY_DIR)/pangolin/reconcile-k8s-dev-resources.sh
 
-.PHONY: help confirm contracts mapping-test cc-plan cc-apply cc-bootstrap-plan cc-bootstrap-apply cc-forward operator-issue rotate-plan rotate-apply component-install pangolin-check pangolin-apply pangolin-disable
+.PHONY: help confirm contracts mapping-test cc-plan cc-apply cc-bootstrap-plan cc-bootstrap-apply cc-forward operator-issue rotate-plan rotate-apply component-install pangolin-check pangolin-apply pangolin-apply-infra pangolin-disable
 
 help: ## 显示帮助（默认不修改系统或集群）
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z0-9_-]+:.*## / {printf "  %-22s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
