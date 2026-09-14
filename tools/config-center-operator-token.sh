@@ -35,7 +35,12 @@ ver=$(kubectl -n config-center get deploy config-center -o jsonpath='{.spec.temp
 log "config 服务镜像 $ver(需 ≥ 0.2.11)"
 
 # 1) 管理员 JWT(15 分钟, 只在本进程内存)
-ADMIN=$(bash "$HERE/config-center-admin-token.sh" --print) || die "取管理员 JWT 失败(见上; /root/.casdoor-login 是否就绪?)"
+if [[ -n ${ISSUER_JWT_FILE:-} ]]; then
+  [[ -r $ISSUER_JWT_FILE ]] || die "无法读取 ISSUER_JWT_FILE"
+  ADMIN=$(<"$ISSUER_JWT_FILE")
+else
+  ADMIN=$(bash "$HERE/config-center-admin-token.sh" --print) || die "取管理员 JWT 失败(见上; /root/.casdoor-login 是否就绪?)"
+fi
 [[ -n $ADMIN ]] || die "管理员 JWT 为空"
 
 # 2) 签发 operator
@@ -55,10 +60,8 @@ kubectl -n "$SECRET_NS" create secret generic "$SECRET_NAME" --from-literal=toke
 kubectl -n "$SECRET_NS" annotate secret "$SECRET_NAME" "config-center/machine-token-id=$id" "config-center/environment=$ENVIRONMENT" --overwrite >/dev/null
 log "Secret $SECRET_NS/$SECRET_NAME 已写入(注解记录 token id, 便于吊销)"
 
-# 4) 用它读一次、写一次(读回), 证明真的能当管理面用
-resp=$(rpc GetKey '{"namespace":"cart","environment":"'"$ENVIRONMENT"'","key":"bootstrap.yaml"}' -H "x-config-center-service-token: $tok" -H "x-config-center-client-name: operator-token-check")
-rpc_ok "$resp" "operator GetKey"
-log "✔ operator 读 cart/$ENVIRONMENT/bootstrap.yaml v$(jq -r .entry.version <<<"$resp") 成功"
+# 新环境可以尚无任何配置键，不能用 cart/bootstrap.yaml 是否存在作为签发成功判据。
+# 验证管理接口可用；配置读写由后续 harvest 的读回校验覆盖。
 resp=$(rpc ListMachineTokens '{"environment":"'"$ENVIRONMENT"'"}' -H "x-config-center-service-token: $tok")
 rpc_ok "$resp" "operator ListMachineTokens"
 log "✔ operator 可列 token($(jq -r '.tokens|length' <<<"$resp") 枚)"
