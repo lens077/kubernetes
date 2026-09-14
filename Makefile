@@ -4,7 +4,8 @@ SHELL := /bin/bash
 # Put modern Bash first so child scripts invoking `bash` use the same version.
 BASH_BIN ?= $(if $(wildcard /opt/homebrew/bin/bash),/opt/homebrew/bin/bash,$(shell command -v bash))
 export PATH := $(dir $(BASH_BIN)):$(PATH)
-export PYTHON ?= python3
+export TOOLS_VENV ?= $(CURDIR)/.venv-tools
+export PYTHON ?= $(TOOLS_VENV)/bin/python
 export K8S_CONFIG_ENV ?= $(CURDIR)/bootstrap/config.hosting.env
 export ENV ?= pre
 export ADMIN_TOKEN_SECRET ?= config-center/config-center-operator$(if $(filter pre,$(ENV)),,-$(ENV)):token
@@ -15,7 +16,7 @@ CONFIRM ?= no
 DOCKER_DEPLOY_DIR ?= $(abspath ../docker-deploy)
 PANGOLIN_SCRIPT = $(DOCKER_DEPLOY_DIR)/pangolin/reconcile-k8s-dev-resources.sh
 
-.PHONY: help confirm contracts mapping-test cc-plan cc-apply cc-bootstrap-plan cc-bootstrap-apply cc-forward operator-issue rotate-plan rotate-apply component-install pangolin-check pangolin-apply pangolin-apply-infra pangolin-disable
+.PHONY: help confirm bootstrap-tools contracts mapping-test cc-plan cc-apply cc-bootstrap-plan cc-bootstrap-apply cc-forward operator-issue rotate-plan rotate-apply component-install pangolin-check pangolin-apply pangolin-apply-infra pangolin-disable
 
 help: ## 显示帮助（默认不修改系统或集群）
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z0-9_-]+:.*## / {printf "  %-22s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -26,6 +27,12 @@ help: ## 显示帮助（默认不修改系统或集群）
 
 confirm:
 	@test "$(CONFIRM)" = yes || { echo '拒绝执行写操作；先预览并确认集群，再加 CONFIRM=yes。' >&2; exit 2; }
+
+bootstrap-tools: ## 创建工具 Python 环境并安装 PyYAML/jsonschema
+	@command -v uv >/dev/null || { echo '需要 uv: https://docs.astral.sh/uv/'; exit 2; }
+	@uv venv "$(TOOLS_VENV)"
+	@uv pip install --python "$(PYTHON)" pyyaml jsonschema
+	@echo "工具环境已就绪: PYTHON=$(PYTHON)"
 
 contracts: ## 只读检查组件契约与当前集群
 	@"$(BASH_BIN)" tools/verify-contracts.sh

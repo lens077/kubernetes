@@ -4,7 +4,7 @@
 
 ## 前置条件与目标选择
 
-- Bash >= 4.2、kubectl、Helm、jq；配置工具需要 Python + PyYAML，服务配置写入要求 jsonschema。
+- Bash >= 4.2、kubectl、Helm、jq。先运行 `make bootstrap-tools` 创建 `.venv-tools`，它通过 `uv` 安装 PyYAML/jsonschema；也可显式传 `PYTHON=/path/to/python`。
 - 默认读取 `bootstrap/config.hosting.env`。这只选择部署参数，不切换 kubeconfig；执行前用 `kubectl config current-context` 确认目标集群。
 - `KUBECONFIG` 按底层脚本处理；组件公共库在节点存在 `/etc/kubernetes/admin.conf` 时优先使用该文件。Mac 上不要假设本地配置会切换远程目标。
 - `ENV=pre` 默认选择集群内地址；`ENV=dev` 默认选择 `remote-dev`。可以显式传 `STRATEGY=gateway`，但当前 Mac 经 Pangolin 开发不需要 split DNS。

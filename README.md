@@ -13,6 +13,7 @@
 
 ```bash
 make help
+make bootstrap-tools
 make contracts
 make cc-plan ENV=dev
 make cc-apply ENV=dev CONFIRM=yes
