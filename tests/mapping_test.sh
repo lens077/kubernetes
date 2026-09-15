@@ -16,4 +16,5 @@ SCHEMAS="$CT/services/config/internal/schema/schemas"
 [[ -d $SCHEMAS ]] || { echo "找不到 control-tower schema 目录: $SCHEMAS(设 CONTROL_TOWER_DIR)" >&2; exit 2; }
 PY=${PYTHON:-python3}
 "$PY" -c 'import yaml' 2>/dev/null || { echo "需要 python3 + PyYAML(PYTHON=<venv>/bin/python)" >&2; exit 2; }
+"$PY" "$HERE/harvest_decision_test.py"   # 纯函数回归: 无差异但 selector 缺 token 必须签(2026-09-15)
 exec "$PY" "$HERE/../tools/config-center/harvest.py" --check-mapping --schemas-dir "$SCHEMAS"

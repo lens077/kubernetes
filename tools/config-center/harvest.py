@@ -578,6 +578,22 @@ def selector_tokens(ns: str, secret: str) -> dict[str, str]:
     return out
 
 
+def service_action(has_changes: bool, seeded: bool, rotate_tokens: bool, has_selector_token: bool) -> str:
+    """一个服务这轮要做什么: "skip" | "token-only" | "write".
+
+    2026-09-15 修复的缺陷: 原先「配置无差异就 continue」, 于是新环境(配置已存在但 selector Secret 还没有)
+    永远建不出 selector —— 没 token 的服务必须走到签发那一步, 哪怕配置一字未改。
+    - write:      配置有差异或从模板合成 → 写 Config Center; 顺带按需签 token
+    - token-only: 配置无差异, 但 selector 里没它 / 要求重签 → 只签 token + 写 selector, 不写 Config Center
+    - skip:       配置无差异且 selector 里已有它的 token
+    """
+    if has_changes or seeded:
+        return "write"
+    if rotate_tokens or not has_selector_token:
+        return "token-only"
+    return "skip"
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--env", default="pre", help="Config Center 环境名(任意)")
@@ -735,11 +751,11 @@ def main() -> int:
             for pth in left:
                 unresolved.append(f"{pth} ← 骨架占位符无映射来源")
                 pending_all.setdefault("骨架占位符无映射来源(补 mapping.yaml 或 overrides)", []).append(f"{svc}:{pth}")
-        needs_token = args.rotate_tokens or svc not in svc_tokens   # selector 里没它 = 新环境/新服务, 必须签
-        if not changes and not seeded and not needs_token:
+        action = service_action(bool(changes), seeded, args.rotate_tokens, svc in svc_tokens)
+        if action == "skip":
             log(f"· {svc}: v{entry.get('version')} 无差异" + (f"(另有 {len(unresolved)} 处待补齐)" if unresolved else ""))
             continue
-        if needs_token and not changes:
+        if action == "token-only":
             log(f"{svc}: 配置无差异, 但" + ("--rotate-tokens 要求重签" if args.rotate_tokens else f"selector {ns}/{selector} 里没有它的 token, 需签发") + " service token")
 
         # 4) 往返等价自检: 除改动路径外必须与原值完全等价
@@ -768,19 +784,21 @@ def main() -> int:
         if args.dry_run:
             continue
 
-        # 7) 写入 + 读回校验
-        try:
-            put = cc.put_key(svc, args.env, KEY, new_text, admin,
-                             comment=("seed from template + " if seeded else "") + f"harvest {args.env}: " + ", ".join(caps))
-        except RuntimeError as e:
-            die(f"{svc}: {e}(管理 token 无效/过期?)")
-        log(f"{svc}: {args.env}/{KEY} 已写入 v{put.get('version')}")
+        # 7) 写入 + 读回校验(token-only 不写: 内容没变, 不该白白涨一个 revision)
+        if action == "write":
+            try:
+                put = cc.put_key(svc, args.env, KEY, new_text, admin,
+                                 comment=("seed from template + " if seeded else "") + f"harvest {args.env}: " + ", ".join(caps))
+            except RuntimeError as e:
+                die(f"{svc}: {e}(管理 token 无效/过期?)")
+            log(f"{svc}: {args.env}/{KEY} 已写入 v{put.get('version')}")
         if args.rotate_tokens or svc not in svc_tokens:
             note = f"{os.uname().nodename} harvest {time.strftime('%F')}"
             new_tokens[svc], new_token_ids[svc] = cc.issue_token(svc, args.env, note, admin)
         tok = new_tokens.get(svc) or svc_tokens[svc]
         back = cc.get_key(svc, args.env, KEY, {"x-config-center-service-token": tok})
-        if back.get("value") != new_text:
+        expected = new_text if action == "write" else entry.get("value")   # token-only: 库里还是原文
+        if back.get("value") != expected:
             die(f"{svc}: 数据面读回与写入不一致(is_secret 脱敏? 版本冲突?)")
         changed_services.append(svc)
 
