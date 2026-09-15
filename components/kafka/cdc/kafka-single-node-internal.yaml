@@ -148,6 +148,15 @@ spec:
         configMapKeyRef:
           name: kafka-metrics
           key: kafka-metrics-config.yml
+  kafkaExporter:
+    groupRegex: ".*"
+    topicRegex: "ecommerce_cdc\\..*"
+    resources:
+      requests:
+        cpu: 25m
+        memory: 64Mi
+      limits:
+        memory: 128Mi
   entityOperator:
     topicOperator: {}
     userOperator: {}

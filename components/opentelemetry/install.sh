@@ -56,7 +56,7 @@ if [[ -n $REMOTE_METRICS_URL ]]; then
         queue_size: 1000
 "
   pipelines+="      metrics:
-        receivers: [otlp, prometheus, prometheus/cilium]
+        receivers: [otlp, prometheus, prometheus/cilium, prometheus/kafka]
         processors: [memory_limiter, delta_to_cumulative, batch]
         exporters: [otlp_http/remote_metrics]
 "
@@ -73,7 +73,7 @@ elif comp_installed victoriametrics vm-single-victoria-metrics-single-server; th
   # pipeline, 等于死配置) —— 挂上后 otelcol_* 自观测指标才会进后端, 队列积压才看得见。
   # k8s_cluster 由 clusterMetrics preset 自动追加, 不用写。
   pipelines+="      metrics:
-        receivers: [otlp, prometheus, prometheus/cilium]
+        receivers: [otlp, prometheus, prometheus/cilium, prometheus/kafka]
         processors: [memory_limiter, delta_to_cumulative, batch]
         exporters: [otlp_http/victoriametrics]
 "

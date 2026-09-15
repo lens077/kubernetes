@@ -6,7 +6,7 @@ PostgreSQL（node3 Pigsty，`10.10.21.172:5432`）→ Debezium → Kafka（本�
 
 | 文件 | 内容 |
 |---|---|
-| `kafka-single-node-internal.yaml` | KafkaNodePool + Kafka 4.3.0 单节点 KRaft，仅内部 listener（不暴露 loadbalancer） |
+| `kafka-single-node-internal.yaml` | KafkaNodePool + Kafka 4.3.0 单节点 KRaft，仅内部 listener（不暴露 loadbalancer）；内置 `kafkaExporter` 仅导出 `ecommerce_cdc.*` lag |
 | `kafka-connect.yaml` | KafkaConnect 4.3.0，镜像含 Debezium PostgreSQL 3.6.1 + Confluent ES Sink；启用 `KubernetesSecretConfigProvider` |
 | `rbac.yaml` | Connect SA 只能 `get` 两个凭据 Secret |
 | `ecommerce-postgres-source.yaml` | Debezium source：slot/publication/topic 前缀统一 `ecommerce_cdc`，删除走 tombstone |
@@ -18,7 +18,7 @@ PostgreSQL（node3 Pigsty，`10.10.21.172:5432`）→ Debezium → Kafka（本�
 ## 不变量
 
 - PG 复制槽 `ecommerce_cdc` 必须在 Patroni `slots` 里声明（否则 PG 重启会被删，历史三次事故）；告警在 node3 `/infra/rules/ecommerce-cdc.yml`。
-- Connect task 状态由 `ops/gatus` 的 `cdc-source-task` / `cdc-sink-task` 探针盯（connector 级 RUNNING 而 task FAILED 是事故形态）。
+- Connect task 状态由 `ops/gatus` 的 `cdc-source-task` / `cdc-sink-task` 探针盯（connector 级 RUNNING 而 task FAILED 是事故形态）。Kafka exporter 的 `kafka_consumergroup_lag` 由 OTel Prometheus receiver 抓取 `:9404` 并转发 node3 Pigsty；node3 vmalert 的 `CdcSinkLag*` 规则消费该指标。
 - ES 索引先由 `components/elasticsearch` 的模板创建（`<alias>_v1` + write alias，replicas=0），再起 sink；让 sink 自动建索引会得到错 mapping。
 
 ## 重快照

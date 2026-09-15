@@ -220,6 +220,31 @@ config:
               - source_labels: [__meta_kubernetes_pod_name]
                 target_label: pod
 
+    prometheus/kafka:
+      config:
+        scrape_configs:
+          - job_name: kafka-exporter
+            scrape_interval: 30s
+            scrape_timeout: 10s
+            kubernetes_sd_configs:
+              - role: pod
+                namespaces:
+                  names: [kafka]
+            relabel_configs:
+              - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_name]
+                action: keep
+                regex: kafka-exporter
+              - source_labels: [__meta_kubernetes_pod_phase]
+                action: keep
+                regex: Running
+              - source_labels: [__meta_kubernetes_pod_ip]
+                target_label: __address__
+                replacement: $1:9404
+              - source_labels: [__meta_kubernetes_pod_name]
+                target_label: pod
+              - source_labels: [__meta_kubernetes_pod_node_name]
+                target_label: node
+
 resources:
   requests:
     cpu: 50m
