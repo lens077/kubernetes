@@ -1,0 +1,42 @@
+# Debezium PostgreSQL source：node3 Pigsty PG → k8s Kafka。
+# 配置与 postgres-kafka-es-streaming-pipeline/deploy/docker-node3/connectors/postgres-source.json 逐字段对齐
+# （原 node3 Docker Connect 已于 2026-09-15 下线，本清单是唯一正式版本）。
+# slot / publication / topic 前缀统一为 ecommerce_cdc；删除事件走 tombstone，由 sink 的 behavior.on.null.values=DELETE 落地。
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaConnector
+metadata:
+  name: ecommerce-postgres-source
+  namespace: kafka
+  labels:
+    strimzi.io/cluster: my-connect-cluster
+spec:
+  class: io.debezium.connector.postgresql.PostgresConnector
+  tasksMax: 1
+  config:
+    database.hostname: 10.10.21.172
+    database.port: "5432"
+    database.dbname: ecommerce
+    database.user: ${secrets:kafka/cdc-postgres:username}
+    database.password: ${secrets:kafka/cdc-postgres:password}
+    database.sslmode: require
+    plugin.name: pgoutput
+    publication.name: ecommerce_cdc
+    publication.autocreate.mode: disabled
+    slot.name: ecommerce_cdc
+    slot.drop.on.stop: "false"
+    snapshot.mode: initial
+    snapshot.locking.mode: none
+    schema.include.list: orders,products
+    table.include.list: orders.order_main,orders.order_item,orders.order_log,products.skus,products.spus,products.sale_detail,products.search_catalog
+    topic.prefix: ecommerce_cdc
+    decimal.handling.mode: double
+    binary.handling.mode: base64
+    time.precision.mode: connect
+    tombstones.on.delete: "true"
+    transforms: unwrap
+    transforms.unwrap.type: io.debezium.transforms.ExtractNewRecordState
+    transforms.unwrap.delete.tombstone.handling.mode: delete-to-tombstone
+    key.converter: org.apache.kafka.connect.json.JsonConverter
+    key.converter.schemas.enable: "false"
+    value.converter: org.apache.kafka.connect.json.JsonConverter
+    value.converter.schemas.enable: "false"

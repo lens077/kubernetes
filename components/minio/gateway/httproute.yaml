@@ -13,7 +13,7 @@ spec:
       sectionName: http
   hostnames:
     - "${HOSTNAME}"
-    - "node3-minio.apikv.com"
+    - "silo-api.apikv.com"
   rules:
     - filters:
         - type: RequestRedirect
@@ -54,7 +54,7 @@ spec:
       namespace: default
       sectionName: https
   hostnames:
-    - "node3-minio.apikv.com"
+    - "silo-api.apikv.com"
   rules:
     - matches:
         - path:
