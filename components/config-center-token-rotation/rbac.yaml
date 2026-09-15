@@ -1,8 +1,14 @@
+# Least-privilege identity for the service-token rotation Job.
+# Exactly what tools/config-center-rotate-service-tokens.sh touches, by name:
+#   config-center: read the pre-issued operator Secret; resolve the config-center Service ClusterIP
+#   ecommerce:     read/update the pre selector Secret; restart + watch the 10 ecommerce Deployments
+# It never gets list/delete on Secrets, never touches other namespaces, and holds no Casdoor/admin credential.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: config-center-token-rotation
   namespace: config-center
+automountServiceAccountToken: true
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -12,14 +18,57 @@ metadata:
 rules:
   - apiGroups: [""]
     resources: ["secrets"]
-    verbs: ["get", "patch", "create", "update"]
-    resourceNames: ["config-center-operator", "config-center-operator-dev"]
+    resourceNames: ["config-center-operator"]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["services"]
+    resourceNames: ["config-center"]
+    verbs: ["get"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   name: config-center-token-rotation
   namespace: config-center
+subjects:
+  - kind: ServiceAccount
+    name: config-center-token-rotation
+    namespace: config-center
+roleRef:
+  kind: Role
+  name: config-center-token-rotation
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: config-center-token-rotation
+  namespace: ecommerce
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["ecommerce-config-source-pre"]
+    verbs: ["get", "patch", "update"]
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    resourceNames:
+      - ecommerce-address-deploy
+      - ecommerce-behavior-deploy
+      - ecommerce-cart-deploy
+      - ecommerce-inventory-deploy
+      - ecommerce-merchant-deploy
+      - ecommerce-order-deploy
+      - ecommerce-payment-deploy
+      - ecommerce-product-deploy
+      - ecommerce-search-deploy
+      - ecommerce-user-deploy
+    verbs: ["get", "patch", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: config-center-token-rotation
+  namespace: ecommerce
 subjects:
   - kind: ServiceAccount
     name: config-center-token-rotation

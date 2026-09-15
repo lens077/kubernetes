@@ -60,7 +60,7 @@ CONFIRM=yes ENV=pre ADMIN_TOKEN_SECRET=config-center/config-center-operator:toke
   bash tools/config-center-rotate-service-tokens.sh --apply
 ```
 
-它按「签发新 token → 更新 selector Secret → 新 token 读回 → 吊销旧 token」执行；缺旧 token ID、读回失败、Secret 更新失败或吊销失败都会停止，不猜测、不继续。operator token 自身不能用这个流程自我升级。轮换入口仅允许 pre；底层轮换脚本会执行组件安装、服务滚动，可能涉及 Helm 变更，执行前必须安排窗口。预览不是完整的故障回滚演练。
+它按三阶段执行：A 签发新 token 并**用新 token 本身**读回、写 selector Secret（旧 id 记入 `service-token-ids-previous`）→ B 滚动全部消费者并等就绪 → C 全部就绪后才吊销旧 token。任一阶段失败即停，旧 token 仍有效；重跑进入续跑模式（不签新 token，只重做 B+C）。同一脚本打进 TCR 镜像由 CronJob `config-center/config-center-service-token-rotation` 每周日跑 pre（`components/config-center-token-rotation/`）。operator token 自身不能用这个流程自我升级。轮换入口仅允许 pre；底层轮换脚本会执行组件安装、服务滚动，可能涉及 Helm 变更，执行前必须安排窗口。预览不是完整的故障回滚演练。
 
 ## Pangolin remote-dev 入口
 

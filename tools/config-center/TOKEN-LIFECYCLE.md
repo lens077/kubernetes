@@ -29,13 +29,13 @@ make environment-ensure ENV=staging CONFIRM=yes
 
 失败规则：新 token 验证失败不动旧 token；Secret 更新失败不吊销旧 token；吊销失败保留状态并报警，之后重试。轮换状态必须落在可审计的 K8s Job/ConfigMap/数据库记录中，不能只放进进程变量。
 
-当前脚本已经支持「harvest 时签发/写入」流程，但**旧 token 元数据关联、失败恢复、验证后自动吊销的完整状态机尚未启用**。因此不要把下面的 CronJob 改成 `suspend: false`。
+`tools/config-center-rotate-service-tokens.sh` 实现了这个状态机（A 签发+新 token 读回+写 Secret → B 滚动消费者等就绪 → C 吊销旧 token；旧 id 落 `service-token-ids-previous` 注解，失败后重跑进续跑模式）。2026-09-15 起 pre 的 CronJob 已启用，见 `components/config-center-token-rotation/README.md` 的两次演练记录。
 
 ## Job/CronJob 安全边界
 
 `components/config-center-token-rotation/` 提供了受限 RBAC 与 CronJob 骨架：
 
-- CronJob 默认 `suspend: true`；
+- CronJob 每周日 03:17 跑 pre（2026-09-15 起 `suspend: false`）；镜像在 TCR 按 digest 固定；
 - `concurrencyPolicy: Forbid`；
 - 不包含管理员密码、Casdoor 登录文件或管理员 JWT；
 - 只引用预先签发的 operator Secret；
@@ -43,4 +43,4 @@ make environment-ensure ENV=staging CONFIRM=yes
 - RBAC 只允许读取/更新指定 operator Secret；
 - `--apply-infra`、OpenBao root token 和 Casdoor 登录都不应放入 Job。
 
-真正启用 CronJob 前，必须先完成 service token 状态机、旧 token 吊销、失败恢复和一次 Job 级演练。operator token 自身轮换仍需要管理员授权，不能由当前 operator 自我升级。
+operator token 自身轮换仍需要管理员授权（`tools/config-center-operator-token.sh` + 管理员 JWT），不能由当前 operator 自我升级；这条边界是 CronJob 权限模型的基础，不要为了"全自动"去掉。
