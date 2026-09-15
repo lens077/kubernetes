@@ -16,7 +16,7 @@ CONFIRM ?= no
 DOCKER_DEPLOY_DIR ?= $(abspath ../docker-deploy)
 PANGOLIN_SCRIPT = $(DOCKER_DEPLOY_DIR)/pangolin/reconcile-k8s-dev-resources.sh
 
-.PHONY: help confirm bootstrap-tools contracts mapping-test environment-plan environment-ensure cc-plan cc-apply cc-bootstrap-plan cc-bootstrap-apply cc-forward operator-issue rotate-plan rotate-apply component-install pangolin-check pangolin-apply pangolin-apply-infra pangolin-disable
+.PHONY: help confirm bootstrap-tools cluster-plan cluster-install cluster-components cluster-verify contracts mapping-test environment-plan environment-ensure cc-plan cc-apply cc-bootstrap-plan cc-bootstrap-apply cc-forward operator-issue rotate-plan rotate-apply component-install pangolin-check pangolin-apply pangolin-apply-infra pangolin-disable
 
 help: ## 显示帮助（默认不修改系统或集群）
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z0-9_-]+:.*## / {printf "  %-22s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -39,6 +39,18 @@ environment-plan: ## 预览环境声明将填充的配置（ENVIRONMENT=staging�
 
 environment-ensure: confirm ## 按环境声明幂等填充 Config Center
 	@ENVIRONMENT="$(ENV)" ADMIN_TOKEN_SECRET="$(ADMIN_TOKEN_SECRET)" "$(BASH_BIN)" tools/config-center-environment-ensure.sh
+
+cluster-plan: ## 预览裸机安装阶段，不修改系统或集群
+	@cd bootstrap && "$(BASH_BIN)" start.sh --dry-run --to 80-components
+
+cluster-install: confirm ## 从裸机安装到目标阶段（危险：需要 root/维护窗口）
+	@cd bootstrap && sudo "$(BASH_BIN)" start.sh --to 80-components
+
+cluster-components: confirm ## 只重跑组件安装阶段
+	@cd bootstrap && sudo "$(BASH_BIN)" start.sh --only 80-components
+
+cluster-verify: ## 运行安装器的最终只读验收
+	@cd bootstrap && "$(BASH_BIN)" start.sh --dry-run --to 90-verify
 
 contracts: ## 只读检查组件契约与当前集群
 	@"$(BASH_BIN)" tools/verify-contracts.sh
