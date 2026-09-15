@@ -1,0 +1,101 @@
+# healthchecks.io 自托管版 —— 死人开关: 备份/CronJob/迁移 Job 到点不 ping 就告警。
+# 取值沿用 node3 的 compose(2026-09-03 收割): sqlite、关闭注册、开 Prometheus 指标、单 uwsgi 进程。
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: healthchecks-data
+  namespace: ${NAMESPACE}
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: ${SC_NAME}
+  resources:
+    requests:
+      storage: ${HEALTHCHECKS_STORAGE_SIZE}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: healthchecks
+  namespace: ${NAMESPACE}
+  labels:
+    app.kubernetes.io/name: healthchecks
+spec:
+  selector:
+    app.kubernetes.io/name: healthchecks
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: healthchecks
+  namespace: ${NAMESPACE}
+  labels:
+    app.kubernetes.io/name: healthchecks
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate                 # sqlite 单写者
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: healthchecks
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: healthchecks
+    spec:
+      securityContext:
+        fsGroup: 999               # 镜像内 hc 用户组
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: healthchecks
+          # node3 上验证过的版本, 钉 digest
+          image: docker.io/healthchecks/healthchecks:v4.3@sha256:cd7bcd94350818b3944f82eb5995f48bdeab8c8627977578a569ffa73f56f56f
+          imagePullPolicy: IfNotPresent
+          env:
+            - { name: DB, value: sqlite }
+            - { name: DB_NAME, value: /data/hc.sqlite }
+            - { name: DEBUG, value: "False" }
+            - { name: SITE_NAME, value: "Ecommerce Healthchecks" }
+            - { name: SITE_ROOT, value: "https://${HOSTNAME}" }
+            # 集群内 CronJob 用 Service 名 ping, Host 头不是 SITE_ROOT 的域名, 必须显式放行
+            - { name: ALLOWED_HOSTS, value: "${HOSTNAME},healthchecks,healthchecks.${NAMESPACE},healthchecks.${NAMESPACE}.svc,healthchecks.${NAMESPACE}.svc.cluster.local,localhost,127.0.0.1" }
+            - { name: PING_ENDPOINT, value: "https://${HOSTNAME}/ping/" }
+            - { name: PROMETHEUS_ENABLED, value: "True" }
+            - { name: REGISTRATION_OPEN, value: "False" }
+            - { name: USE_PAYMENTS, value: "False" }
+            - { name: UWSGI_PROCESSES, value: "1" }
+            - { name: DEFAULT_FROM_EMAIL, value: "healthchecks@${HOSTNAME}" }
+            - { name: SECURE_PROXY_SSL_HEADER, value: "HTTP_X_FORWARDED_PROTO,https" }   # 网关终结 TLS
+            - name: SECRET_KEY
+              valueFrom:
+                secretKeyRef: { name: healthchecks-secret, key: SECRET_KEY }
+          ports:
+            - { name: http, containerPort: 8000 }
+          readinessProbe:
+            httpGet:
+              path: /api/v3/status/
+              port: 8000
+              httpHeaders: [{ name: Host, value: localhost }]
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /api/v3/status/
+              port: 8000
+              httpHeaders: [{ name: Host, value: localhost }]
+            periodSeconds: 30
+          securityContext:
+            allowPrivilegeEscalation: false
+          volumeMounts:
+            - { name: data, mountPath: /data }
+          resources:
+            requests: { cpu: 25m, memory: 128Mi }
+            limits: { memory: 512Mi }
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: healthchecks-data

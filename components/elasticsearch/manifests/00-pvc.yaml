@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: data-elasticsearch
+  namespace: elasticsearch
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: openebs-lvm
+  resources:
+    requests: {storage: 10Gi}

@@ -50,4 +50,28 @@ kctl -n external-secrets create secret generic openbao-eso-token \
   --from-literal=token="$(cat "$STATE_DIR/creds/openbao-eso-token")" \
   --dry-run=client -o yaml | kctl apply -f -
 kctl apply -f "$DIR/examples/eso-wiring.yaml"
-log_ok "$ID 安装完成(验证: kubectl -n default get externalsecret demo-from-openbao 应 Ready)"
+
+# 反向通道(2026-09-11): eso-push 只能写 k8s/<集群>/ca/*, 用于 PushSecret 把 cert-manager 根 CA 推回 OpenBao。
+# 与只读 token 分开, 泄露面只有 CA 路径。
+[[ -n ${CLUSTER_NAME:-} ]] || die "config.env 未定义 CLUSTER_NAME(OpenBao 路径按集群分)"
+bao_exec env BAO_TOKEN="$ROOT_TOKEN" sh -c "cat > /tmp/eso-push.hcl <<POLICY
+path \"secret/data/k8s/$CLUSTER_NAME/ca/*\"     { capabilities = [\"create\", \"update\", \"read\"] }
+path \"secret/metadata/k8s/$CLUSTER_NAME/ca/*\" { capabilities = [\"read\", \"list\"] }
+POLICY
+bao policy write eso-push /tmp/eso-push.hcl" >/dev/null
+if [[ ! -f "$STATE_DIR/creds/openbao-eso-push-token" ]]; then
+  bao_exec env BAO_TOKEN="$ROOT_TOKEN" bao token create -policy=eso-push -ttl=768h -format=json \
+    | sed -n 's/.*"client_token": *"\([^"]*\)".*/\1/p' > "$STATE_DIR/creds/openbao-eso-push-token"
+  chmod 600 "$STATE_DIR/creds/openbao-eso-push-token"
+fi
+kctl -n external-secrets create secret generic openbao-eso-push-token \
+  --from-literal=token="$(cat "$STATE_DIR/creds/openbao-eso-push-token")" \
+  --dry-run=client -o yaml | kctl apply -f -
+if kctl -n cert-manager get secret global-root-ca-secret >/dev/null 2>&1; then
+  _push=$(mktemp); render_tpl "$DIR/examples/eso-push.yaml" "$_push"
+  retry 3 5 kctl apply -f "$_push" >/dev/null; rm -f "$_push"
+  log_info "PushSecret cert-manager/global-root-ca → secret/k8s/$CLUSTER_NAME/ca/global-root(状态: kubectl -n cert-manager get pushsecret)"
+else
+  log_warn "cert-manager/global-root-ca-secret 不存在, 跳过 CA PushSecret(装完 cert-manager 后重跑本组件)"
+fi
+log_ok "$ID 安装完成(验证: kubectl -n default get externalsecret demo-from-openbao 应 Ready; 组件凭据播种: tools/openbao-seed.sh)"

@@ -1,0 +1,31 @@
+# gatus 主配置(合成监控)。端点清单在 endpoints.yaml, 两份都由 install.sh 装进 ConfigMap 并挂到
+# /config, gatus 用 GATUS_CONFIG_PATH=/config 把目录下的文件合并读取。
+# 取值沿用 node3 Pigsty 时代的 /data/gatus/config.yaml(2026-09-03 收割)。
+web:
+  address: 0.0.0.0
+  port: 8080
+ui:
+  title: Ecommerce infrastructure status
+  dashboard-heading: Ecommerce infrastructure status
+  dashboard-subheading: "Probes run inside the k8s cluster; groups: cluster-origin / observability-pipeline / public edges."
+  default-sort-by: group
+storage:
+  type: sqlite
+  path: /data/gatus.db
+  caching: true
+  maximum-number-of-results: 500
+  maximum-number-of-events: 100
+concurrency: 10
+metrics: true                     # /metrics: otel collector 抓, 探测结果也进 VM
+# ntfy 直推(不经 Alertmanager: 合成监控要在告警链路坏了的时候还能报信)。
+# 凭据来自 Secret gatus-ntfy; install.sh 在没配 ntfy 时会删掉这一段和端点里的 alerts 行。
+alerting:
+  ntfy:
+    url: ${NTFY_URL}
+    topic: ${NTFY_TOPIC}
+    token: ${NTFY_TOKEN}
+    priority: 4
+    default-alert:
+      failure-threshold: 2
+      success-threshold: 2
+      send-on-resolved: true

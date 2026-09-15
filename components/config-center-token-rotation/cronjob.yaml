@@ -1,0 +1,67 @@
+# Weekly service-token rotation for the pre environment.
+# Runs tools/config-center-rotate-service-tokens.sh --apply inside an immutable image built from
+# components/config-center-token-rotation/Dockerfile and pushed to TCR (Docker Hub / GHCR are not
+# reachable from the cluster). Pin by digest; never use a mutable tag here.
+#
+# Credential boundary: the Job reads the pre-issued operator token from Secret
+# config-center/config-center-operator via its ServiceAccount (see rbac.yaml). It carries no Casdoor
+# login, no admin JWT, no OpenBao token. The operator cannot issue another operator, so a compromised
+# Job cannot escalate beyond rotating pre service tokens.
+#
+# Enabled 2026-09-15 after two in-cluster drills (rotation-drill-1534 exposed the revoke-before-roll
+# defect and the missing list verb; rotation-drill-1542 ran the fixed 3-phase script end to end).
+# To re-enable after a pause: apply with suspend=true, run one manual Job
+# (kubectl create job --from=cronjob/... ), verify all 10 services rotated + Deployments ready,
+# then flip suspend=false. The script is fail-closed: any stage failure stops before revoking the
+# old token, so a failed run leaves consumers on a still-valid credential.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: config-center-service-token-rotation
+  namespace: config-center
+spec:
+  suspend: false
+  schedule: "17 3 * * 0"          # Sunday 03:17 (cluster local time)
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0             # a failed rotation must be inspected, not blindly retried
+      activeDeadlineSeconds: 1800
+      ttlSecondsAfterFinished: 604800
+      template:
+        spec:
+          serviceAccountName: config-center-token-rotation
+          restartPolicy: Never
+          imagePullSecrets:
+            - name: tcr-pull
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: rotation
+              image: ccr.ccs.tencentyun.com/sumery/kubernetes-tools@sha256:14859b5eea22276d29a3daca9f78eb95c32751c8b392f9490f5d2a233f7ba31c
+              imagePullPolicy: IfNotPresent
+              args: ["--apply"]
+              env:
+                - name: HOME                 # env.sh falls back to $HOME/.local/state when /var/lib is read-only
+                  value: /tmp
+                - name: ENVIRONMENT
+                  value: pre
+                - name: CONFIRM
+                  value: "yes"
+                - name: ADMIN_TOKEN_SECRET
+                  value: config-center/config-center-operator:token
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: false   # env.sh writes state/log under $HOME
+                capabilities:
+                  drop: ["ALL"]
+              resources:
+                requests: { cpu: 50m, memory: 64Mi }
+                limits: { memory: 256Mi }

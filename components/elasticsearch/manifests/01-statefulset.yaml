@@ -1,0 +1,46 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: elasticsearch
+  namespace: elasticsearch
+spec:
+  serviceName: elasticsearch
+  replicas: 1
+  selector: {matchLabels: {app: elasticsearch}}
+  template:
+    metadata: {labels: {app: elasticsearch}}
+    spec:
+      securityContext: {fsGroup: 1000}
+      imagePullSecrets: [{name: tcr-pull-secret}]
+      containers:
+      - name: elasticsearch
+        image: ccr.ccs.tencentyun.com/sumery/ecommerce-elasticsearch:9.4.5-ik-9.4.5
+        env:
+        - {name: node.name, value: k8s-elasticsearch}
+        - {name: cluster.name, value: ecommerce-k8s}
+        - {name: discovery.type, value: single-node}
+        - {name: xpack.security.enabled, value: "true"}
+        - {name: xpack.security.enrollment.enabled, value: "false"}
+        - {name: xpack.security.http.ssl.enabled, value: "false"}
+        - {name: xpack.license.self_generated.type, value: basic}
+        - {name: ES_JAVA_OPTS, value: -Xms768m -Xmx768m}
+        - {name: ELASTIC_PASSWORD_FILE, value: /run/secrets/elastic/password}
+        ports: [{name: http, containerPort: 9200}]
+        volumeMounts:
+        - {name: data, mountPath: /usr/share/elasticsearch/data}
+        - {name: auth, mountPath: /run/secrets/elastic, readOnly: true}
+        resources: {requests: {cpu: 500m, memory: 1Gi}, limits: {cpu: "1500m", memory: 2Gi}}
+        readinessProbe:
+          exec: {command: [bash, -ec, 'curl -fsS -u elastic:$(cat /run/secrets/elastic/password) http://127.0.0.1:9200/_cluster/health >/dev/null']}
+          initialDelaySeconds: 45
+          periodSeconds: 10
+          timeoutSeconds: 5
+        livenessProbe:
+          exec: {command: [bash, -ec, 'curl -fsS -u elastic:$(cat /run/secrets/elastic/password) http://127.0.0.1:9200/_cluster/health >/dev/null']}
+          initialDelaySeconds: 90
+          periodSeconds: 20
+          timeoutSeconds: 5
+      volumes:
+      - {name: data, persistentVolumeClaim: {claimName: data-elasticsearch}}
+      - name: auth
+        secret: {secretName: elasticsearch-auth, defaultMode: 256, items: [{key: password-file, path: password}]}

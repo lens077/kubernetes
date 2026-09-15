@@ -1,0 +1,22 @@
+# Strimzi 会为 KafkaConnect 生成只放行 operator 的 NetworkPolicy；这条额外放行 ops 命名空间（gatus）
+# 访问 Connect REST 8083，用于 connector/task 状态探针（替代原 node3 的 cdc-connect-exporter 告警）。
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: my-connect-cluster-connect-rest-from-ops
+  namespace: kafka
+spec:
+  podSelector:
+    matchLabels:
+      strimzi.io/cluster: my-connect-cluster
+      strimzi.io/kind: KafkaConnect
+      strimzi.io/name: my-connect-cluster-connect
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ops
+      ports:
+        - port: 8083
+          protocol: TCP

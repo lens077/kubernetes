@@ -1,0 +1,13 @@
+groups:
+  - name: ecommerce-ces-audit
+    interval: 15s
+    rules:
+      - alert: CiliumEndpointSliceStale
+        expr: 'max(last_over_time(ces_stale_entries{cluster="ecommerce-dev"}[5m])) > 0'
+        for: 30s
+        labels:
+          severity: critical
+          category: kubernetes
+        annotations:
+          summary: CiliumEndpointSlice 与 CiliumEndpoint 的 IP 不一致
+          description: CES 对账发现 {{ $value | printf "%.0f" }} 个不一致条目。查看 ces-audit CronJob 日志，按 slice、Pod UID 和 IP 核对；告警只报告问题，不会删除或修改 CES。

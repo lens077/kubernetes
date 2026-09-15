@@ -31,7 +31,7 @@ Cilium 1.20 通过 Core 一致性测试的资源（**含 TCPRoute/UDPRoute**）�
 
 | 上游/旧清单 | 本集群 | 原因 |
 |---|---|---|
-| Gateway 写死 `addresses: 192.168.3.110` | **不写 addresses** | 让 Cilium 从 `CiliumLoadBalancerIPPool`（`192.168.3.100-199`）自动分配。写死 IP 一旦与池冲突或换网段就得改一堆文件。查分配结果：`kubectl -n default get gateway cilium-gateway -o wide` |
+| Gateway 写死环境 IP | **只写配置变量 `${CILIUM_GATEWAY_LB_IP}`** | VIP 在 `config.env` 单一入口；`gateway-pool` 以 Service 元数据 selector 让它独占 `/32`，Pangolin/newt target 不随重建漂移。内网 `.120`、机房 `10.10.31.240`；preflight 强制它与 default-pool 分离 |
 | 每个组件一个自己的 Gateway | **共享一个** | 旧清单里有 `meilisearch-gateway`、`observability-web-gateway`、`dragonfly-gateway` 三套并存，每套占一个 LB IP、各自签证书。合并成一个之后：一个 IP、一张泛域名证书，加组件只写 HTTPRoute。 |
 | Terminate 与 Passthrough 放同一个 Gateway | **拆开** | 旧的 `05-public-web-terminate-gateway.yml` 里同时有 `https:443 (HTTPS/Terminate)` 和 `tls:443 (TLS/Passthrough)` —— 同一 Gateway 里两个 listener 抢同一端口不同协议是非法的，Gateway 会 Programmed=False。共享网关只做 Terminate；Passthrough 场景由 L4 组件各自的 Gateway 用**自己的端口**承担。 |
 | TLSRoute `v1alpha2` | **`v1`** | Gateway API v1.6 的 TLSRoute CRD **只 served v1**（`v1alpha2 served=false`）。旧清单里的 `apiVersion: gateway.networking.k8s.io/v1alpha2` 直接 apply 会失败。 |
@@ -67,11 +67,20 @@ kubectl -n default get gateway cilium-gateway -o wide        # PROGRAMMED=True�
 kubectl -n default get certificate global-default-tls-cert   # READY=True
 ```
 
-真验证（**从局域网其他主机**执行；L2 通告的 VIP 节点自访不通是已知行为）：
+真验证分两种池：
+
+- 内网版/机房专属同网段 VIP：从局域网其他主机访问，同时看 ARP 邻居；节点自访不是 L2 路径，只作加分项。
+- 机房当前的跨网段集群内 VIP (`10.10.31.240`)：在 newt Pod 内访问，证明 Pangolin 实际路径能到；
+  同 VLAN 外部主机**本来就不应直达**，因为它不会为跨网段地址发 ARP。
 
 ```bash
 GW=$(kubectl -n default get gateway cilium-gateway -o jsonpath='{.status.addresses[0].value}')
-curl -sk -o /dev/null -w "%{http_code}\n" https://$GW/ -H "Host: probe.dev.test"   # 无路由时 404 = 网关活着
+# 期望等于 config.env 的 CILIUM_GATEWAY_LB_IP
+kubectl -n pangolin exec deploy/newt -- wget -qO- --no-check-certificate \
+  --header='Host: probe.dev.test' "https://$GW/"            # 无匹配路由时 404 = Envoy 活着
+# 有真实 HTTPRoute 后用它的 Host，期望业务状态码而非 404
+kubectl -n pangolin exec deploy/newt -- wget -qO- --no-check-certificate \
+  --header='Host: grafana.dev.test' "https://$GW/api/health"
 echo | openssl s_client -connect $GW:443 -servername probe.dev.test 2>/dev/null \
   | openssl x509 -noout -subject -issuer
 # 期望: subject=O=sumery-mesh-org, CN=dev.test / issuer=CN=my-global-root-ca
@@ -92,4 +101,9 @@ echo | openssl s_client -connect $GW:443 -servername probe.dev.test 2>/dev/null 
   `CILIUM_GATEWAY_API_ALPN="true"` 后重跑 `--only 60-cilium`。
   确认：`kubectl -n kube-system get cm cilium-config -o jsonpath='{.data.enable-gateway-api-alpn}'`。
   （旧集群那条 55 天从未生效的 jaeger GRPCRoute，根因之一就是它。）
-- **节点上 curl VIP 不通**：L2 通告的 ARP 只应答外部主机，节点自访不走该路径，属已知行为。
+- **节点上 curl VIP 不通**：节点自访、Pod 内访问、外部主机访问是三条不同的数据路径，
+  90 阶段把它单独记录为附加观测，不据此判定其它两条的成败；真正的判据是 §5 从 newt Pod 内的实测。
+- **Gateway 显示 Programmed=True 但地址不是固定 VIP / 90 阶段报 `IPAMRequestSatisfied=False`**：
+  `kubectl -n default get svc cilium-gateway-cilium-gateway -o yaml` 看 `io.cilium/lb-ipam-ips` 注解与
+  `status.conditions`；reason `no_pool`/`pool_selector_mismatch` 说明 `gateway-pool` 缺失、disabled 或 selector
+  漂移，`already_allocated` 说明 `.240` 已被别的 Service 拿走。固定请求不会退回 default-pool 随机取址。

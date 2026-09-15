@@ -29,14 +29,22 @@ if [[ -n ${VAULT_ROLE_ID:-} && -n ${VAULT_SECRET_ID:-} ]]; then
 elif kctl -n "$NAMESPACE" get secret vault-approle >/dev/null 2>&1; then
   log_skip "Secret vault-approle 已存在(未传新凭据,保留现值)"
 else
-  log_warn "缺 AppRole 凭据 → ClusterSecretStore 会 NotReady。获取后重跑
+  log_info "无 AppRole 凭据: 不建 VPS Vault 接线(真相源是 OpenBao)。要集群外副本时获取后重跑
   (VPS 的 SSH 坐标见私有仓 docker-deploy 的 vault/README.md;本仓公开,刻意不写):
   ssh <VPS> 'cat /home/docker/vault/approle-eso.json'
   VAULT_ROLE_ID=... VAULT_SECRET_ID=... bash components/external-secrets/install.sh"
 fi
 
 # ---- ClusterSecretStore ----------------------------------------------------
-retry 5 5 kctl apply -f "$DIR/clustersecretstore.yaml"
+# 2026-09-11 定稿: 凭据真相源是集群内 OpenBao(ecommerce TECH-RADAR §4.9), 其 ClusterSecretStore 由
+# components/openbao 建。VPS Vault 这条接线只在显式给了 AppRole 凭据时才建(作集群外副本用, 见 README §3);
+# 否则不建 —— 建了没凭据只会常年 InvalidProviderConfig(机房集群 09-06 到 09-11 就是这样)。
+if kctl -n "$NAMESPACE" get secret vault-approle >/dev/null 2>&1; then
+  retry 5 5 kctl apply -f "$DIR/clustersecretstore.yaml"
+else
+  log_skip "无 vault-approle 凭据, 不建 ClusterSecretStore vault(真相源是 OpenBao; 要集群外副本再注入 AppRole)"
+  kctl delete clustersecretstore vault --ignore-not-found >/dev/null 2>&1 || true
+fi
 
 # ---- 验证(有凭据才有意义) --------------------------------------------------
 if kctl -n "$NAMESPACE" get secret vault-approle >/dev/null 2>&1; then

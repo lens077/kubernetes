@@ -1,0 +1,66 @@
+# 观测与告警链路自身的告警 —— "告警系统坏了谁来告警"。
+# 2026-09-03 新增(集群内替代 node3 Pigsty 的 vmalert/Alertmanager 时补上)。
+#
+# 数据来源: opentelemetry 组件 values.yaml 的 prometheus receiver 抓 vmalert(:8880)、
+# alertmanager(:9093) 与 collector 自身(:8888)。指标名均为两者自带的标准名;
+# counter 经 prometheus receiver → OTLP → VM(usePrometheusNaming) 后保留 _total 后缀(与 hubble_drop_total 同路径)。
+# ⚠️ OTelCollectorExportFailures 用到的三个 otelcol_exporter_send_failed_* 名字随 collector 版本演进过,
+#    上线前按团队规矩先在 VM 查 series 再启用(查不到就改名或先删这条)。
+# ⚠️ 每条规则都必须有 for:(Watchdog 除外——它就是要永远 firing)。
+groups:
+  - name: observability-pipeline
+    interval: 15s
+    rules:
+      - alert: Watchdog
+        # 永远 firing 的"心跳": 它出现在 Alertmanager 里 = vmalert→Alertmanager 这段活着。
+        # Alertmanager 把它路由到 null receiver(不推手机); gatus 查 /api/v2/alerts 验证它在。
+        expr: 'vector(1)'
+        labels: { severity: none, category: observability }
+        annotations:
+          summary: 告警链路心跳(永远 firing, 不推送)
+          description: 这条告警消失说明 vmalert 停止评估或到 Alertmanager 的通知断了。
+
+      - alert: VMAlertNotifierErrors
+        # vmalert → Alertmanager 发送失败(网络/Alertmanager 挂了)。
+        expr: 'increase(vmalert_alerts_send_errors_total[10m]) > 0'
+        for: 10m
+        labels: { severity: critical, category: observability }
+        annotations:
+          summary: vmalert 向 Alertmanager 发送告警失败
+          description: 最近 10 分钟有发送错误且未恢复。检查 observability/alertmanager StatefulSet 与 vmalert 的 -notifier.url。此时所有告警都到不了手机。
+
+      - alert: VMAlertRemoteWriteErrors
+        # remoteWrite 断了 ALERTS_FOR_STATE 就写不回 VM, AlertFiringTooLong 元规则失效, vmalert 重启后 for 状态也丢。
+        expr: 'increase(vmalert_remotewrite_errors_total[10m]) > 0'
+        for: 10m
+        labels: { severity: warning, category: observability }
+        annotations:
+          summary: vmalert remoteWrite 到 VictoriaMetrics 失败
+          description: 告警状态无法持久化。检查 vmalert 的 -remoteWrite.url 与 VM 写入端口。
+
+      - alert: AlertmanagerNotificationFailures
+        # Alertmanager → 告警桥失败(桥挂了/ntfy 不通 → 桥回 502)。
+        expr: 'increase(alertmanager_notifications_failed_total[10m]) > 0'
+        for: 10m
+        labels: { severity: critical, category: observability }
+        annotations:
+          summary: 'Alertmanager 通知失败 (integration={{ $labels.integration }})'
+          description: 最近 10 分钟通知投递失败且未恢复。先 kubectl -n observability logs deploy/alert-bridge 看桥是否收到、ntfy 是否返回非 2xx。
+
+      - alert: AlertmanagerMetricsMissing
+        # 兜底: 抓不到 Alertmanager 自身指标, 上面两条 Alertmanager 规则会安静失效。
+        expr: 'absent(alertmanager_build_info) == 1'
+        for: 10m
+        labels: { severity: warning, category: observability }
+        annotations:
+          summary: 抓不到 Alertmanager 指标
+          description: 连续 10 分钟没有 alertmanager_build_info。检查 otel collector 的 alertmanager 抓取 job 与 Alertmanager Pod。
+
+      - alert: OTelCollectorExportFailures
+        # collector 往后端(VM/VL/VT)写失败 = 数据在丢。三种信号分开看 exporter 标签。
+        expr: 'sum by (exporter) (increase(otelcol_exporter_send_failed_metric_points_total[10m]) or increase(otelcol_exporter_send_failed_log_records_total[10m]) or increase(otelcol_exporter_send_failed_spans_total[10m])) > 0'
+        for: 10m
+        labels: { severity: warning, category: observability }
+        annotations:
+          summary: 'OTel Collector 导出失败 (exporter={{ $labels.exporter }})'
+          description: '后端拒收或不可达。对照 exporter 名(victoriametrics/victorialogs/victoriatraces)分别查对应 Pod 与磁盘(VL/VT 撑满 PVC 会拒写)。'

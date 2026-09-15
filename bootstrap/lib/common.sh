@@ -25,7 +25,13 @@ VERSIONS_LOCK="$STATE_DIR/versions.lock"     # 首次解析后锁定版本, 保�
 MAIN_LOG="$LOG_DIR/install.log"
 
 # shellcheck source=../config.env
-source "$K8S_BASE_DIR/config.env" || { echo "无法加载 $K8S_BASE_DIR/config.env" >&2; exit 1; }
+# K8S_CONFIG_ENV: 从非节点机器(如 Mac)对着另一套集群跑组件脚本/工具时, 指定要加载的 config 文件
+#   (例 K8S_CONFIG_ENV=bootstrap/config.hosting.env bash tools/verify-contracts.sh); 节点上不用。
+_k8s_cfg=${K8S_CONFIG_ENV:-$K8S_BASE_DIR/config.env}
+[[ $_k8s_cfg == /* ]] || _k8s_cfg="$PWD/$_k8s_cfg"
+# shellcheck disable=SC1090
+source "$_k8s_cfg" || { echo "无法加载 $_k8s_cfg" >&2; exit 1; }
+unset _k8s_cfg
 
 # CLI 角色覆写(start.sh --worker): 不改 config.env 即可按工作节点安装;
 # config 里的 NODE_NAME 属于控制面机器, 覆写时节点名取本机 hostname
@@ -35,6 +41,91 @@ if [[ ${K8S_ROLE_OVERRIDE:-} == worker ]]; then
 fi
 
 ASSUME_YES=${ASSUME_YES:-false}              # start.sh --yes 时置 true
+
+# --------------------------- Cilium LB-IPAM 与 L2 通告(解耦) --------------------------
+# 池(CiliumLoadBalancerIPPool)决定 LoadBalancer Service 能否拿到地址; L2 通告决定同链路主机能否
+# ARP 到该地址。只经 newt/Pod 访问的集群内 VIP 只需要池, 不需要在共享 VLAN 上通告。
+#   CILIUM_ENABLE_LB_IPAM: true / false / auto(默认; = Gateway API 或 L2 任一开启即开)
+#   CILIUM_ENABLE_L2_ANNOUNCEMENTS: true / false(开启时必须有池)
+# 三个地址(CILIUM_GATEWAY_LB_IP / CILIUM_LB_POOL_START / _STOP)只有使用者能决定: config.env 没写时,
+# 00-preflight 有终端就询问并存到 $LB_IPAM_ANSWERS(安装器状态目录, 不改 config.env, 重跑自动复用);
+# 无终端则报错退出。
+LB_IPAM_ANSWERS="$STATE_DIR/lb-ipam.env"
+
+lb_ipam_enabled() {
+  case ${CILIUM_ENABLE_LB_IPAM:-auto} in
+    true)    return 0 ;;
+    false)   return 1 ;;
+    auto|"") [[ ${CILIUM_ENABLE_GATEWAY_API:-false} == true || ${CILIUM_ENABLE_L2_ANNOUNCEMENTS:-false} == true ]] ;;
+    *)       die "CILIUM_ENABLE_LB_IPAM 必须是 true / false / auto, 当前: $CILIUM_ENABLE_LB_IPAM" ;;
+  esac
+}
+l2_enabled() { [[ ${CILIUM_ENABLE_L2_ANNOUNCEMENTS:-false} == true ]]; }
+
+# config.env 留空的地址项用询问时保存的答案补上(config.env 显式写了的永远优先)
+load_lb_ipam_answers() {
+  [[ -f $LB_IPAM_ANSWERS ]] || return 0
+  local k v
+  while IFS='=' read -r k v; do
+    [[ $k =~ ^CILIUM_(GATEWAY_LB_IP|LB_POOL_START|LB_POOL_STOP)$ ]] || continue
+    v=${v%\"}; v=${v#\"}
+    [[ -n ${!k:-} ]] || printf -v "$k" '%s' "$v"
+  done < "$LB_IPAM_ANSWERS"
+}
+load_lb_ipam_answers
+
+lb_ipam_addresses_missing() {
+  [[ -z ${CILIUM_GATEWAY_LB_IP:-} || -z ${CILIUM_LB_POOL_START:-} || -z ${CILIUM_LB_POOL_STOP:-} ]]
+}
+
+# 在终端上逐项询问缺失的地址, 校验 IPv4 格式后写入 $LB_IPAM_ANSWERS。无终端返回 1(由调用方报错)。
+# LB_IPAM_TTY 允许测试用文件代替 /dev/tty。
+prompt_lb_ipam_addresses() {
+  local tty=${LB_IPAM_TTY:-/dev/tty} tty_in
+  [[ -n ${LB_IPAM_TTY:-} ]] || has_tty || return 1
+  # 读用独立 fd(顺序消费多行答案), 写用追加(对 /dev/tty 等价于直接写; 对文件不会截断答案)
+  exec {tty_in}<"$tty" || return 1
+  local ip_re='^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'
+  local var desc ans
+  {
+    echo
+    echo "${C_YEL}${I_ASK} Cilium LB-IPAM 需要地址池, 但 config.env 没有填写。这些地址只有你能决定:${C_RST}"
+    echo "  - 共享 Gateway 固定 VIP(单地址, Pangolin/newt 的 target, 之后不会漂移)"
+    echo "  - 其它 LoadBalancer Service 的默认池起止(不能包含上面的 VIP, 不能包含节点 IP)"
+    echo "  开了 L2 通告时它们会在局域网被 ARP 通告, 必须是网络所有者分配给你的地址;"
+    echo "  只经 newt/Pod 访问(L2 关闭)时可用与 LAN/Pod/Service 都不重叠的集群内网段。"
+    echo "  答案保存到 $LB_IPAM_ANSWERS, 重跑自动复用; 想改就改 config.env 或删掉该文件。"
+  } >>"$tty"
+  for var in CILIUM_GATEWAY_LB_IP CILIUM_LB_POOL_START CILIUM_LB_POOL_STOP; do
+    [[ -z ${!var:-} ]] || continue
+    case $var in
+      CILIUM_GATEWAY_LB_IP) desc="共享 Gateway 固定 VIP" ;;
+      CILIUM_LB_POOL_START) desc="默认池起始 IP" ;;
+      CILIUM_LB_POOL_STOP)  desc="默认池结束 IP(含)" ;;
+    esac
+    while true; do
+      printf '%s%s %s (%s): %s' "$C_CYA" "$I_ASK" "$desc" "$var" "$C_RST" >>"$tty"
+      if ! read -r ans <&"$tty_in"; then
+        exec {tty_in}<&-
+        echo "  输入结束, 未得到 $var" >>"$tty"
+        return 1
+      fi
+      [[ $ans =~ $ip_re ]] && break
+      echo "  不是合法的 IPv4 地址: '${ans}'" >>"$tty"
+    done
+    printf -v "$var" '%s' "$ans"
+  done
+  exec {tty_in}<&-
+  mkdir -p "$(dirname "$LB_IPAM_ANSWERS")"
+  {
+    echo "# k8s-installer: 00-preflight 询问得到的 LB-IPAM 地址(config.env 留空时生效; 改 config.env 优先)"
+    echo "CILIUM_GATEWAY_LB_IP=\"$CILIUM_GATEWAY_LB_IP\""
+    echo "CILIUM_LB_POOL_START=\"$CILIUM_LB_POOL_START\""
+    echo "CILIUM_LB_POOL_STOP=\"$CILIUM_LB_POOL_STOP\""
+  } > "$LB_IPAM_ANSWERS"
+  chmod 600 "$LB_IPAM_ANSWERS"
+  log_info "LB-IPAM 地址已记录到 $LB_IPAM_ANSWERS: Gateway=$CILIUM_GATEWAY_LB_IP 默认池=$CILIUM_LB_POOL_START-$CILIUM_LB_POOL_STOP"
+}
 
 # --------------------------- 颜色与图标 -------------------------------------
 if [[ -z ${NO_COLOR:-} ]] && { [[ -t 1 ]] || [[ ${K8S_FORCE_COLOR:-} == 1 ]]; }; then
@@ -515,6 +606,101 @@ terminated_pod_gc_converged() {
   (( count <= KCM_TERMINATED_POD_GC_THRESHOLD ))
 }
 
+# --------------------------- Cilium LB-IPAM / L2 / Gateway 纯校验 ---------------------
+# 输入完整对象 JSON, 每行输出一个问题; 无输出即通过。只比较 CR/Service 字段, 不证明网络可达。
+# 60-cilium 的 l2 步骤、90-verify 与 components/gateway 共用同一套判据(tests/test-l2-policy.sh)。
+#
+# lb_pool_problems <pool json> <期望起> <期望止> [selector 要求]
+#   selector 要求二选一:
+#     <namespace> <service 名>   专属池: serviceSelector.matchLabels 必须同时含两把特殊键
+#     exclude=<service 名>       默认池: serviceSelector.matchExpressions 必须有 NotIn 排除该名字
+#   - blocks 必须恰好一段且起止相等于期望(单地址池起=止)
+#   - spec.disabled 不能为 true(disabled 保留已分配地址但停止新分配)
+#   - 状态: 当前 generation 的 cilium.io/PoolConflict 必须为 False; 条件缺失/过期视为未收敛
+lb_pool_problems() {
+  local json=$1 start=$2 stop=$3 ns=${4:-} svc=${5:-} exclude=""
+  if [[ $ns == exclude=* ]]; then exclude=${ns#exclude=}; ns=""; fi
+  jq -r --arg start "$start" --arg stop "$stop" --arg ns "$ns" --arg svc "$svc" --arg exclude "$exclude" '
+    def problem(p; c): if c then [] else [p] end;
+    (.metadata.name // "?") as $name
+    | (.spec.blocks // []) as $blocks
+    | ([.status.conditions[]? | select(.type == "cilium.io/PoolConflict")] | last) as $conflict
+    | problem("\($name): blocks 应恰好 1 段, 实际 \($blocks | length)"; ($blocks | length) == 1)
+    + problem("\($name): 地址段 \($blocks[0].start // "?")-\($blocks[0].stop // "?") 与期望 \($start)-\($stop) 不一致";
+        ($blocks | length) == 1 and $blocks[0].start == $start and $blocks[0].stop == $stop and ($blocks[0].cidr == null))
+    + problem("\($name): spec.disabled=true, 池已停止分配"; (.spec.disabled // false) != true)
+    + (if $ns == "" then [] else
+        problem("\($name): serviceSelector 未同时限定 namespace=\($ns) 与 name=\($svc)";
+          (.spec.serviceSelector.matchLabels["io.kubernetes.service.namespace"] // "") == $ns
+          and (.spec.serviceSelector.matchLabels["io.kubernetes.service.name"] // "") == $svc)
+      end)
+    + (if $exclude == "" then [] else
+        problem("\($name): serviceSelector 未用 NotIn 排除 \($exclude), 共享 Gateway 的 Service 可能从本池取到非固定地址";
+          any(.spec.serviceSelector.matchExpressions[]?;
+              .key == "io.kubernetes.service.name" and .operator == "NotIn" and ((.values // []) | index($exclude)) != null))
+      end)
+    + problem("\($name): 缺少 cilium.io/PoolConflict 条件(operator 尚未调和)"; $conflict != null)
+    + (if $conflict == null then [] else
+        problem("\($name): PoolConflict=\($conflict.status) (\($conflict.reason // "-"): \($conflict.message // "-"))";
+          $conflict.status == "False")
+        + problem("\($name): PoolConflict 条件 observedGeneration=\($conflict.observedGeneration // "null") 落后于 generation=\(.metadata.generation)";
+          ($conflict.observedGeneration // -1) == .metadata.generation)
+      end)
+    | .[]
+  ' <<<"$json"
+}
+
+# l2_policy_problems <policy json>: loadBalancerIPs 必须为 true, interfaces 非空
+l2_policy_problems() {
+  jq -r '
+    def problem(p; c): if c then [] else [p] end;
+    (.metadata.name // "?") as $name
+    | problem("\($name): spec.loadBalancerIPs 不是 true"; .spec.loadBalancerIPs == true)
+    + problem("\($name): spec.interfaces 为空, 不会在任何网卡应答 ARP"; ((.spec.interfaces // []) | length) > 0)
+    | .[]
+  ' <<<"$1"
+}
+
+# shared_gateway_problems <gateway json> <生成的 Service json 或空串> <期望 VIP>
+#   - Programmed=True 且 observedGeneration 等于当前 generation(旧 generation 的 True 不算)
+#   - status.addresses[0] 等于固定 VIP
+#   - 生成的 Service 必须是 LoadBalancer, 请求注解 io.cilium/lb-ipam-ips 含 VIP,
+#     status.loadBalancer.ingress 含 VIP, 且 cilium.io/IPAMRequestSatisfied=True
+shared_gateway_problems() {
+  local gw_json=$1 svc_json=$2 vip=$3
+  jq -r --arg vip "$vip" '
+    def problem(p; c): if c then [] else [p] end;
+    ([.status.conditions[]? | select(.type == "Programmed")] | last) as $prog
+    | problem("Gateway 缺少 Programmed 条件"; $prog != null)
+    + (if $prog == null then [] else
+        problem("Gateway Programmed=\($prog.status) (\($prog.reason // "-"): \($prog.message // "-"))"; $prog.status == "True")
+        + problem("Gateway Programmed 条件 observedGeneration=\($prog.observedGeneration // "null") 落后于 generation=\(.metadata.generation)";
+          ($prog.observedGeneration // -1) == .metadata.generation)
+      end)
+    + problem("Gateway 地址 \(.status.addresses[0].value // "<none>") 不等于固定 VIP \($vip)";
+        (.status.addresses[0].value // "") == $vip)
+    | .[]
+  ' <<<"$gw_json"
+  if [[ -z $svc_json ]]; then
+    echo "未找到 Cilium 为共享 Gateway 生成的 Service(default/cilium-gateway-cilium-gateway)"
+    return 0
+  fi
+  jq -r --arg vip "$vip" '
+    def problem(p; c): if c then [] else [p] end;
+    ([.status.conditions[]? | select(.type == "cilium.io/IPAMRequestSatisfied")] | last) as $sat
+    | problem("生成的 Service 类型是 \(.spec.type // "?"), 不是 LoadBalancer(hostNetwork 模式会变成 NodePort)"; .spec.type == "LoadBalancer")
+    + problem("生成的 Service 请求注解 io.cilium/lb-ipam-ips=\(.metadata.annotations["io.cilium/lb-ipam-ips"] // "<none>") 不含 \($vip)";
+        ((.metadata.annotations["io.cilium/lb-ipam-ips"] // "") | split(",") | map(gsub("\\s"; "")) | index($vip)) != null)
+    + problem("生成的 Service 实际 LB 地址 \([.status.loadBalancer.ingress[]?.ip] | join(",")) 不含 \($vip)";
+        ([.status.loadBalancer.ingress[]?.ip] | index($vip)) != null)
+    + problem("生成的 Service 缺少 cilium.io/IPAMRequestSatisfied 条件"; $sat != null)
+    + (if $sat == null then [] else
+        problem("IPAMRequestSatisfied=\($sat.status) (\($sat.reason // "-"): \($sat.message // "-"))"; $sat.status == "True")
+      end)
+    | .[]
+  ' <<<"$svc_json"
+}
+
 # 从整条 `kubeadm join <ep> --token <t> --discovery-token-ca-cert-hash <h>` 命令
 # 解析出三个参数并写入 JOIN_* 全局(worker 交互模式粘贴用)
 parse_join_cmd() {
@@ -549,8 +735,36 @@ state_done() { [[ -f "$STATE_DIR/state/${STAGE_ID}:$1.done" ]]; }
 mark_done()  { ensure_dirs; touch "$STATE_DIR/state/${STAGE_ID}:$1.done"; }
 state_reset() {  # state_reset [stage前缀|all]
   local what=${1:-all}
-  if [[ $what == all ]]; then rm -f "$STATE_DIR/state/"*.done 2>/dev/null || true
-  else rm -f "$STATE_DIR/state/${what}"*.done 2>/dev/null || true; fi
+  if [[ $what == all ]]; then
+    rm -f "$STATE_DIR/state/"*.done "$STATE_DIR/components.selected" 2>/dev/null || true
+  else
+    rm -f "$STATE_DIR/state/${what}"*.done 2>/dev/null || true
+    if [[ $what == 80-components ]]; then
+      rm -f "$STATE_DIR/components.selected"
+    fi
+  fi
+}
+
+# 把期望状态摘要收进步骤状态模块：输入变化时只使指定下游步骤失效，避免调用方
+# 依赖「记得手工 reset 整个阶段」这一隐含接口。返回 0 表示指纹变化，1 表示未变。
+state_reconcile_fingerprint() {  # state_reconcile_fingerprint <name> <fingerprint> <step...>
+  local name=$1 current=$2
+  shift 2
+  [[ -n $name && -n $current && $# -gt 0 ]] || return 2
+  ensure_dirs
+
+  local file="$STATE_DIR/state/${STAGE_ID}:${name}.fingerprint.done"
+  local previous="" key tmp
+  [[ -f $file ]] && previous=$(<"$file")
+  [[ $previous != "$current" ]] || return 1
+
+  for key in "$@"; do
+    rm -f "$STATE_DIR/state/${STAGE_ID}:$key.done"
+  done
+  tmp="${file}.tmp.$$"
+  printf '%s' "$current" > "$tmp"
+  mv -f "$tmp" "$file"
+  return 0
 }
 
 # --------------------------- 错误陷阱 ---------------------------------------
@@ -861,7 +1075,7 @@ containerd_tmp_proxy_on() {
 [Service]
 Environment="HTTP_PROXY=$PROXY_URL"
 Environment="HTTPS_PROXY=$PROXY_URL"
-Environment="NO_PROXY=localhost,127.0.0.1,$NODE_IP,$POD_CIDR,$SERVICE_CIDR,.cluster.local,10.0.0.0/8,192.168.0.0/16"
+Environment="NO_PROXY=localhost,127.0.0.1,$NODE_IP,$POD_CIDR,$SERVICE_CIDR,.cluster.local,10.0.0.0/8,192.168.0.0/16${CONTAINERD_NO_PROXY_EXTRA:+,$CONTAINERD_NO_PROXY_EXTRA}"
 EOF
   systemctl daemon-reload
   systemctl restart containerd

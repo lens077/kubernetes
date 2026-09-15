@@ -1,0 +1,81 @@
+# 示例: 把 CNPG 的备份新鲜度接到 healthchecks 死人开关(与 vmalert 的 CNPGBackupStale 互为独立的两道)。
+# 用法:
+#   1. 在 healthchecks 面板建一个 check(期望周期 1 天, 宽限 2h), 拿到 ping URL 里的 <uuid>;
+#   2. kubectl -n postgresql create secret generic healthchecks-cnpg-backup --from-literal=uuid=<uuid>
+#   3. kubectl apply -f 本文件
+# 逻辑: 每天在 ScheduledBackup 之后运行, 找最近一个 phase=completed 的 Backup;
+#       24h 内有 → ping 成功; 没有 → ping /fail(healthchecks 立刻告警, 不用等宽限期)。
+# node3 时代的等价物是 postgres 用户 crontab 里的 pg-backup-healthchecked(/start → 备份 → 成功 ping / 失败 /fail)。
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: backup-ping
+  namespace: postgresql
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: backup-ping
+  namespace: postgresql
+rules:
+  - apiGroups: ["postgresql.cnpg.io"]
+    resources: ["backups"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: backup-ping
+  namespace: postgresql
+subjects:
+  - kind: ServiceAccount
+    name: backup-ping
+roleRef:
+  kind: Role
+  name: backup-ping
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: cnpg-backup-ping
+  namespace: postgresql
+spec:
+  schedule: "30 3 * * *"          # ScheduledBackup 之后(示例假设备份在 01:00)
+  timeZone: Asia/Shanghai
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      template:
+        spec:
+          serviceAccountName: backup-ping
+          restartPolicy: Never
+          containers:
+            - name: check
+              image: docker.io/alpine/k8s:1.36.3       # 任何带 kubectl + jq + curl 的镜像都行(tag 以 hub 实际存在为准)
+              env:
+                - name: HC_UUID
+                  valueFrom:
+                    secretKeyRef: { name: healthchecks-cnpg-backup, key: uuid }
+                - name: HC_BASE
+                  value: http://healthchecks.ops.svc.cluster.local:8000/ping
+              command: ["/bin/sh", "-ec"]
+              args:
+                - |
+                  curl -fsS -m 10 --retry 2 "$HC_BASE/$HC_UUID/start" >/dev/null || true
+                  # 用 jq 解析时间戳(busybox date 不认 ISO8601); stoppedAt 形如 2026-09-03T01:00:02Z
+                  latest=$(kubectl -n postgresql get backup -o json \
+                    | jq -r '[.items[] | select(.status.phase=="completed") | .status.stoppedAt | sub("\\.[0-9]+";"") | fromdateiso8601] | max // empty')
+                  now=$(date +%s)
+                  if [ -n "$latest" ] && [ $((now - latest)) -lt 86400 ]; then
+                    echo "latest completed backup epoch: $latest (fresh)"
+                    curl -fsS -m 10 --retry 2 "$HC_BASE/$HC_UUID" >/dev/null
+                  else
+                    echo "no completed CNPG backup in the last 24h (latest=$latest)"
+                    curl -fsS -m 10 --retry 2 -d "no completed backup in 24h" "$HC_BASE/$HC_UUID/fail" >/dev/null
+                    exit 1
+                  fi

@@ -1,0 +1,45 @@
+# Reloader —— Secret/ConfigMap 变更 → 引用它的工作负载自动滚动
+# 取舍见 README §3。改这里之前先看 §3 表格里「为什么」那一列。
+image:
+  repository: ghcr.io/stakater/reloader   # 官方 ghcr, 多架构(arm64 实测 2026-09-11)
+
+reloader:
+  # 只对显式加了注解的工作负载生效(reloader.stakater.com/auto 或
+  # secret.reloader.stakater.com/reload)。全局自动会把 CNPG/ESO/cert-manager
+  # 自己维护的 Secret 也算进去, 证书续期就滚一遍 Pod —— 不接受。
+  autoReloadAll: false
+  # 集群里装了 Argo Rollouts(CRD 在), 让 Rollout 也能被滚动
+  isArgoRollouts: true
+  # 只滚 Deployment/StatefulSet/DaemonSet/Rollout; Job/CronJob 引用的 Secret 变了不该重跑任务
+  ignoreJobs: true
+  ignoreCronJobs: true
+  # 创建/删除 Secret 不触发: ESO 首次物化时工作负载还没起, 删除时更不该滚
+  reloadOnCreate: false
+  reloadOnDelete: false
+  # 默认策略 = 给 Pod 模板打 STAKATER_*_LAST_RELOADED 环境变量(变了就滚动);
+  # annotations 策略改 Pod 注解, 与 kubectl rollout restart 同构, 不污染容器 env
+  reloadStrategy: annotations
+  # 自身重启后不重放一遍(否则 Reloader 升级 = 全集群带注解工作负载滚一遍)
+  syncAfterRestart: false
+  # 控制面 Secret 所在 ns 一律不看
+  ignoreNamespaces: "kube-system,cert-manager,external-secrets,openbao,trust-system"
+  watchGlobally: true
+  logFormat: json
+  logLevel: info
+  enableHA: false
+  readOnlyRootFileSystem: true
+  deployment:
+    replicas: 1
+    containerSecurityContext:
+      allowPrivilegeEscalation: false
+      readOnlyRootFilesystem: true
+      capabilities:
+        drop: [ALL]
+    resources:
+      requests: { cpu: 10m, memory: 32Mi }
+      limits: { cpu: 100m, memory: 128Mi }
+    pod:
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: "/metrics"

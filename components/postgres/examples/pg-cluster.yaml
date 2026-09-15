@@ -1,5 +1,5 @@
-# 数据库实例示例。算子装完后按需 apply（规格差异大，不自动创建）：
-#   kubectl create ns postgresql && kubectl apply -f pg-cluster.yaml
+# pg-main 实例模板。默认由 postgres/install.sh 渲染并自动应用；
+# PG_CREATE_MAIN_CLUSTER=false 时才由运维人员按需手工应用。
 #
 # 命名空间沿用既有习惯 postgresql。旧的 bitnami postgresql-ha 方案已由 CNPG 取代
 # （bitnami 镜像 2025 年起受限，且 CNPG 不需要 pgpool/repmgr 这些附加组件）。
@@ -9,7 +9,7 @@ metadata:
   name: pg-main
   namespace: postgresql
 spec:
-  instances: 1                       # 两节点集群，多副本的价值有限；要 HA 先加节点
+  instances: 1                       # dev 资源预算取单实例；生产 HA 需独立规划 ≥3 实例与故障域
   certificates:
     serverAltDNSNames:
       - pg.dev.test                  # 对外域名进服务端证书 SAN。CNPG 默认只签各 Service 的

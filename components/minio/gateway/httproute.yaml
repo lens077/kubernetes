@@ -13,7 +13,7 @@ spec:
       sectionName: http
   hostnames:
     - "${HOSTNAME}"
-    - "s3.${CLUSTER_DOMAIN}"
+    - "silo-api.apikv.com"
   rules:
     - filters:
         - type: RequestRedirect
@@ -54,7 +54,7 @@ spec:
       namespace: default
       sectionName: https
   hostnames:
-    - "s3.${CLUSTER_DOMAIN}"
+    - "silo-api.apikv.com"
   rules:
     - matches:
         - path:

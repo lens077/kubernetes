@@ -1,0 +1,104 @@
+# CNPG(pg-main)告警 —— 对应 node3 Pigsty pgsql.yml 里 16 条 PG 告警的语义(2026-09-03 收割,
+# 见 PIGSTY-HARVEST-2026-09-03.md §5.3), 指标换成 CNPG 实例自带的 cnpg_* 系列。
+#
+# 数据来源: opentelemetry 组件 values.yaml 的 prometheus receiver `cnpg` job 抓每个
+# 实例 Pod 的 :9187/metrics(label cnpg.io/podRole=instance), 写入 VictoriaMetrics。
+#
+# ⚠️ 指标名来自 CNPG 的 default-monitoring 查询清单(cnpg_collector_* / cnpg_pg_* / cnpg_backends_*)。
+#    团队规矩(ecommerce-k8s.yml 头部): 上线前逐个在 VM 里查到 series 再启用;
+#    查不到就先修采集, 不许凭记忆改名。兜底规则 CNPGMetricsMissing 保证"没数据"会红而不是安静。
+# ⚠️ 每条规则都必须有 for:。
+groups:
+  - name: cnpg
+    interval: 15s
+    rules:
+      - alert: CNPGMetricsMissing
+        # 兜底: 采集断了本文件其它规则会全部变成"无数据"。
+        expr: 'absent(cnpg_collector_up) == 1'
+        for: 10m
+        labels: { severity: critical, category: database }
+        annotations:
+          summary: CNPG 指标停止写入 VictoriaMetrics
+          description: 连续 10 分钟没有 cnpg_collector_up。检查 postgresql 命名空间的实例 Pod 是否 Running、otel collector 的 cnpg 抓取 job 与到 VM 的写入。此时本文件所有数据库告警均已失效。
+
+      - alert: PostgresDown
+        # Pigsty: PostgresDown / PgExporterDown。cnpg_collector_up 由实例 Pod 自带的 exporter 上报。
+        expr: 'cnpg_collector_up == 0'
+        for: 1m
+        labels: { severity: critical, category: database }
+        annotations:
+          summary: 'PostgreSQL 实例不可用 {{ $labels.pod }}'
+          description: 实例进程未就绪超过 1 分钟。先看 kubectl -n postgresql get cluster pg-main 与 describe pod；单实例集群此时业务写入已中断。
+
+      - alert: PostgresRestarted
+        # Pigsty: PostgresRestart。postmaster 启动时间在 10 分钟内变化 = 发生过重启。
+        expr: 'changes(cnpg_pg_postmaster_start_time[10m]) > 0'
+        for: 1m
+        labels: { severity: warning, category: database }
+        annotations:
+          summary: 'PostgreSQL 实例最近重启 {{ $labels.pod }}'
+          description: 正常的参数变更(shared_buffers 等)也会触发滚动重启；先对照 CNPG 事件区分"计划内"与"崩溃"。
+
+      - alert: PostgresReplicationLag
+        # Pigsty: PostgresReplicationLag(阈值 30s)。单实例时该指标不存在, 规则自然不触发。
+        expr: 'cnpg_pg_replication_lag > 30'
+        for: 5m
+        labels: { severity: warning, category: database }
+        annotations:
+          summary: '从库复制延迟 {{ $value | printf "%.0f" }}s {{ $labels.pod }}'
+          description: 复制延迟超过 30 秒持续 5 分钟。看从库 IO/网络与主库 WAL 生成速率；延迟期间 -ro 服务读到的是旧数据。
+
+      - alert: PostgresXidWrapAround
+        # Pigsty: PostgresXidWarpAround。阈值与 autovacuum_freeze_max_age(1e9)对齐: 超过它 autovacuum 已经在强制冻结。
+        expr: 'max by (pod) (cnpg_pg_database_xid_age) > 1000000000'
+        for: 15m
+        labels: { severity: critical, category: database }
+        annotations:
+          summary: '事务 ID 年龄超过 10 亿 {{ $labels.pod }}'
+          description: 距事务 ID 回卷保护停库已不远。立刻对 age 最大的库做 VACUUM FREEZE，并检查是否有长事务/失效复制槽阻止冻结。
+
+      - alert: PostgresConnUsageHigh
+        # Pigsty: PostgresConnUsageHigh(80%)。max_connections 来自 cnpg_pg_settings_setting{name="max_connections"}。
+        expr: 'sum by (pod) (cnpg_backends_total) / on (pod) cnpg_pg_settings_setting{name="max_connections"} > 0.8'
+        for: 5m
+        labels: { severity: warning, category: database }
+        annotations:
+          summary: '连接数占用超过 80% {{ $labels.pod }}'
+          description: 业务应走 Pooler(事务池)而不是直连；先查是谁在直连(pg_stat_activity 的 application_name/client_addr)，再考虑调 max_connections。
+
+      - alert: PostgresIdleInTransaction
+        # Pigsty: PostgresIdleInXact。cnpg_backends_max_tx_duration_seconds 按 state 分组, 取 idle in transaction。
+        expr: 'max by (pod) (cnpg_backends_max_tx_duration_seconds{state="idle in transaction"}) > 300'
+        for: 5m
+        labels: { severity: warning, category: database }
+        annotations:
+          summary: '存在超过 5 分钟的 idle-in-transaction 会话 {{ $labels.pod }}'
+          description: 事务开着不提交会挡住 autovacuum 并持有锁。实例参数 idle_in_transaction_session_timeout=10min 会强杀，但更该找到是哪个服务泄漏了事务。
+
+      - alert: PostgresWALArchiveFailing
+        # Pigsty 没有等价规则(pgbackrest 走死人开关); CNPG 的 WAL 归档失败会让备份 PITR 断链。
+        expr: 'increase(cnpg_pg_stat_archiver_failed_count[15m]) > 0'
+        for: 15m
+        labels: { severity: critical, category: database }
+        annotations:
+          summary: 'WAL 归档持续失败 {{ $labels.pod }}'
+          description: 15 分钟内有归档失败且未恢复。查对象存储凭据/网络(kubectl -n postgresql logs <pod> | grep -i archive)；归档断了等于备份的恢复点在倒退。
+
+      - alert: CNPGBackupStale
+        # 备份新鲜度的第一道: 最近一次可用备份超过 26h(每日 ScheduledBackup + 2h 余量)。
+        # 第二道是 healthchecks 死人开关(备份 CronJob ping), 两道互相独立。
+        expr: 'time() - max by (cnpg_cluster) (cnpg_collector_last_available_backup_timestamp) > 26 * 3600'
+        for: 30m
+        labels: { severity: critical, category: backup }
+        annotations:
+          summary: 'CNPG 集群 {{ $labels.cnpg_cluster }} 超过 26 小时没有可用备份'
+          description: 检查 ScheduledBackup 与最近的 Backup 对象状态(kubectl -n postgresql get backup)。没有备份的数据库不算生产库。
+
+      - alert: CNPGNoBackupEver
+        # 集群跑起来了但从来没成功备份过(指标不存在)。只在启用了备份的集群上才有意义, 未配备份前保持 warning。
+        expr: 'cnpg_collector_up == 1 unless on (cnpg_cluster) cnpg_collector_last_available_backup_timestamp'
+        for: 6h
+        labels: { severity: warning, category: backup }
+        annotations:
+          summary: 'CNPG 集群 {{ $labels.cnpg_cluster }} 没有任何可用备份'
+          description: 6 小时内没有出现过 last_available_backup 指标。要么备份没配(components/postgres README 已承认这是缺口)，要么第一次备份一直失败。

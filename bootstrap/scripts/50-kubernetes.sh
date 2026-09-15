@@ -355,7 +355,10 @@ run_kubeadm_init() {
   if [[ -f /etc/kubernetes/admin.conf ]] && kctl get --raw /readyz &>/dev/null; then
     log_info "检测到健康的现有集群, 跳过 kubeadm init"
   else
-    if [[ -f /etc/kubernetes/admin.conf ]] || [[ -n $(ls -A /etc/kubernetes/manifests 2>/dev/null) ]]; then
+    # 残留判据 = 有 admin.conf 或有静态 Pod 清单(*.yaml)。不能用 ls -A: kubelet 1.36 的 deb 包自带
+    # 占位点文件 /etc/kubernetes/manifests/.kubelet-keep, 会把全新机器误判成残留集群(2026-09-06 node4 实测)。
+    if [[ -f /etc/kubernetes/admin.conf ]] \
+       || [[ -n $(find /etc/kubernetes/manifests -maxdepth 1 -name '*.yaml' -print -quit 2>/dev/null) ]]; then
       confirm_danger "检测到不健康或残留的集群数据(/etc/kubernetes), 执行 kubeadm reset 后重新初始化? etcd 数据将清空" \
         "reset-cluster" || die "存在残留集群数据, 未确认清理, 中止。手动处理: kubeadm reset -f 后重跑"
       kubeadm reset -f

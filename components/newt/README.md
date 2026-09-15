@@ -8,7 +8,8 @@
 ```
 公网用户 ──HTTPS──> node1 VPS(114.132.233.129)     ← Pangolin + Traefik
                         │ WireGuard(隧道由集群侧发起)
-                        └──> 本集群 newt ──> cilium-gateway(10.99.145.85:443) ──> 各服务
+                        └──> 本集群 newt ──> Cilium Gateway 固定 VIP:443 ──> HTTPRoute ──> Service/Pod
+                                         └──> 10.10.21.161|162|163:<端口> ──> node4|5|3 节点服务
 ```
 
 **关键性质：局域网侧全程只出不进** —— newt 不监听任何端口，路由器不需要做端口映射，
@@ -48,10 +49,21 @@
    kubectl patch httproute <name> -n <ns> --type=json \
      -p='[{"op":"add","path":"/spec/hostnames/-","value":"xxx.apikv.com"}]'
    ```
-2. Pangolin 面板建资源：subdomain `xxx`，site 选本组件对应的那个，
-   **target `10.99.145.85:443` 走 https**。
+2. Pangolin 面板建资源：subdomain `xxx`，site 选本组件对应的那个，target 用共享 Gateway 的**固定 VIP**：
+   ```bash
+   # 内网版默认 192.168.3.120；机房版默认 10.10.31.240；以运行配置为准
+   source bootstrap/config.env
+   echo "https://${CILIUM_GATEWAY_LB_IP}:443"
+   ```
+   不再写会随重建变化的 Service ClusterIP。Gateway manifest 用 `spec.addresses` 钉住
+   `CILIUM_GATEWAY_LB_IP`；Cilium 的 `gateway-pool` 让该 Service 独占 `/32`，preflight 验证它不与
+   给其它 LoadBalancer 的 default-pool 重叠。
 
-> ⚠️ **target 必须走 443/https**：本仓的 HTTPRoute 都带 `sectionName: https`，
+直接暴露节点服务不经过 HTTPRoute：Pangolin resource 的 target 填节点内网 IP 与真实端口，例如
+`10.10.21.161:<port>` / `.162:<port>` / `.163:<port>`。这仍通过 newt 隧道，节点不需要新增公网映射；
+只暴露确实需要的端口，kubelet/etcd/Cilium metrics 等管理端口不应建资源。
+
+> ⚠️ HTTPRoute **target 必须走 443/https**：本仓的 HTTPRoute 都带 `sectionName: https`，
 > 路由只挂在 443 listener 上，**80 端口上没有任何路由，envoy 对一切 Host 返 404**。
 > 判别 404 来源：看响应头有没有 `server: envoy`。
 
@@ -89,9 +101,9 @@ curl -s -b <cookie> https://pangolin.apikv.com/api/v1/org/main/sites \
 - **secret 丢了只能重建站点**：面板不回显已有站点的 secret。本组件把凭据存进
   `$STATE_DIR/creds/newt-{id,secret}`，重装/重跑自动复用；
   但那是本机状态，换机器要么带着 creds 走，要么在面板重开一个站点。
-- **旧集群的站点不能直接复用**：站点在面板侧还在（`k8s`，siteId 3），但 secret 取不回，
-  且它的 target 指向**旧集群已失效的 ClusterIP**（`10.97.94.118`）。
-  重建集群后新建站点、再把资源的 target 改到新 ClusterIP，比抢救旧站点省事。
+- **旧资源不能继续指向 ClusterIP**：ClusterIP 随重建变化（旧值 `10.97.94.118` 已失效）。
+  2026-09-03 已从 node3 收割站点凭据，可以复用这份 site（确保旧 newt 进程先下线，避免互相顶替）；
+  面板资源 target 统一改成固定 `CILIUM_GATEWAY_LB_IP:443`，以后重建不再改地址。
 - **凭据不入库**：`newt-credentials` Secret 由 install.sh 从 creds 生成，manifest 里只有引用。
 - **`auth-daemon must be run as root` 是可忽略的 WARN**：那是 newt 的 SSH 认证附加功能，
   与隧道无关；本组件刻意不给 root。

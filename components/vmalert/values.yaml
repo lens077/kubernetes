@@ -1,0 +1,36 @@
+# vmalert —— 规则评估。规则文件在 rules/*.yml, 由 install.sh 装进 ConfigMap vmalert-rules
+# (chart 会把它整体挂到 /config), 这里只配"从哪读、往哪写、报给谁"。
+# 取值沿用 node3 Pigsty(2026-09-03 收割): evaluationInterval 10s, remoteRead/Write 回 VM。
+server:
+  fullnameOverride: vmalert
+  replicaCount: 1
+  datasource:
+    url: http://vm-single-victoria-metrics-single-server.victoriametrics.svc.cluster.local:8428
+  # remoteWrite 必开: ALERTS / ALERTS_FOR_STATE 写回 VM, AlertFiringTooLong 元规则靠它;
+  # remoteRead 让 vmalert 重启后恢复 for 状态, 不会把所有 pending 重新数一遍。
+  remoteWrite:
+    url: http://vm-single-victoria-metrics-single-server.victoriametrics.svc.cluster.local:8428
+  remoteRead:
+    url: http://vm-single-victoria-metrics-single-server.victoriametrics.svc.cluster.local:8428
+  notifier:
+    url: http://alertmanager.observability.svc.cluster.local:9093
+  configMap: vmalert-rules        # 用现成 ConfigMap, chart 不再自己生成 alert-rules.yaml
+  extraArgs:
+    envflag.enable: true
+    envflag.prefix: VM_
+    loggerFormat: json
+    evaluationInterval: 10s
+    rule:
+      - /config/*.yml             # ConfigMap 的每个 key 一个文件; 通配符由 vmalert 自己展开
+    external.url: https://${HOSTNAME}
+    # 告警里带上集群名, 多集群共用一个 ntfy topic 时分得清来源
+    external.label:
+      - cluster=${CLUSTER_DOMAIN}
+  resources:
+    requests: { cpu: 20m, memory: 64Mi }
+    limits: { memory: 256Mi }
+  service:
+    type: ClusterIP
+
+alertmanager:
+  enabled: false                  # 用独立的 alertmanager 组件(prometheus-community chart), 不用子 chart

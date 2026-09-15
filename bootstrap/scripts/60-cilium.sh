@@ -12,6 +12,7 @@ source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." &>/dev/null && pwd)/lib/c
 
 ensure_versions
 VALUES_FILE="$K8S_FILES_DIR/cilium-values.yaml"
+POOLS_FILE="$K8S_FILES_DIR/cilium-lb-ipam.yaml"
 L2_FILE="$K8S_FILES_DIR/cilium-l2.yaml"
 
 cilium_cli() { KUBECONFIG=/etc/kubernetes/admin.conf with_proxy cilium "$@"; }
@@ -44,7 +45,20 @@ verify_gateway_api_crds() {
 }
 
 # --- 3. 生成 helm values(按 config.env + 内核能力) -----------------------------------
+validate_cilium_tuning() {
+  awk -v ratio="$CILIUM_BPF_MAP_DYNAMIC_SIZE_RATIO" \
+    'BEGIN { exit !(ratio > 0 && ratio <= 1) }' \
+    || die "CILIUM_BPF_MAP_DYNAMIC_SIZE_RATIO 必须在 (0,1] 内"
+  [[ $CILIUM_BPF_MAP_RESIZE_APPROVED == true || $CILIUM_BPF_MAP_RESIZE_APPROVED == false ]] \
+    || die "CILIUM_BPF_MAP_RESIZE_APPROVED 必须是 true 或 false"
+  [[ $CILIUM_OPERATOR_REPLICAS =~ ^[1-9][0-9]*$ ]] \
+    || die "CILIUM_OPERATOR_REPLICAS 必须是正整数"
+  [[ $CILIUM_K8S_CLIENT_QPS =~ ^[1-9][0-9]*$ && $CILIUM_K8S_CLIENT_BURST =~ ^[1-9][0-9]*$ ]] \
+    || die "CILIUM_K8S_CLIENT_QPS/BURST 必须是正整数"
+}
+
 gen_cilium_values() {
+  validate_cilium_tuning
   # 内核能力门控
   local host_legacy=false bbr=false
   kernel_ge 5.10 || { host_legacy=true; log_warn "内核<5.10, 回退 legacy host routing"; }
@@ -125,16 +139,30 @@ tunnelProtocol: vxlan"
   if [[ $CILIUM_ENABLE_HUBBLE == true ]]; then
     hubble_block="hubble:
   enabled: true
+  eventBufferCapacity: \"$CILIUM_HUBBLE_EVENT_BUFFER_CAPACITY\"
   metrics:
+    enableOpenMetrics: true
     enabled:
-      - dns
       - drop
+      - dns:query;ignoreAAAA
       - tcp
       - flow
       - icmp
-      - httpV2:exemplars=true;labelsContext=source_namespace,destination_namespace,traffic_direction
+  redact:
+    enabled: true
+    http:
+      urlQuery: true
+      headers:
+        deny:
+          - Authorization
+          - Cookie
+          - Set-Cookie
+          - X-API-Key
   relay:
     enabled: true
+    tls:
+      server:
+        enabled: true
   ui:
     enabled: $CILIUM_ENABLE_HUBBLE_UI"
   fi
@@ -158,6 +186,17 @@ kubeProxyReplacement: "true"
 k8sServiceHost: $NODE_IP
 k8sServicePort: 6443
 
+# 三节点集群每次只下线一个 agent，并要求新版至少稳定 10 秒后再继续。
+minReadySeconds: 10
+updateStrategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxUnavailable: 1
+resources:
+  requests:
+    cpu: $CILIUM_AGENT_CPU_REQUEST
+    memory: $CILIUM_AGENT_MEMORY_REQUEST
+
 # 配置变更(helm upgrade)后自动滚动重启, 免手工 rollout restart
 rollOutCiliumPods: true
 # 节点注解 cilium 状态, 便于排障
@@ -178,14 +217,14 @@ bpf:
   masquerade: true
   hostLegacyRouting: $host_legacy
 $tproxy_line
-  # 允许集群外主机访问 ClusterIP(配合到 Pod/Service 网段的路由使用)
-  lbExternalClusterIP: true
-  # 官方性能调优配方三件套: 每 CPU 分片 LRU 连接表 + 大表上限(8%内存) + 按需分配
-  # (上限不是即时占用; 三者配套, 勿单独改 preallocateMaps=true)
+  # 外部入口统一走 LoadBalancer/Gateway；没有 Service CIDR 外部路由时保持关闭。
+  lbExternalClusterIP: false
+  # 每 CPU 分片 LRU 连接表 + 动态 map 比例 + 按需分配。比例必须结合节点内存和
+  # cilium_bpf_map_pressure 调整；改变比例会重建 CT/NAT map、打断现有长连接。
   preallocateMaps: false
   distributedLRU:
     enabled: true
-  mapDynamicSizeRatio: 0.08
+  mapDynamicSizeRatio: $CILIUM_BPF_MAP_DYNAMIC_SIZE_RATIO
 $netkit_line
 
 # CiliumEndpointSlice: 批量化 endpoint 上报, 降低 apiserver/etcd 压力
@@ -195,15 +234,10 @@ ciliumEndpointSlice:
 pmtuDiscovery:
   enabled: true
 
-# 以下三项在 kubeProxyReplacement=true 下已隐含开启, 显式写出仅为自文档
+# socketLB 仍是有效键；NodePort/HostPort/sessionAffinity 由 KPR 能力提供，
+# Cilium 1.20 chart 已没有对应显式开关键，不写无效 values。
 socketLB:
   enabled: true
-nodePort:
-  enabled: true
-hostPort:
-  enabled: true
-# Service ClientIP 会话亲和
-sessionAffinity: true
 
 # 数据面网卡显式钉住(自动探测结果; 多网卡在 config.env 的 CILIUM_DEVICES 指定)
 devices:
@@ -211,6 +245,8 @@ $devices_yaml
 
 loadBalancer:
   algorithm: $CILIUM_LB_ALGORITHM
+  # 让 trafficDistribution: PreferSameNode 生效；用于 Spegel 的本节点优先镜像回源。
+  serviceTopology: true
   # hybrid: TCP 走 DSR(保源IP/回程少一跳), UDP 走 SNAT(避开分片坑)
   mode: $lb_mode
   # best-effort: 网卡支持 XDP 才启用加速, 不支持自动回退
@@ -241,12 +277,10 @@ ingressController:
 
 l2announcements:
   enabled: $CILIUM_ENABLE_L2_ANNOUNCEMENTS
-externalIPs:
-  enabled: true
-# L2 通告的租约续期依赖较高的 apiserver 客户端速率
+# L2 通告的租约续期依赖较高的 apiserver 客户端速率。
 k8sClientRateLimit:
-  qps: 50
-  burst: 100
+  qps: $CILIUM_K8S_CLIENT_QPS
+  burst: $CILIUM_K8S_CLIENT_BURST
 
 # 未使用 mesh mTLS(SPIFFE), 裁掉相关机制
 authentication:
@@ -263,16 +297,109 @@ prometheus:
   enabled: true
 
 operator:
-  # 单控制面只跑一个 operator 副本, 否则第二副本永远 Pending(chart 默认 2)
-  replicas: 1
+  replicas: $CILIUM_OPERATOR_REPLICAS
   rollOutPods: true
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+    maxUnavailable: null
+  resources:
+    requests:
+      cpu: $CILIUM_OPERATOR_CPU_REQUEST
+      memory: $CILIUM_OPERATOR_MEMORY_REQUEST
   prometheus:
     enabled: true
+
+envoy:
+  resources:
+    requests:
+      cpu: $CILIUM_ENVOY_CPU_REQUEST
+      memory: $CILIUM_ENVOY_MEMORY_REQUEST
 EOF
 }
 verify_cilium_values() { [[ -s $VALUES_FILE ]] && grep -q 'kubeProxyReplacement: "true"' "$VALUES_FILE"; }
 
-# --- 3.5 预拉 Cilium 镜像(quay.io 直连很慢; 代理在线则临时借道, 拉完即撤) -----------------
+cilium_desired_fingerprint() {
+  local values_sha
+  values_sha=$(sha256sum "$VALUES_FILE" | awk '{print $1}')
+  # LB-IPAM/L2 CR 不在 Helm values 里；不把它们纳入指纹，改池后 l2.done 会错误保留，
+  # 60 阶段看似成功但集群仍用旧池(2026-09-04 机房适配深查发现)。Gateway 固定 VIP 也放进来，
+  # 让改入口地址时至少重跑 L2/连通性步骤并在日志里显式暴露变化。
+  local lbipam=false
+  lb_ipam_enabled && lbipam=true
+  printf 'cilium=%s\nvalues=%s\nl2=%s\nlbipam=%s\npool=%s-%s\ngateway=%s\n' \
+    "$CILIUM_V" "$values_sha" "$CILIUM_ENABLE_L2_ANNOUNCEMENTS" "$lbipam" \
+    "$CILIUM_LB_POOL_START" "$CILIUM_LB_POOL_STOP" "$CILIUM_GATEWAY_LB_IP" \
+    | sha256sum | awk '{print $1}'
+}
+
+reconcile_cilium_apply_state() {
+  local current rc=0
+  current=$(cilium_desired_fingerprint)
+  state_reconcile_fingerprint desired "$current" preflight prepull helm wait pools l2 conn || rc=$?
+  case $rc in
+    0) log_info "Cilium 版本或 values 指纹已变化，下游应用步骤自动失效" ;;
+    1) log_info "Cilium 版本与 values 指纹未变化，保留已完成的下游步骤" ;;
+    *) die "无法更新 Cilium 期望状态指纹" ;;
+  esac
+}
+
+verify_cilium_apply_state() {
+  local file="$STATE_DIR/state/60-cilium:desired.fingerprint.done"
+  [[ -f $file && $(<"$file") == "$(cilium_desired_fingerprint)" ]]
+}
+
+guard_bpf_map_resize() {
+  local live
+  live=$(kctl -n kube-system get configmap cilium-config \
+    -o jsonpath='{.data.bpf-map-dynamic-size-ratio}' 2>/dev/null || true)
+  [[ -n $live && $live != "$CILIUM_BPF_MAP_DYNAMIC_SIZE_RATIO" ]] || return 0
+  if [[ $CILIUM_BPF_MAP_RESIZE_APPROVED != true ]]; then
+    die "BPF map 比例将从 $live 改为 $CILIUM_BPF_MAP_DYNAMIC_SIZE_RATIO；先采集至少 24h 基线并安排维护窗口，再把 CILIUM_BPF_MAP_RESIZE_APPROVED=true"
+  fi
+  log_warn "已显式批准 BPF map 比例 $live → $CILIUM_BPF_MAP_DYNAMIC_SIZE_RATIO；本次 rollout 会重建 CT/NAT map并可能中断长连接"
+}
+
+# --- 3.5 官方升级 preflight + 镜像预拉 ----------------------------------------------------
+run_cilium_preflight() {
+  if ! helm_cmd status cilium --namespace kube-system >/dev/null 2>&1; then
+    log_info "集群尚未安装 Cilium，跳过升级 preflight"
+    return 0
+  fi
+
+  local chart="cilium/cilium" version_args=(--version "${CILIUM_V#v}")
+  local local_tgz="$CACHE_DIR/charts/cilium-${CILIUM_V#v}.tgz"
+  local manifest="$STATE_DIR/cilium-preflight-${CILIUM_V#v}.yaml"
+  if [[ -f $local_tgz ]]; then
+    chart=$local_tgz
+    version_args=()
+  else
+    helm_repo_add cilium https://helm.cilium.io/ >/dev/null
+  fi
+
+  helm_cmd template cilium-pre-flight "$chart" "${version_args[@]}" \
+    --namespace kube-system \
+    --set preflight.enabled=true \
+    --set agent=false \
+    --set operator.enabled=false \
+    --set-string k8sServiceHost="$NODE_IP" \
+    --set k8sServicePort=6443 > "$manifest"
+  kctl apply -f "$manifest"
+  kctl -n kube-system rollout status daemonset/cilium-pre-flight-check --timeout=10m
+  kctl -n kube-system rollout status deployment/cilium-pre-flight-check --timeout=5m
+
+  local agents preflight
+  agents=$(kctl -n kube-system get daemonset cilium -o jsonpath='{.status.numberReady}')
+  preflight=$(kctl -n kube-system get daemonset cilium-pre-flight-check -o jsonpath='{.status.numberReady}')
+  [[ -n $agents && $preflight == "$agents" ]] \
+    || die "Cilium preflight DaemonSet 未覆盖全部 Ready agent（preflight=$preflight, agent=$agents）"
+
+  kctl delete -f "$manifest" --ignore-not-found
+  rm -f "$manifest"
+  log_ok "Cilium $CILIUM_V 官方 preflight 与 CNP 校验通过"
+}
+
+# --- 3.6 预拉 Cilium 镜像(quay.io 直连很慢; 代理在线则临时借道, 拉完即撤) -----------------
 #   镜像清单从 chart 按当前 values 精确渲染(含 digest), 不猜标签
 prepull_cilium_images() {
   local want_proxy=false
@@ -368,28 +495,57 @@ verify_cilium_ready() {
   grep -qiE 'KubeProxyReplacement:[[:space:]]*True' <<<"$out"
 }
 
-# --- 7. L2 通告 + LoadBalancer IP 池 ------------------------------------------------------
-apply_l2_policy() {
-  if [[ $CILIUM_ENABLE_L2_ANNOUNCEMENTS != true ]]; then
-    log_info "未启用 L2 通告, 跳过"
+# --- 7. LoadBalancer IP 池(LB-IPAM) 与 L2 通告: 两个独立步骤 ----------------------------------
+#   池决定 LoadBalancer Service 能否拿到地址(Gateway 依赖它); L2 通告决定同链路主机能否 ARP 到该地址。
+#   开关与地址来源见 lib/common.sh(lb_ipam_enabled / l2_enabled / prompt_lb_ipam_addresses)。
+#   两步都是幂等 apply + 完整对象校验, 关闭时删除对应 CR(CRD 不存在视为已清理, 删除失败必须暴露)。
+
+# Pool/L2Policy 的 API 组随版本演进(v2alpha1 → v2), 从 CRD served versions 动态探测,
+# 有稳定版(v2/v1 这类不带 alpha/beta 后缀)时优先用稳定版
+pick_served_api() {
+  local versions stable
+  versions=$(kctl get crd "$1" -o jsonpath='{.spec.versions[?(@.served==true)].name}' | tr ' ' '\n')
+  [[ -n ${versions//[[:space:]]/} ]] || return 1
+  # grep 找不到稳定版(如只有 v2alpha1)是合法情况, 不能让 set -e 击杀 → || true
+  stable=$(grep -E '^v[0-9]+$' <<<"$versions" | sort -V | tail -1) || true
+  if [[ -n $stable ]]; then echo "$stable"; else sort -V <<<"$versions" | tail -1; fi
+}
+
+crd_delete_if_present() {  # crd_delete_if_present <crd 全名> <资源名...>
+  local crd=$1; shift
+  kctl get crd "$crd" >/dev/null 2>&1 || return 0
+  kctl delete "$crd" "$@" --ignore-not-found
+}
+
+apply_lb_ipam_pools() {
+  if ! lb_ipam_enabled; then
+    crd_delete_if_present ciliumloadbalancerippools.cilium.io gateway-pool default-pool
+    log_info "LB-IPAM 已关闭, 旧 gateway-pool/default-pool 已清理(LoadBalancer Service 将保持 pending)"
     return 0
   fi
+  lb_ipam_addresses_missing && die "LB-IPAM 已启用但地址未定义(00-preflight 应已询问或拒绝); 重跑 --only 00-preflight"
   wait_for "CiliumLoadBalancerIPPool CRD 注册" 120 kctl get crd ciliumloadbalancerippools.cilium.io
-  # Pool 的 API 组随版本演进(v2alpha1 → v2), 从 CRD served versions 动态探测,
-  # 有稳定版(v2/v1 这类不带 alpha/beta 后缀)时优先用稳定版
-  pick_served_api() {
-    local versions stable
-    versions=$(kctl get crd "$1" -o jsonpath='{.spec.versions[?(@.served==true)].name}' | tr ' ' '\n')
-    [[ -n ${versions//[[:space:]]/} ]] || return 1
-    # grep 找不到稳定版(如只有 v2alpha1)是合法情况, 不能让 set -e 击杀 → || true
-    stable=$(grep -E '^v[0-9]+$' <<<"$versions" | sort -V | tail -1) || true
-    if [[ -n $stable ]]; then echo "$stable"; else sort -V <<<"$versions" | tail -1; fi
-  }
-  local pool_api l2_api
+  local pool_api
   pool_api=$(pick_served_api ciliumloadbalancerippools.cilium.io)
-  l2_api=$(pick_served_api ciliuml2announcementpolicies.cilium.io)
-
-  cat > "$L2_FILE" <<EOF
+  cat > "$POOLS_FILE" <<EOF
+# 共享 HTTP Gateway 专属 /32 池：组件在 80 阶段按依赖分层并行安装，Consul 或独立 L4 Gateway
+# 可能先创建 LoadBalancer Service。不给共享 Gateway 独占地址就存在固定 VIP 被提前分走的竞态。
+apiVersion: cilium.io/$pool_api
+kind: CiliumLoadBalancerIPPool
+metadata:
+  name: gateway-pool
+spec:
+  blocks:
+    - start: "$CILIUM_GATEWAY_LB_IP"
+      stop: "$CILIUM_GATEWAY_LB_IP"
+  # Cilium 为 Gateway default/cilium-gateway 生成的 Service 名固定为 cilium-gateway-cilium-gateway。
+  # 使用 LB-IPAM 特殊 selector 字段匹配 Service 元数据，不依赖实现生成的普通 label。
+  serviceSelector:
+    matchLabels:
+      "io.kubernetes.service.namespace": "default"
+      "io.kubernetes.service.name": "cilium-gateway-cilium-gateway"
+---
+# 其它 LoadBalancer Service 的默认池（Consul、Postgres/Dragonfly 独立 Gateway、可选 Kafka 等）。
 apiVersion: cilium.io/$pool_api
 kind: CiliumLoadBalancerIPPool
 metadata:
@@ -399,7 +555,64 @@ spec:
   blocks:
     - start: "$CILIUM_LB_POOL_START"
       stop: "$CILIUM_LB_POOL_STOP"
----
+  # 共享 Gateway 的 Service 只能落在 gateway-pool: 无 selector 的池会匹配所有 Service, 一旦
+  # 固定 IP 请求注解丢失(如 infrastructure.annotations 覆盖), 它就会从这里拿到一个非 .240 地址而
+  # Gateway 仍显示 Programmed=True。NotIn 按名字排除(该名字在任何 namespace 都不该进本池)。
+  serviceSelector:
+    matchExpressions:
+      - key: io.kubernetes.service.name
+        operator: NotIn
+        values: [cilium-gateway-cilium-gateway]
+EOF
+  kctl apply -f "$POOLS_FILE"
+  # apply 成功只是写入了期望; 等 operator 在当前 generation 上给出 PoolConflict 结论再判定成功,
+  # 否则两池重叠/与旧池冲突这类问题会被"apply 通过"掩盖。
+  wait_for "LB-IPAM 池调和(PoolConflict 条件)" 120 lb_ipam_pools_reconciled
+}
+
+# 两个池都已被 operator 在当前 generation 上评估(结论好坏由 verify_lb_ipam_pools 判定)
+lb_ipam_pools_reconciled() {
+  local pool json
+  for pool in gateway-pool default-pool; do
+    json=$(kctl get ciliumloadbalancerippools.cilium.io "$pool" -o json 2>/dev/null) || return 1
+    jq -e '
+      ([.status.conditions[]? | select(.type == "cilium.io/PoolConflict")] | last) as $c
+      | $c != null and ($c.observedGeneration // -1) == .metadata.generation
+    ' <<<"$json" >/dev/null || return 1
+  done
+}
+
+verify_lb_ipam_pools() {
+  if ! lb_ipam_enabled; then
+    ! kctl get ciliumloadbalancerippools.cilium.io gateway-pool >/dev/null 2>&1 \
+      && ! kctl get ciliumloadbalancerippools.cilium.io default-pool >/dev/null 2>&1
+    return
+  fi
+  # 一次读取完整对象, 用 lib/common.sh 的纯校验(blocks 全部段/selector/disabled/PoolConflict@generation)
+  local gw_json def_json problems
+  gw_json=$(kctl get ciliumloadbalancerippools.cilium.io gateway-pool -o json 2>/dev/null) || return 1
+  def_json=$(kctl get ciliumloadbalancerippools.cilium.io default-pool -o json 2>/dev/null) || return 1
+  problems=$(
+    lb_pool_problems "$gw_json" "$CILIUM_GATEWAY_LB_IP" "$CILIUM_GATEWAY_LB_IP" default cilium-gateway-cilium-gateway
+    lb_pool_problems "$def_json" "$CILIUM_LB_POOL_START" "$CILIUM_LB_POOL_STOP" exclude=cilium-gateway-cilium-gateway
+  )
+  if [[ -n $problems ]]; then
+    log_error "LB-IPAM 池校验未通过:"$'\n'"$problems"
+    return 1
+  fi
+  log_info "LB-IPAM 池校验通过(gateway-pool=$CILIUM_GATEWAY_LB_IP/32 独占, default-pool=$CILIUM_LB_POOL_START-$CILIUM_LB_POOL_STOP, 两池 PoolConflict=False)"
+}
+
+apply_l2_policy() {
+  if ! l2_enabled; then
+    crd_delete_if_present ciliuml2announcementpolicies.cilium.io default-l2
+    log_info "L2 通告已关闭, 旧 default-l2 已清理(池地址只在集群内/Pod/newt 路径可达, 不在局域网 ARP 通告)"
+    return 0
+  fi
+  wait_for "CiliumL2AnnouncementPolicy CRD 注册" 120 kctl get crd ciliuml2announcementpolicies.cilium.io
+  local l2_api
+  l2_api=$(pick_served_api ciliuml2announcementpolicies.cilium.io)
+  cat > "$L2_FILE" <<EOF
 apiVersion: cilium.io/$l2_api
 kind: CiliumL2AnnouncementPolicy
 metadata:
@@ -412,9 +625,20 @@ spec:
 EOF
   kctl apply -f "$L2_FILE"
 }
+
 verify_l2_policy() {
-  [[ $CILIUM_ENABLE_L2_ANNOUNCEMENTS != true ]] \
-    || kctl get ciliumloadbalancerippools.cilium.io default-pool >/dev/null
+  if ! l2_enabled; then
+    ! kctl get ciliuml2announcementpolicies.cilium.io default-l2 >/dev/null 2>&1
+    return
+  fi
+  local l2_json problems
+  l2_json=$(kctl get ciliuml2announcementpolicies.cilium.io default-l2 -o json 2>/dev/null) || return 1
+  problems=$(l2_policy_problems "$l2_json")
+  if [[ -n $problems ]]; then
+    log_error "L2 通告策略校验未通过:"$'\n'"$problems"
+    return 1
+  fi
+  log_info "L2 通告策略校验通过(default-l2: loadBalancerIPs=true); 局域网可达性由 90 阶段冒烟与外部主机实测判定"
 }
 
 # --- 8. 全量连通性测试(可选, 约 10 分钟) ----------------------------------------------------
@@ -423,8 +647,13 @@ run_connectivity_test() {
     log_info "跳过连通性测试"
     return 0
   fi
-  # 外网相关用例受环境影响大, 失败降级为警告
-  cilium_cli connectivity test || log_warn "连通性测试存在失败用例, 请查看上方输出定位"
+  # 外网相关用例受环境影响大, 失败降级为警告。失败/中止时 cilium-cli 不清理测试命名空间
+  # (2026-09-06 机房: 内核 7.0 上测试客户端镜像 nslookup 崩溃, DNS 预检即中止, 三个 ns 各残留 ~150Mi),
+  # 这里兜底删除, 否则每次重跑 60 阶段都堆一份。
+  if ! cilium_cli connectivity test; then
+    log_warn "连通性测试存在失败用例, 请查看上方输出定位; 正在清理残留的 cilium-test-* 命名空间"
+    kctl delete ns cilium-test-1 cilium-test-ccnp1 cilium-test-ccnp2 --ignore-not-found --wait=false >/dev/null 2>&1 || true
+  fi
 }
 
 main() {
@@ -435,18 +664,28 @@ main() {
     return 0
   fi
   ensure_artifacts
-  # values 是 config.env + 内核探测的纯函数, 必须始终重新生成,
-  # 否则修改配置/升级脚本后会拿旧 values 安装(本次 tproxy×netkit 冲突正是这么暴露的)
-  rm -f "$STATE_DIR/state/60-cilium:values.done"
-  add_step cli     "安装 cilium CLI $CILIUM_CLI_V 与 helm $HELM_V" install_cli_tools       verify_cli_tools
-  add_step gwcrd   "Gateway API CRD $GATEWAY_API_V"                install_gateway_api_crds verify_gateway_api_crds
-  add_step values  "生成 Cilium values(内核能力自适应)"            gen_cilium_values       verify_cilium_values
-  add_step prepull "预拉 Cilium 镜像(代理在线则借道)"              prepull_cilium_images
-  add_step ipsec   "IPsec 密钥(可选)"                              create_ipsec_secret
-  add_step helm    "helm 安装 Cilium $CILIUM_V"                    helm_install_cilium
-  add_step wait    "等待 Cilium/节点/CoreDNS 就绪"                 wait_cilium_ready       verify_cilium_ready
-  add_step l2      "L2 通告与 LoadBalancer IP 池"                  apply_l2_policy         verify_l2_policy
-  add_step conn    "连通性测试(可选)"                              run_connectivity_test
+  # values 是 config.env + 内核探测的纯函数，必须始终重新生成；指纹步骤也必须每次比较。
+  # 只有期望状态变化时才使 preflight/helm 等下游步骤失效，不重置 IPsec 步骤。
+  # pools/l2 步骤是幂等 apply + 完整对象校验, 每次重跑都重新执行: 指纹只覆盖 config.env 的变化,
+  # 集群里被人工改过/删掉的池与 L2Policy(live 漂移)只能靠这里重新校验发现。
+  rm -f "$STATE_DIR/state/60-cilium:values.done" \
+        "$STATE_DIR/state/60-cilium:fingerprint.done" \
+        "$STATE_DIR/state/60-cilium:mapguard.done" \
+        "$STATE_DIR/state/60-cilium:pools.done" \
+        "$STATE_DIR/state/60-cilium:l2.done"
+  add_step cli         "安装 cilium CLI $CILIUM_CLI_V 与 helm $HELM_V" install_cli_tools             verify_cli_tools
+  add_step gwcrd       "Gateway API CRD $GATEWAY_API_V"                install_gateway_api_crds       verify_gateway_api_crds
+  add_step values      "生成 Cilium values(内核能力自适应)"            gen_cilium_values             verify_cilium_values
+  add_step fingerprint "核对 Cilium 版本与 values 指纹"                reconcile_cilium_apply_state   verify_cilium_apply_state
+  add_step mapguard    "检查 BPF map 缩容维护窗口授权"                  guard_bpf_map_resize
+  add_step preflight   "运行 Cilium $CILIUM_V 官方升级 preflight"      run_cilium_preflight
+  add_step prepull     "预拉 Cilium 镜像(代理在线则借道)"              prepull_cilium_images
+  add_step ipsec       "IPsec 密钥(可选)"                              create_ipsec_secret
+  add_step helm        "helm 安装 Cilium $CILIUM_V"                    helm_install_cilium
+  add_step wait        "等待 Cilium/节点/CoreDNS 就绪"                 wait_cilium_ready             verify_cilium_ready
+  add_step pools       "LoadBalancer IP 池(LB-IPAM)"                   apply_lb_ipam_pools           verify_lb_ipam_pools
+  add_step l2          "L2 通告策略"                                   apply_l2_policy               verify_l2_policy
+  add_step conn        "连通性测试(可选)"                              run_connectivity_test
   run_steps
   stage_end
 }

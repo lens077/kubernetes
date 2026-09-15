@@ -1,5 +1,9 @@
 # Pangolin newt — k8s 集群接入与服务暴露
 
+> **归档文档（不要照做）**：helm chart、ClusterIP target 均已被新方案替代。当前入口是
+> [`components/newt/README.md`](../../components/newt/README.md)：自写 manifest，Pangolin target 用
+> `CILIUM_GATEWAY_LB_IP:443`（机房默认 `10.10.31.240:443`），不再用重建会漂移的 ClusterIP。
+
 前置:Pangolin 服务端已在公网 VPS 部署好(见 docker-deploy 仓库 `pangolin/`)。
 本文只管 k8s 侧:集群作为一个 newt site 接入隧道,再把集群内服务暴露成公网子域名。
 

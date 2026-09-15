@@ -1,0 +1,97 @@
+# 由 harvest.py --export-templates 从 Config Center pre 现值导出的脱敏骨架(2026-09-12)。
+# __HARVEST__ 处由 tools/config-center-harvest.sh 按组件契约填; 其余是非机密的服务固有配置, 可手改。
+# 新集群/空环境播种时用它合成整份 bootstrap.yaml; 已有键时 harvest 只改映射路径, 不看本文件。
+server:
+  addr: 0.0.0.0:30009
+  http:
+    read_timeout: 5s
+    write_timeout: 5s
+    idle_timeout: 30s
+  cors:
+    allowed_origins:
+    - http://localhost:3000
+data:
+  database:
+    postgres:
+      host: __HARVEST__
+      port: __HARVEST__
+      user: __HARVEST__
+      password: __HARVEST__
+      db_name: ecommerce
+      timezone: Asia/Shanghai
+      tls:
+        enable: __HARVEST__
+        ssl_mode: __HARVEST__
+        ca_pem: __HARVEST__
+      pool:
+        ping_timeout: 4s
+        max_conns: 20
+        min_conns: 5
+        max_conn_lifetime: 3600s
+        max_conn_idle_time: 300s
+  cache:
+    redis:
+      host: __HARVEST__
+      port: __HARVEST__
+      username: __HARVEST__
+      password: __HARVEST__
+      db: 0
+      dial_timeout: 5s
+      read_timeout: 3s
+      write_timeout: 3s
+      pool_size: 10
+      min_idle_conns: 5
+      tls:
+        enable: __HARVEST__
+        insecure_skip_verify: __HARVEST__
+        ca_pem: __HARVEST__
+observability:
+  enable: true
+  trace:
+    endpoint: __HARVEST__
+    tls:
+      enable: __HARVEST__
+      insecure_skip_verify: false
+      ca_pem: __HARVEST__
+  metric:
+    endpoint: __HARVEST__
+    tls:
+      enable: __HARVEST__
+      insecure_skip_verify: false
+      ca_pem: __HARVEST__
+  log:
+    endpoint: __HARVEST__
+    tls:
+      enable: __HARVEST__
+      insecure_skip_verify: false
+      ca_pem: __HARVEST__
+discovery:
+  consul:
+    addr: __HARVEST__
+    health_check: true
+    scheme: __HARVEST__
+    check:
+      deregister_critical_service_after: 1m
+      ttl:
+        duration: 30s
+        ping_interval: 10s
+    tls:
+      enable: __HARVEST__
+      insecure_skip_verify: __HARVEST__
+      ca_pem: __HARVEST__
+log:
+  framework:
+    format: console
+    log_level: debug
+    error_level: error
+  application:
+    format: console
+    level: debug
+auth:
+  casdoor:
+    endpoint: __HARVEST__
+    client_id: __HARVEST__
+    client_secret: __HARVEST__
+    organization_name: __HARVEST__
+    application_name: __HARVEST__
+    certificate: __HARVEST__

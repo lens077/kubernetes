@@ -1,0 +1,35 @@
+# pg-main 的兼容入口：独立 TCP Gateway + TCPRoute。
+# 默认安装不应用本文件；只有客户端不支持 direct TLS negotiation 时才手工启用。
+# TCPRoute 原样透传 PostgreSQL SSLRequest 和后续 TLS，仍应使用 sslmode=verify-full。
+# 它会额外占用一个 LoadBalancer VIP，不要用它替换默认 TLSRoute 而不更新接入文档。
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: pg-main-tcp-gateway
+  namespace: postgresql
+spec:
+  gatewayClassName: cilium
+  listeners:
+    - name: postgres
+      port: 5432
+      protocol: TCP
+      allowedRoutes:
+        kinds:
+          - kind: TCPRoute
+        namespaces:
+          from: Same
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: TCPRoute
+metadata:
+  name: pg-main-tcp
+  namespace: postgresql
+spec:
+  parentRefs:
+    - name: pg-main-tcp-gateway
+      sectionName: postgres
+  rules:
+    - backendRefs:
+        - name: pg-main-rw
+          port: 5432

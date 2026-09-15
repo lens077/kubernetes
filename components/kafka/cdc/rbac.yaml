@@ -1,0 +1,27 @@
+# KafkaConnect 的 ServiceAccount 只允许 get 两个 connector 凭据 Secret（KubernetesSecretConfigProvider 用）。
+# 不给 list/watch：connector 配置里用 ${secrets:kafka/<name>:<key>} 引用，凭据不进清单。
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: my-connect-cluster-secret-reader
+  namespace: kafka
+rules:
+  - apiGroups: [""]
+    resources: [secrets]
+    resourceNames:
+      - cdc-postgres
+      - cdc-elasticsearch
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: my-connect-cluster-secret-reader
+  namespace: kafka
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: my-connect-cluster-secret-reader
+subjects:
+  - kind: ServiceAccount
+    name: my-connect-cluster-connect

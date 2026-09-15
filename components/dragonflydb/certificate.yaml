@@ -15,6 +15,7 @@ spec:
   renewBefore: 360h              # 15d
   dnsNames:
     - ${HOSTNAME}                # redis.dev.test —— 局域网经 Gateway 访问用
+    - ${REMOTE_HOST}             # redis-dev.apikv.com —— 开发机经 Pangolin raw TCP(30005, TLS 直通)访问用, 2026-09-12
     - dragonfly.dragonfly.svc.cluster.local
     - dragonfly.dragonfly.svc
     - dragonfly

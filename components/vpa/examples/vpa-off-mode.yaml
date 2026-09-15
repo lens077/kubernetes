@@ -29,8 +29,8 @@ spec:
     containerPolicies:
       - containerName: "*"
         controlledResources: ["cpu", "memory"]
-        # 只看推荐时这些边界不生效，但写上能让推荐值落在合理区间内，
-        # 免得把一条离群峰值直接推成 4Gi
+        # Off 模式下边界仍会裁剪 Target；必须同时查看 Uncapped Target，避免把人为边界
+        # 误认成测量结果。这里保留边界只是演示字段，不作为其他组件的容量依据。
         minAllowed:
           cpu: 25m
           memory: 64Mi
