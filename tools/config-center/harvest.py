@@ -735,11 +735,12 @@ def main() -> int:
             for pth in left:
                 unresolved.append(f"{pth} ← 骨架占位符无映射来源")
                 pending_all.setdefault("骨架占位符无映射来源(补 mapping.yaml 或 overrides)", []).append(f"{svc}:{pth}")
-        if not changes and not seeded and not args.rotate_tokens:
+        needs_token = args.rotate_tokens or svc not in svc_tokens   # selector 里没它 = 新环境/新服务, 必须签
+        if not changes and not seeded and not needs_token:
             log(f"· {svc}: v{entry.get('version')} 无差异" + (f"(另有 {len(unresolved)} 处待补齐)" if unresolved else ""))
             continue
-        if args.rotate_tokens and not changes:
-            log(f"{svc}: 配置无差异，但 --rotate-tokens 要求重新签发 service token")
+        if needs_token and not changes:
+            log(f"{svc}: 配置无差异, 但" + ("--rotate-tokens 要求重签" if args.rotate_tokens else f"selector {ns}/{selector} 里没有它的 token, 需签发") + " service token")
 
         # 4) 往返等价自检: 除改动路径外必须与原值完全等价
         new_text = dump_yaml(doc)
