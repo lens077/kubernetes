@@ -2,15 +2,15 @@
 
 ## 1. 定位
 
-集群内应用把 OTLP 数据发送到 `otel-opentelemetry-collector.opentelemetry.svc:4317/4318`。Collector 当前将三类信号写入 node3 的 Victoria 后端：
+集群内应用把 OTLP 数据发送到 `otel-opentelemetry-collector.opentelemetry.svc:4317/4318`。2026-09-22 起 Collector 三类信号都写入集群内后端，不再依赖旧 node3 Pigsty：
 
-| 信号 | 远端入口 | 后端 |
+| 信号 | 集群内入口 | 后端 |
 |---|---|---|
-| metrics | `metrics.apikv.com/opentelemetry/v1/metrics`（**只有 http**） | VictoriaMetrics |
-| logs | `node3-logs.apikv.com/insert/opentelemetry/v1/logs` | VictoriaLogs |
-| traces | `node3-traces.apikv.com/insert/opentelemetry/v1/traces` | VictoriaTraces |
+| metrics | `vm-single-victoria-metrics-single-server.victoriametrics.svc:8428` | VictoriaMetrics |
+| logs | `vl-victoria-logs-single-server.logging.svc:9428/insert/opentelemetry/v1/logs` | VictoriaLogs |
+| traces | `victoria-traces.observability.svc:10428/insert/opentelemetry/v1/traces` | VictoriaTraces |
 
-⚠️ metrics 的域名 2026-08-29 由 `node3-metrics.apikv.com` 改名为 `metrics.apikv.com`，且新资源在 Pangolin 上没配 TLS（`https://metrics.apikv.com` 返回 404）。改名当天这里没同步，collector 对旧域名拿到 404，持续 `Exporting failed. Dropping data.`——**指标链路静默断了，logs/traces 不受影响**。改这三个域名时务必回来同步本表与 `component.env`。
+旧 `node3-logs.apikv.com`、`node3-traces.apikv.com`、`node3-otlp.apikv.com` 已退役；Pangolin 只负责观测 UI/API 的公网入口，不作为应用 OTLP 写入入口。
 
 三个 `REMOTE_*_URL` 在 [`component.env`](component.env) 中独立配置。某项未设置时，`install.sh` 才检查集群内对应后端并回退；设置远端后不双写本地，避免观测存储负载留在集群内。
 

@@ -1,0 +1,31 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: dragonfly-gateway
+  namespace: dragonfly
+spec:
+  gatewayClassName: cilium
+  addresses:
+    - type: IPAddress
+      value: "10.10.31.242"
+  listeners:
+    - name: dragonfly
+      port: 6379
+      protocol: TCP
+      allowedRoutes:
+        namespaces:
+          from: Same
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: TCPRoute
+metadata:
+  name: dragonfly
+  namespace: dragonfly
+spec:
+  parentRefs:
+    - name: dragonfly-gateway
+      sectionName: dragonfly
+  rules:
+    - backendRefs:
+        - name: dragonfly
+          port: 6379

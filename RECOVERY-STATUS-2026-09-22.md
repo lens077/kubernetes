@@ -22,8 +22,9 @@
 - VictoriaMetrics、VictoriaLogs、VictoriaTraces
 - OTel Collector、Vector 三节点 DaemonSet
 - vmalert、Alertmanager、alert-bridge、Gatus、Healthchecks
-- Grafana `12.3.1`（chart 钉 `10.5.15`），`/api/health` 返回 `database: ok`；数据源按实际后端预置
+- Grafana `13.2.2`（chart `grafana-community/grafana` `13.2.5`）；数据源按实际后端预置
   VictoriaMetrics（默认）/ VictoriaLogs / VictoriaTraces / Alertmanager
+- 共享 Gateway `default/cilium-gateway`：VIP `10.10.31.240`，80 重定向 + 443 终结 TLS
 
 ## CDC 边界
 
@@ -63,6 +64,28 @@ PostgreSQL → Debezium → Kafka → Elasticsearch
 - `components/opentelemetry/values.yaml`：关闭 Tetragon 时不再抓取不存在的 Vector security `:9598` endpoint。
 - `components/vector/values.yaml`：容器日志写入集群内 VictoriaLogs，不再指向旧 node3 URL。
 
+### 2026-09-22 下午追加
+
+- **共享 Gateway 此前根本没装**。`default/cilium-gateway` 不存在，而 14 条 HTTPRoute 都
+  `parentRef` 到它，`status` 全空——集群没有任何可用的 HTTP 入口，Grafana 等组件只是
+  「Pod Running」而已。跑一次 `components/gateway/install.sh` 即补齐（LB-IPAM 两个池和
+  `global-ca-issuer` 本来就已就绪，缺的只是这一步）。
+  - 连带暴露 `bootstrap/scripts/90-verify.sh` 的盲区：它只在「本轮 `--only` 选了 gateway」时
+    才检查该 Gateway 是否存在，所以用 `--only` 装其它组件时这个缺口不会被报出来。
+    与交接文档里「已装组件：无」是同一个根因：**验收读的是本轮选择，不是 live 集群**。
+- `components/grafana/component.env`：`grafana/grafana` chart 已被上游标记 `deprecated`
+  且停在 appVersion `12.3.1`；改用迁移后的 `grafana-community/grafana` `13.2.5`（appVersion `13.2.2`）。
+- `components/grafana/values.yaml`：
+  - `deploymentStrategy: Recreate`——PVC 是 openebs-lvm 的 RWO 本地卷，默认 RollingUpdate
+    会让新旧 Pod 抢同一个卷，升级永远不收敛。
+  - 补 `resources.requests`（此前只有 limits，调度器按 0 计算余量）。
+  - `image.tag: "{{ .Chart.AppVersion }}"`——只去掉 chart 默认的 `-distroless` 变体
+    （distroless 无 shell，`kubectl exec ... sh` 的排查动线会全部失效），不写死版本号。
+  - `grafana.ini` 补 `root_url`（网关后面终结 TLS，否则告警/分享链接指向内网域名）、
+    `cookie_secure`、关闭 gravatar 与 `check_for_updates`。
+- `components/newt/manifests/01-deployment.yaml`：镜像 `1.15.0` → `1.17.0`。
+- `components/newt/component.env`：更正「旧 site 已失效」的说法（见文件内注释）。
+
 ## 尚未完成
 
 - 真实业务 dump 导入 CNPG 并做数据恢复校验。
@@ -83,9 +106,12 @@ go run ./tools/dbmigrate -svc all seed
 
 ## 当前缺失或待补基础设施
 
-- **Grafana**：当前未部署；需要观测数据源、仪表盘和告警 UI 时再启用。
-- **Gateway / 外部入口**：Cilium Gateway 基础能力已验收，但共享业务 Gateway、TLS Route、外部 LAN/newt 访问仍需单独验收。
-- **newt/Pangolin**：当前重建没有接入旧站点凭据，公网入口未验收。
+- **Grafana**：已部署 `13.2.2`（2026-09-22 下午）。上面那条「未部署」是本文与第 14 节
+  自相矛盾的旧描述，已更正。
+- **Gateway / 外部入口**：共享 Gateway 已补装，7 条对外 hostname 经 VIP `10.10.31.240:443`
+  实测返回 200/302。仍未验收的是**公网侧**（newt → VIP）这一段。
+- **newt/Pangolin**：Pangolin 已升到 `1.23.0`、gerbil `1.5.2`；node0/node2 的 newt 已升到
+  `1.17.0` 且隧道在线。集群侧 newt 仍未部署——需要先在面板新建 site 拿凭据。
 - **业务缓存**：Dragonfly 当前未启用；需要 ecommerce 登录、Session、限流或缓存链路时必须部署并同步 Secret/CA。
 - **OpenFGA**：当前未启用；授权业务接线前需要先完成 CNPG 独立库和 OpenFGA model/tuple 恢复。
 - **OpenBao/ESO**：当前未作为恢复前置启用；生产凭据治理前必须完成 unseal、SecretStore 和 Secret 同步验收。

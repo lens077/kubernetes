@@ -20,16 +20,23 @@
 |---|---|---|---|---|
 | `pre` | 集群内 Pod | `<svc>.<ns>.svc:PORT`（外部实例是域名） | 集群 DNS 不需要；外部实例按 `CA_REF` | `SVC/PORT/SCHEME` |
 | `gateway` | 机房 LAN 上的开发机，直连 Cilium Gateway VIP | `HOSTNAME:DEV_PORT`（`*.dev.test`） | 必须带 `ca_pem`（私有 CA） | `HOSTNAME/DEV_PORT/DEV_SCHEME` |
-| `pangolin`（`dev` 默认，2026-09-12 定稿） | 不在机房 LAN 的开发机（这台 Mac），经 Pangolin 资源 → newt → VIP | `REMOTE_HOST:REMOTE_PORT`（`*.apikv.com`） | `REMOTE_CA=public`（Traefik 终止，清空 ca_pem）或 `private`（raw TCP 直通，带 ca_pem，证书 SAN 须含 REMOTE_HOST） | `REMOTE_HOST/REMOTE_PORT/REMOTE_SCHEME/REMOTE_CA` |
+| `pangolin`（`dev` 默认） | 不在机房 LAN 的开发机，经 Pangolin 新建的集群 newt site → VIP | `REMOTE_HOST:REMOTE_PORT`（`*.apikv.com`） | `REMOTE_CA=public`（Traefik 终止，清空 ca_pem）或 `private`（raw TCP 直通，带 ca_pem，证书 SAN 须含 REMOTE_HOST） | `REMOTE_HOST/REMOTE_PORT/REMOTE_SCHEME/REMOTE_CA` |
 
-`pangolin` 策略用到的 Pangolin 资源（面板 API 建，2026-09-12）：
+`pangolin` 策略需要在 Pangolin 面板/API 创建资源；旧 `consul-dev`/`redis-dev` 仍指向失效的 node4/node5 newt site，不能继续作为新集群入口。
 
-| 资源 | 类型 | 公网 | target | 备注 |
-|---|---|---|---|---|
-| `consul-dev`（id 52） | HTTP，SSO 关 | `https://consul-dev.apikv.com` | node4/node5 站点 → `10.10.31.240:443`，`tlsServerName` 与 `setHostHeader` = `consul.dev.test`（HTTPRoute 按 Host 匹配） | Traefik 终止 TLS → `ca_pem` 空 |
-| `redis-dev`（id 53） | raw TCP，`proxyPort 30005` | `redis-dev.apikv.com:30005` | node4/node5 站点 → `10.10.31.243:6380` | TLS 直通到 Dragonfly 证书；`certificate.yaml` 已把 `${REMOTE_HOST}` 加进 SAN |
+当前新集群后端：
 
-30005 是新开的 raw 端口：云防火墙（`tccli lighthouse CreateFirewallRules`）+ VPS `docker-compose.yml` gerbil ports + `traefik_config.yml` `tcp-30005` 三处，都在 docker-deploy 仓 `pangolin/`；重建 gerbil/traefik 时 `*.apikv.com` 中断约 10 秒。
+| 资源 | 类型 | 新 target | 状态 |
+|---|---|---|---|
+| Dragonfly | raw TCP/TLS | `10.10.31.242:6379`，新集群 TCPRoute | K8s 已 Ready；Pangolin resource 待创建 |
+| PostgreSQL | TLS passthrough | `10.10.31.241:5432`，`pg-passthrough-gateway` + SNI `pg.dev.test` | K8s 已 Programmed；Pangolin resource 待创建 |
+| Kafka | raw TCP | `my-cluster-kafka-bootstrap.kafka.svc:9092`，需要另建受限 TCPRoute | K8s 仅内部 listener；未对公网开放 |
+| Grafana | HTTPS/HTTPRoute | `10.10.31.240:443`，Host `grafana.dev.test` | K8s HTTPRoute 已 Ready；Pangolin resource 待迁移 |
+| ArgoCD Web UI | HTTPS/HTTPRoute | `10.10.31.240:443`，Host `argocd.dev.test` | K8s HTTPRoute 已 Ready；Pangolin resource 待创建 |
+
+新建 raw TCP 资源前，确认 node1 gerbil/Traefik 对应端口和云防火墙放行；不要复用旧 `30005` target
+或旧 node4/node5 site。TLS passthrough 服务必须保留 SNI；HTTPRoute 服务由 Cilium Gateway 终止 TLS。
+
 
 `gateway` 策略的前提：开发机在集群 LAN 上（网关 VIP `10.10.31.x` 只在机房 L2 可达，家里的 Mac 经隧道只到 API server），且开发机能把 `<组件>.dev.test` 解析到网关 VIP（RFC 6761 保留域，公网永不解析）。`/etc/hosts` 不支持通配，要么逐条写（`10.10.31.240 consul.dev.test`、`10.10.31.243 redis.dev.test`……每个组件一行，HOSTNAME 见各 `component.env`），要么用本机 split DNS：macOS 放一个 `/etc/resolver/dev.test` 指向跑 dnsmasq 的地址（`address=/.dev.test/10.10.31.240`，TCP 组件另指其独立 Gateway VIP），Linux 用 systemd-resolved/dnsmasq 同理。2026-09-12 在节点宿主机实测：`consul.dev.test:443` 经共享网关 HTTPS 200、证书链过私有 CA（CN `dev.test`）；`redis.dev.test:6380` 经 dragonfly-gateway TLS 校验通过、`AUTH` +OK / `PING` +PONG、错密码 `-WRONGPASS`。写入 Config Center `dev` 环境需要一枚 `ENVIRONMENT=dev` 的 operator token（Secret `config-center-operator-dev`）。
 

@@ -36,8 +36,8 @@ VT_SVC="victoria-traces.observability.svc.cluster.local:10428"
 #
 # 路径不能省: VictoriaLogs / VictoriaTraces 的 OTLP 摄入路径带 /insert 前缀,
 # 用 otlphttp 的 endpoint 会被自动补成 /v1/logs 而 404 —— 必须用
-# logs_endpoint / traces_endpoint 给全路径。实测 node3-traces 上不带 /insert 的
-# /opentelemetry/v1/traces 返回 400, 带 /insert 的返回 200。
+# logs_endpoint / traces_endpoint 给全路径。VictoriaLogs/VictoriaTraces 的 OTLP 写入必须带 /insert，
+# 不带 /insert 的 /opentelemetry/v1/traces 返回 400, 带 /insert 的返回 200。
 REMOTE_METRICS_URL="${REMOTE_METRICS_URL:-}"
 REMOTE_LOGS_URL="${REMOTE_LOGS_URL:-}"
 REMOTE_TRACES_URL="${REMOTE_TRACES_URL:-}"
