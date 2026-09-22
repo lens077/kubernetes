@@ -1,0 +1,76 @@
+# node3 OpenTelemetry Collector —— 2026-08-24
+#
+# 角色：ecommerce 十个服务 + 网关的 OTLP 汇聚点，落到本机 Victoria 全家桶。
+# 服务侧只填 host:port（conf.proto 的 Observability.endpoint 带 host_and_port 校验），
+# 由 Pangolin 的 node3-otlp.apikv.com:443 转到本容器的 4318。
+#
+# 为什么改成 collector 而不是让服务直连后端：
+#   1. 三个后端的 OTLP 摄入路径各不相同（VictoriaMetrics 无 /insert 前缀，另两个有），
+#      直连时得在 nginx 上做 /v1/* 路径改写才能对上——多一层无谓的转换。
+#   2. 直连没有批处理与重试：隧道抖一下就丢数据。collector 有 batch + 队列。
+#   3. 加处理器（脱敏、采样、打标）只能在 collector 做。
+# 这层立起来之后，nginx 的 otlp-ingress.conf 就没用了，已删。
+#
+# 端点写 base、由 otlphttp 自己拼 /v1/{signal}：
+#   VictoriaMetrics  http://127.0.0.1:8428/opentelemetry        -> /v1/metrics
+#   VictoriaLogs     http://127.0.0.1:9428/insert/opentelemetry -> /v1/logs
+#   VictoriaTraces   http://127.0.0.1:10428/insert/opentelemetry-> /v1/traces
+receivers:
+  otlp:
+    protocols:
+      # 鉴权：Bearer token 列表来自 /run/secrets/otel-tokens(每行一个，行内首个空白前是 token)。
+      # 真相源在线上 Vault secret/observability/otlp；本文件由 Vault 同步生成，0600 root。
+      # 公网入口 node3-otlp.apikv.com 不能挂 Pangolin SSO(机器客户端过不了浏览器登录墙)，
+      # 所以鉴权落在 collector 自己这一层。
+      grpc:
+        endpoint: 0.0.0.0:4317
+        auth:
+          authenticator: bearertokenauth/otlp
+      http:
+        endpoint: 0.0.0.0:4318
+        auth:
+          authenticator: bearertokenauth/otlp
+
+processors:
+  memory_limiter:
+    check_interval: 5s
+    limit_percentage: 80
+    spike_limit_percentage: 25
+  batch: {}
+  # 服务侧用 delta 时序；VictoriaMetrics 要 cumulative
+  delta_to_cumulative:
+    max_stale: 5m
+
+exporters:
+  otlphttp/vmetrics:
+    endpoint: http://127.0.0.1:8428/opentelemetry
+    compression: gzip
+    tls: { insecure: true }
+  otlphttp/vlogs:
+    endpoint: http://127.0.0.1:9428/insert/opentelemetry
+    tls: { insecure: true }
+  otlphttp/vtraces:
+    endpoint: http://127.0.0.1:10428/insert/opentelemetry
+    tls: { insecure: true }
+
+extensions:
+  health_check: { endpoint: 0.0.0.0:13133 }
+  bearertokenauth/otlp:
+    scheme: Bearer
+    filename: /run/secrets/otel-tokens
+
+service:
+  extensions: [health_check, bearertokenauth/otlp]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlphttp/vtraces]
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, delta_to_cumulative, batch]
+      exporters: [otlphttp/vmetrics]
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlphttp/vlogs]

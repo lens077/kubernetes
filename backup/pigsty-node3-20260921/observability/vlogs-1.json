@@ -1,0 +1,8 @@
+{
+  "name": "vlogs-1",
+  "type": "victoriametrics-logs-datasource",
+  "access": "proxy",
+  "url": "http://10.10.21.172:9428",
+  "isDefault": false,
+  "editable": true
+}

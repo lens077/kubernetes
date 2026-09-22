@@ -11,10 +11,27 @@ spec:
     metadata: {labels: {app: elasticsearch}}
     spec:
       securityContext: {fsGroup: 1000}
-      imagePullSecrets: [{name: tcr-pull-secret}]
+      initContainers:
+      - name: install-analysis-ik
+        image: docker.elastic.co/elasticsearch/elasticsearch:9.4.5
+        securityContext: {runAsUser: 0}
+        command: ["bash", "-ec"]
+        args:
+        - >-
+          curl -fsSL --retry 5 --retry-all-errors https://get.infini.cloud/elasticsearch/analysis-ik/9.4.5 -o /tmp/analysis-ik.zip
+          && printf '%s  %s\n' 0ba0b122dd72047fa7f6d33f90267995f0fa5aa17a3a0f8cca40c969822d781dfbb889ae95447ab033390f03277712010c01b12ccad5a3e8ebe4a7fff23dbd04 /tmp/analysis-ik.zip | sha512sum -c -
+          && rm -rf /usr/share/elasticsearch/plugins/analysis-ik /usr/share/elasticsearch/config/analysis-ik/*
+          && /usr/share/elasticsearch/bin/elasticsearch-plugin install --batch file:///tmp/analysis-ik.zip
+          && mkdir -p /tmp/ik-config /usr/share/elasticsearch/config/analysis-ik
+          && unzip -q /tmp/analysis-ik.zip 'config/*' -d /tmp/ik-config
+          && cp -a /tmp/ik-config/config/. /usr/share/elasticsearch/config/analysis-ik/
+          && chown -R 1000:0 /usr/share/elasticsearch/plugins /usr/share/elasticsearch/config/analysis-ik
+        volumeMounts:
+        - {name: plugins, mountPath: /usr/share/elasticsearch/plugins}
+        - {name: ik-config, mountPath: /usr/share/elasticsearch/config/analysis-ik}
       containers:
       - name: elasticsearch
-        image: ccr.ccs.tencentyun.com/sumery/ecommerce-elasticsearch:9.4.5-ik-9.4.5
+        image: docker.elastic.co/elasticsearch/elasticsearch:9.4.5
         env:
         - {name: node.name, value: k8s-elasticsearch}
         - {name: cluster.name, value: ecommerce-k8s}
@@ -24,10 +41,13 @@ spec:
         - {name: xpack.security.http.ssl.enabled, value: "false"}
         - {name: xpack.license.self_generated.type, value: basic}
         - {name: ES_JAVA_OPTS, value: -Xms768m -Xmx768m}
-        - {name: ELASTIC_PASSWORD_FILE, value: /run/secrets/elastic/password}
+        - name: ELASTIC_PASSWORD
+          valueFrom: {secretKeyRef: {name: elasticsearch-auth, key: password-file}}
         ports: [{name: http, containerPort: 9200}]
         volumeMounts:
         - {name: data, mountPath: /usr/share/elasticsearch/data}
+        - {name: plugins, mountPath: /usr/share/elasticsearch/plugins}
+        - {name: ik-config, mountPath: /usr/share/elasticsearch/config/analysis-ik}
         - {name: auth, mountPath: /run/secrets/elastic, readOnly: true}
         resources: {requests: {cpu: 500m, memory: 1Gi}, limits: {cpu: "1500m", memory: 2Gi}}
         readinessProbe:
@@ -42,5 +62,7 @@ spec:
           timeoutSeconds: 5
       volumes:
       - {name: data, persistentVolumeClaim: {claimName: data-elasticsearch}}
+      - {name: plugins, emptyDir: {}}
+      - {name: ik-config, emptyDir: {}}
       - name: auth
         secret: {secretName: elasticsearch-auth, defaultMode: 256, items: [{key: password-file, path: password}]}

@@ -1,0 +1,131 @@
+web:
+  address: 127.0.0.1
+  port: 8081
+
+ui:
+  title: Ecommerce blackbox status
+  dashboard-heading: Ecommerce blackbox status
+  dashboard-subheading: Probes run on node3, outside the Kubernetes failure domain.
+  default-sort-by: group
+
+storage:
+  type: sqlite
+  path: /data/gatus.db
+  caching: true
+  maximum-number-of-results: 200
+  maximum-number-of-events: 50
+
+concurrency: 4
+
+alerting:
+  custom:
+    url: http://127.0.0.1:9059/api/v2/alerts
+    method: POST
+    headers:
+      Content-Type: application/json
+    body: |
+      [{
+        "labels": {
+          "alertname": "GatusBlackboxEndpointDown",
+          "severity": "critical",
+          "category": "blackbox",
+          "endpoint": "[ENDPOINT_NAME]",
+          "probe_group": "[ENDPOINT_GROUP]"
+        },
+        "annotations": {
+          "summary": "Gatus blackbox probe failed",
+          "description": "[ENDPOINT_GROUP]/[ENDPOINT_NAME] failed its configured response checks"
+        },
+        "generatorURL": "[ENDPOINT_URL]"
+      }]
+    default-alert:
+      # 2026-09-01 校准：原 success-threshold=2（约 1 分钟）会被 CrashLoopBackOff
+      # 的 Pod 在重启间隙的短暂 Ready 满足，于是 6 小时的持续故障被切成若干条
+      # 「5 分钟内自愈」的抖动，无人行动。改为 10（约 5 分钟）以跨过退避周期。
+      # failure-threshold 保持 2：发现要快，判恢复才需要保守。
+      description: Blackbox probe failed twice in succession
+      failure-threshold: 2
+      success-threshold: 10
+      # 开启恢复通知：原为 false 导致 Gatus 侧 RESOLVED 恒为 0，与 Alertmanager
+      # 的过期不同源，排障时会误判成「告警从未恢复」。
+      send-on-resolved: true
+
+endpoints:
+  # Re-enabled 2026-08-31: the gateway HTTPRoute was restored (now backed by
+  # ecommerce-gateway-service:8080) and both checks were re-verified from node3.
+  - name: gateway-health
+    group: kubernetes-public
+    url: https://gateway.apikv.com/healthz
+    interval: 30s
+    client:
+      timeout: 10s
+      ignore-redirect: true
+    alerts:
+      - type: custom
+    conditions:
+      - "[STATUS] == 200"
+
+  - name: product-detail-rpc
+    group: kubernetes-public
+    url: https://gateway.apikv.com/product.v1.ProductService/GetProductDetail
+    method: POST
+    body: '{"spuCode":"estee-lauder-anr"}'
+    headers:
+      Content-Type: application/json
+    interval: 30s
+    client:
+      timeout: 10s
+      ignore-redirect: true
+    alerts:
+      - type: custom
+    conditions:
+      - "[STATUS] == 200"
+      - "[BODY] == pat(*estee-lauder-anr*)"
+
+  - &https-defaults
+    name: shop-home
+    group: kubernetes-public
+    url: https://shop.apikv.com/
+    interval: 30s
+    client:
+      timeout: 10s
+      ignore-redirect: true
+    alerts:
+      - type: custom
+    conditions:
+      - "[STATUS] == 200"
+      - "[BODY] == pat(*灯市*)"
+      - "[CERTIFICATE_EXPIRATION] > 168h"
+      - "[RESPONSE_TIME] < 5000"
+
+  # The SSR product page complements the direct RPC probe: it exercises
+  # the public tunnel, consumer-next, gateway, and product service end to end.
+  - name: product-detail-ssr
+    group: kubernetes-public
+    url: https://shop.apikv.com/zh/product/estee-lauder-anr
+    <<: *https-defaults
+    conditions:
+      - "[STATUS] == 200"
+      - "[BODY] == pat(*estee-lauder-anr*)"
+      - "[CERTIFICATE_EXPIRATION] > 168h"
+      - "[RESPONSE_TIME] < 5000"
+
+  - name: pangolin-control-plane
+    group: node1-public
+    url: https://pangolin.apikv.com/
+    <<: *https-defaults
+    conditions:
+      - "[STATUS] == 200"
+      - "[BODY] == pat(*Pangolin*)"
+      - "[CERTIFICATE_EXPIRATION] > 168h"
+      - "[RESPONSE_TIME] < 5000"
+
+  - name: node1-homepage
+    group: node1-public
+    url: https://apikv.com/
+    <<: *https-defaults
+    conditions:
+      - "[STATUS] == 200"
+      - "[BODY] == pat(*服务导航*)"
+      - "[CERTIFICATE_EXPIRATION] > 168h"
+      - "[RESPONSE_TIME] < 5000"

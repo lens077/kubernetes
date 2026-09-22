@@ -1,0 +1,3 @@
+# victoria-traces environment file
+# /etc/default/vtraces
+VTRACES_OPTS='-storageDataPath=/infra/traces -httpListenAddr=:10428 -retentionPeriod=15d -retention.maxDiskSpaceUsageBytes=50GiB'

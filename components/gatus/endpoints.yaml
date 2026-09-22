@@ -34,30 +34,32 @@ endpoints:
     interval: 1m
     conditions: ["[STATUS] == 200"]
     alerts: [{type: ntfy}]
-  - name: postgres-node3
+  - name: postgres-cnpg
     group: cluster-origin
-    # 业务 PG 在 node3 Pigsty (10.10.21.172), 集群内没有 CNPG/pooler; 这里探的是"集群 → node3 PG"这条路
-    url: tcp://10.10.21.172:5432
+    # 2026-09-22: 旧 node3 Pigsty (10.10.21.172) 已随主机重装退役, 业务 PG 改为集群内 CNPG pg-main。
+    # 这里探的是"集群 → pg-main 主实例"这条路。
+    url: tcp://pg-main-rw.postgresql.svc.cluster.local:5432
     interval: 1m
     conditions: ["[CONNECTED] == true"]
     alerts: [{type: ntfy}]
 
-  # ---------- observability-pipeline (数据真的到了 node3 Pigsty 吗) ----------
-  # 2026-09-15 起集群内不再有 VM/VL/VT/Alertmanager, 采集器 (otel / otel-node / vector) 直发 node3 Pigsty 栈。
-  # metrics.apikv.com 是无 SSO 的机器入口, 可直接查询; VictoriaLogs 的查询路径在 Pangolin SSO 之后,
-  # 日志入库端到端探针暂缺 (只剩 node3 Pigsty Gatus 的 origin 存活探针), 见 README「已知缺口」。
+  # ---------- observability-pipeline (数据真的进了集群内 VictoriaMetrics 吗) ----------
+  # 2026-09-22: 旧 node3 Pigsty 栈随主机重装退役, VM/VL/VT/Alertmanager 全部回到集群内,
+  # 采集器 (otel / otel-node / vector) 直发集群内后端。探针改走 ClusterIP, 不再依赖公网入口,
+  # 因此这两条在 newt 公网入口恢复之前也有效。日志入库的端到端探针仍缺, 见 README「已知缺口」。
   - name: k8s-cluster-state-ingestion
     group: observability-pipeline
-    # otel k8s_cluster receiver → node3 VM: 最近 5 分钟必须有 k8s_deployment_available 样本
-    url: "https://metrics.apikv.com/api/v1/query?query=max_over_time(k8s_deployment_available%5B5m%5D)"
+    # otel k8s_cluster receiver → 集群内 VM: 最近 5 分钟必须有 k8s_deployment_available 样本
+    url: "http://vm-single-victoria-metrics-single-server.victoriametrics.svc.cluster.local:8428/api/v1/query?query=max_over_time(k8s_deployment_available%5B5m%5D)"
     interval: 2m
     client: {timeout: 10s}
     conditions: ["[STATUS] == 200", "[BODY].status == success", "len([BODY].data.result) > 0"]
     alerts: [{type: ntfy}]
   - name: hostmetrics-ingestion
     group: observability-pipeline
-    # otel-node DaemonSet → node3 VM: 最近 5 分钟有主机指标样本 (system.cpu.time → system_cpu_time_seconds_total)
-    url: "https://metrics.apikv.com/api/v1/query?query=count(max_over_time(system_cpu_time_seconds_total%5B5m%5D))"
+    # otel-node DaemonSet → 集群内 VM: 最近 5 分钟有主机指标样本 (system.cpu.time → system_cpu_time_seconds_total)
+    # ⚠️ 依赖 ADDON_OTEL_NODE; 该组件未启用时这条会持续红, 关掉它而不是改判据。
+    url: "http://vm-single-victoria-metrics-single-server.victoriametrics.svc.cluster.local:8428/api/v1/query?query=count(max_over_time(system_cpu_time_seconds_total%5B5m%5D))"
     interval: 2m
     client: {timeout: 10s}
     conditions: ["[STATUS] == 200", "[BODY].status == success", "len([BODY].data.result) > 0"]
@@ -86,7 +88,9 @@ endpoints:
     conditions: ["[STATUS] == 401", "[RESPONSE_TIME] < 3000"]
     alerts: [{type: ntfy}]
 
-  # ---------- public-edge (经 Pangolin/newt 的公网入口, 沿用 node3 清单) ----------
+  # ---------- public-edge (经 Pangolin/newt 的公网入口, 清单沿用旧 node3 时代) ----------
+  # ⚠️ 2026-09-22: 旧 node3/node4/node5 三个 newt site 已失效, 集群 newt 尚未部署,
+  #    这一组在新 site 建好并迁移资源之前会持续红。要么先关这一组, 要么先完成迁移。
   - name: gateway
     group: public-edge
     url: https://gateway.apikv.com/healthz

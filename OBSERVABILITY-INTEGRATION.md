@@ -6,7 +6,7 @@
 
 背景：2026-09-03 之前这套链路的存储与告警侧在 node3 的 Pigsty 上（Victoria 全家桶 + vmalert +
 Alertmanager + 自写告警桥 + gatus/healthchecks/bugsink）。node3 重装后这些能力只存在于集群内，
-配置由 [`PIGSTY-HARVEST-2026-09-03.md`](PIGSTY-HARVEST-2026-09-03.md) 收割而来。
+配置参考 `backup/pigsty-node3-20260921/observability/` 中的 Pigsty 规则与观测配置备份；当前组件部署以 `components/` 和 `bootstrap/config.hosting.env` 为准。
 
 ## 1. 全景
 
@@ -156,4 +156,4 @@ Grafana 数据源由 `grafana/install.sh` 按集群实际后端预置，uid 固�
 - 公网 OTLP 入口的 Bearer 鉴权（node3 时代 otelcol 的 `bearertokenauth`）尚未迁入 opentelemetry 组件。
 - healthchecks 的 Prometheus 指标需要项目 API key，暂未接入 VM；先靠 gatus 探它的 `/api/v3/status/`。
 - Pigsty 的 29 个 PGSQL 仪表盘依赖 pg_exporter 指标名，CNPG 自带指标不兼容；可选方案见
-  `PIGSTY-HARVEST-2026-09-03.md` §5.5（跑一个 pg_exporter Deployment 指向 pg-main）。
+  `backup/pigsty-node3-20260921/observability/` 中的 PG exporter 配置（如需保留 PGSQL 仪表盘指标，再部署一个指向 CNPG pg-main 的 pg_exporter）。

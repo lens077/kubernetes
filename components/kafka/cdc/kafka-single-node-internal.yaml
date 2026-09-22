@@ -44,12 +44,11 @@ spec:
   # **Connect 那边的修复改了也推不下去**，必须先修这里。
   #
   # 容量约束（重要，改数值前必读）：
-  #   这个 Pod 的 PV 是 openebs-lvmpv，带 `openebs.io/nodename In [node3]` 的
-  #   硬亲和，**换不了节点**（和 loki-0 一样，见 vpa/examples/example1/loki.yml）。
-  #   而 node3 的内存 requests 一度占到 96%，只剩约 125Mi —— 当时根本塞不下
-  #   1Gi requests。是先把 kibana（2Gi requests / 实测 929Mi、无 PVC 可迁移）
-  #   right-size 到 1408Mi 并挤到 node2，腾出 2Gi 之后，这里才放得下。
-  #   node1 是 control-plane 且带 NoSchedule 污点，那 6GB 空闲用不上，别算进去。
+  #   这个 Pod 的 PV 是 openebs-lvmpv，带 `openebs.io/nodename` 硬亲和，**换不了节点** ——
+  #   PVC 落在哪个节点，broker 就永久钉在哪个节点，扩内存只能扩那一台。
+  #   2026-09-22 重建后是 k1/k2/k3 三台各 7.3Gi 内存、80G openebs-vg；k1 的
+  #   control-plane 污点已摘除，也参与调度。改 requests 前先看目标节点的实际余量
+  #   （`kubectl describe node <node>` 的 Allocated resources），别按旧 node2/node3 的数字推。
   #
   # 取值：实测 RSS 516Mi。-Xmx 768m 给堆，容器 1Gi，余约 256Mi 给堆外
   # （metaspace、线程栈、direct buffer、page cache 之外的 JVM 开销）。

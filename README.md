@@ -73,7 +73,6 @@ README.md       解决方案文档：定位 / 上游最佳实践 / **本集群�
 | [opentelemetry](components/opentelemetry/) | OTLP 统一入口，pipeline 按后端动态生成 | 集群内 |
 | [tetragon](components/tetragon/) | eBPF 运行时安全观察（三节点，仅 `ecommerce` 进程与 audit-only 策略事件） | 集群内 |
 | [grafana](components/grafana/) | 观测门面，数据源自动预置 | `grafana.dev.test` |
-| [postgres](components/postgres/) | CloudNativePG 算子 | TLS passthrough |
 | [dragonflydb](components/dragonflydb/) | Redis 协议缓存主力（**原生 TLS**，2026-08-20 起证书 cert-manager 签） | TCPRoute `:6380`(TLS) |
 | [kafka](components/kafka/) | Strimzi 算子 | LoadBalancer（不走网关） |
 | [meilisearch](components/meilisearch/) | 已退役；仅保留显式人工回滚安装能力，默认关闭 | — |
@@ -87,7 +86,6 @@ README.md       解决方案文档：定位 / 上游最佳实践 / **本集群�
 | [tempo](components/tempo/) | Grafana Tempo 链路后端（评估期，与 jaeger 并存） | `tempo.dev.test` |
 | [seata](components/seata/) | 事务协调器 TC（技术验证；ecommerce 走 Outbox+Saga 不依赖它） | TCPRoute `:8091` |
 | [okteto](components/okteto/) | 内环开发 CLI —— **本机组件，不往集群装东西** | — |
-| [nats](components/nats/) | NATS JetStream 事件底座（ecommerce 选型定稿 §1；meta R3，交易 R3/埋点 R1） | 集群内 `:4222` |
 | [victoria-logs](components/victoria-logs/) | VictoriaLogs 日志后端（拍板替 loki，双写过渡期并存） | 集群内 `:9428` |
 | [vector](components/vector/) | 容器日志采集 + VRL PII 脱敏（替 fluent-bit，双写期并存） | — |
 | [clickhouse](components/clickhouse/) | 埋点 OLAP 单节点（官方镜像 StatefulSet，内存帽 1.2G） | 集群内 `:8123/:9000` |
@@ -111,13 +109,13 @@ README.md       解决方案文档：定位 / 上游最佳实践 / **本集群�
 2026-08-20 选型定稿新增 12 组件的部署验证记录与坑册见 [`DEPLOY-RECORD-2026-08-20.md`](DEPLOY-RECORD-2026-08-20.md)。
 观测/告警/运维保障层（VM/VL/VT、OTel、Vector、vmalert、Alertmanager、告警桥、gatus、healthchecks、bugsink）
 如何互相接线、怎么验证每一段，见 [`OBSERVABILITY-INTEGRATION.md`](OBSERVABILITY-INTEGRATION.md)；
-这批能力来自 node3 Pigsty 的收割，见 [`PIGSTY-HARVEST-2026-09-03.md`](PIGSTY-HARVEST-2026-09-03.md)。
-机房三节点复原（`bootstrap/config.hosting.env`）的顺序与缺口见 [`RESTORE-RUNBOOK-2026-09-04.md`](RESTORE-RUNBOOK-2026-09-04.md)。
+这批能力来自旧 node3 Pigsty 的配置备份，见 `backup/pigsty-node3-20260921/observability/`；当前恢复入口以 `bootstrap/config.hosting.env` 与 `bootstrap/start.sh` 为准。
+
+**接手 k1/k2/k3 先读 [`HANDOFF-2026-09-22.md`](HANDOFF-2026-09-22.md)**（主机改名对照、阻塞项、改过的文件清单），逐项恢复记录见 [`RECOVERY-STATUS-2026-09-22.md`](RECOVERY-STATUS-2026-09-22.md)。
 
 ## 集群特性（组件配置的前提）
 
-单控制面 + 2 工作节点（node101 控制面，node102/node103 工作节点）、ARM64（Parallels VM，
-Ubuntu 26.04，内核 7.0）、**Cilium eBPF 完全替代 kube-proxy**、Gateway API v1.6.1
+单控制面 + 2 工作节点（k1 控制面并承载工作负载，k2/k3 工作节点）、amd64（Ubuntu 26.04，内核 7.0）、**Cilium eBPF 完全替代 kube-proxy**、Gateway API v1.6.1
 （10 个 CRD 全装，TCPRoute 可用）、OpenEBS LVM 本地卷（有节点绑定特性）、内存偏紧。
 Cilium 的当前 values、机器相关调优与在线升级手顺见 [`bootstrap/CILIUM.md`](bootstrap/CILIUM.md)。
 

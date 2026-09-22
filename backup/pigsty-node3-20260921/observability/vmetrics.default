@@ -1,0 +1,3 @@
+# victoria-metrics environment file
+# /etc/default/vmetrics
+VMETRICS_OPTS='-storageDataPath=/infra/metrics -httpListenAddr=:8428 -promscrape.config=/infra/prometheus.yml -retentionPeriod=15d -promscrape.fileSDCheckInterval=5s -opentelemetry.usePrometheusNaming=true'

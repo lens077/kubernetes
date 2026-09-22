@@ -1,0 +1,11 @@
+# Credential locations found on node3; values intentionally omitted.
+[/data/gatus/secrets/ntfy.env]
+NTFY_URL=<REDACTED>
+NTFY_TOPIC=<REDACTED>
+NTFY_TOKEN=<REDACTED>
+[/opt/ecommerce-gatus/secrets/ntfy.env] MISSING
+[/etc/infra-alerts/ntfy.env]
+NTFY_URL=<REDACTED>
+NTFY_TOPIC=<REDACTED>
+NTFY_TOKEN=<REDACTED>
+BUGSINK_BRIDGE_TOKEN=<REDACTED>

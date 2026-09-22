@@ -1,0 +1,8 @@
+{
+  "name": "vtraces-1",
+  "type": "jaeger",
+  "access": "proxy",
+  "url": "http://10.10.21.172:10428/select/jaeger",
+  "isDefault": false,
+  "editable": true
+}

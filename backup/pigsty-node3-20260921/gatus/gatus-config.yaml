@@ -1,0 +1,446 @@
+web:
+  address: 127.0.0.1
+  port: 8080
+
+ui:
+  title: Ecommerce infrastructure status
+  dashboard-heading: Ecommerce infrastructure status
+  dashboard-subheading: Public edge probes run from node3; origin probes cover node3-local services.
+  default-sort-by: group
+
+storage:
+  type: sqlite
+  path: /data/gatus.db
+  caching: true
+  maximum-number-of-results: 500
+  maximum-number-of-events: 100
+
+concurrency: 10
+
+alerting:
+  ntfy:
+    url: ${NTFY_URL}
+    topic: ${NTFY_TOPIC}
+    token: ${NTFY_TOKEN}
+    priority: 4
+    click: https://ntfy.apikv.com
+    default-alert:
+      failure-threshold: 2
+      success-threshold: 2
+      send-on-resolved: true
+
+endpoints:
+  - &https-defaults
+    name: gateway
+    group: core-public
+    url: https://gateway.apikv.com/healthz
+    interval: 1m
+    client:
+      timeout: 10s
+      ignore-redirect: true
+    alerts:
+      - type: ntfy
+    conditions:
+      - "[STATUS] == 200"
+      - "[CERTIFICATE_EXPIRATION] > 720h"
+      - "[RESPONSE_TIME] < 5000"
+
+  - name: mall
+    group: core-public
+    url: https://shop.apikv.com/
+    <<: *https-defaults
+    conditions:
+      - "[STATUS] == 200"
+      - "[CERTIFICATE_EXPIRATION] > 720h"
+      - "[RESPONSE_TIME] < 5000"
+
+  - name: casdoor
+    group: core-public
+    url: https://casdoor.apikv.com/api/health
+    <<: *https-defaults
+    conditions:
+      - "[STATUS] == 200"
+      - "[CERTIFICATE_EXPIRATION] > 720h"
+      - "[RESPONSE_TIME] < 5000"
+
+  - name: config-center-web
+    group: core-public
+    url: https://config.apikv.com/
+    <<: *https-defaults
+    conditions:
+      - "[STATUS] == 200"
+      - "[CERTIFICATE_EXPIRATION] > 720h"
+      - "[RESPONSE_TIME] < 5000"
+
+  - name: config-center-api
+    group: core-public
+    url: https://config-api.apikv.com/health
+    <<: *https-defaults
+    conditions:
+      - "[STATUS] == 401"
+      - "[CERTIFICATE_EXPIRATION] > 720h"
+      - "[RESPONSE_TIME] < 5000"
+
+  - name: homepage
+    group: node1-public
+    url: https://apikv.com/
+    <<: *https-defaults
+    conditions:
+      - "[STATUS] == 200"
+      - "[CERTIFICATE_EXPIRATION] > 720h"
+
+  - name: blog
+    group: node1-public
+    url: https://blog.apikv.com/
+    <<: *https-defaults
+    conditions:
+      - "[STATUS] == 200"
+      - "[CERTIFICATE_EXPIRATION] > 720h"
+
+  - name: pangolin
+    group: node1-public
+    url: https://pangolin.apikv.com/
+    <<: *https-defaults
+    conditions:
+      - "[STATUS] == 200"
+      - "[CERTIFICATE_EXPIRATION] > 720h"
+
+  - name: vault
+    group: node1-public
+    url: https://vault.apikv.com/
+    <<: *https-defaults
+    conditions:
+      - "[STATUS] == 307"
+      - "[CERTIFICATE_EXPIRATION] > 720h"
+
+  # kaneo 已于 2026-08-30 从 Pangolin 删除(见 db.sqlite.bak-kaneo-removal-20260830-181029),
+  # 域名实测 404。检查随资源一起删除,不留永久红。
+
+  - name: mcm
+    group: node1-public
+    url: https://mcm.apikv.com/
+    <<: *https-defaults
+    conditions:
+      - "[STATUS] == 200"
+      - "[CERTIFICATE_EXPIRATION] > 720h"
+
+  # vaultwarden,受 Pangolin SSO 保护 → gatus 视角是 302 跳登录页(见 node3-public 组的 UA 说明)。
+  - name: vaultwarden
+    group: node1-public
+    url: https://ps.apikv.com/
+    <<: *https-defaults
+    conditions:
+      - "[STATUS] == 302"
+      - "[CERTIFICATE_EXPIRATION] > 720h"
+
+  # cat 销售站(静态,与按需的 cat.apikv.com 控制台不是一回事,这个应当长期在线)
+  - name: cat-shop
+    group: node1-public
+    url: https://getcat.apikv.com/
+    <<: *https-defaults
+    conditions:
+      - "[STATUS] == 200"
+      - "[CERTIFICATE_EXPIRATION] > 720h"
+
+  - name: ntfy
+    group: node1-public
+    url: https://ntfy.apikv.com/v1/health
+    <<: *https-defaults
+    conditions:
+      - "[STATUS] == 200"
+      - "[CERTIFICATE_EXPIRATION] > 720h"
+
+  - name: node1-postgres
+    group: node1-tcp
+    url: tcp://114.132.233.129:52288
+    interval: 1m
+    alerts:
+      - type: ntfy
+    client:
+      timeout: 5s
+    conditions:
+      - "[CONNECTED] == true"
+
+  - name: node1-redis-tls
+    group: node1-tcp
+    url: tls://redis.apikv.com:61246
+    interval: 1m
+    alerts:
+      - type: ntfy
+    client:
+      timeout: 5s
+    conditions:
+      - "[CONNECTED] == true"
+      - "[CERTIFICATE_EXPIRATION] > 720h"
+
+  - name: node2-silo
+    group: node2-public
+    url: https://minio.apikv.com/minio/health/live
+    <<: *https-defaults
+    conditions:
+      - "[STATUS] == 200"
+      - "[CERTIFICATE_EXPIRATION] > 720h"
+
+  - name: node2-harbor
+    group: node2-public
+    url: https://harbor.apikv.com/api/v2.0/health
+    <<: *https-defaults
+    conditions:
+      - "[STATUS] == 200"
+      - "[CERTIFICATE_EXPIRATION] > 720h"
+
+  - name: node2-gorse
+    group: node2-public
+    url: https://gorse.apikv.com/
+    <<: *https-defaults
+    conditions:
+      - "[STATUS] == 302"
+      - "[CERTIFICATE_EXPIRATION] > 720h"
+
+  # 域名 2026-08-29 由 node3-grafana.apikv.com 改名为 grafana.apikv.com;旧名实测 404。
+  - name: node3-grafana-edge
+    group: node3-public
+    url: https://grafana.apikv.com/api/health
+    <<: *https-defaults
+    conditions:
+      - "[STATUS] == 200"
+      - "[CERTIFICATE_EXPIRATION] > 720h"
+
+  # 同上改名为 metrics.apikv.com,且该资源在 Pangolin 上 ssl=0——只有 http 通,
+  # https 实测 404(与 kubernetes/components/opentelemetry/README.md 记录一致)。
+  # 因为是 http,这里不能断言证书有效期。
+  - name: node3-metrics-edge
+    group: node3-public
+    url: http://metrics.apikv.com/health
+    interval: 1m
+    client:
+      timeout: 10s
+      ignore-redirect: true
+    alerts:
+      - type: ntfy
+    conditions:
+      - "[STATUS] == 200"
+      - "[RESPONSE_TIME] < 5000"
+
+  # 以下四个受 Pangolin SSO 保护的入口断言 302（跳 pangolin 登录页），这是 gatus 视角的正确值。
+  # ⚠️ 别被 curl 误导：Pangolin 1.22.0(badger v1.7.0)起，认证中间件按 **User-Agent** 分流——
+  #   UA 像 CLI 工具(curl/wget) → 401 Unauthorized
+  #   其它 UA(浏览器、Gatus/1.0)  → 302 跳 pangolin.apikv.com/auth/resource/<uuid>
+  # 触发条件是 UA 而不是 Accept 头(2026-09-01 逐变量隔离实测:仅改 Accept 仍 401,仅改 UA 即 302)。
+  # 所以「手动 curl 得到 401」不代表 gatus 会失败。改这类断言前，必须用 `curl -A 'Gatus/1.0'`
+  # 复测，或直接查 gatus API 的 success 字段，不要拿裸 curl 的结果当依据。
+  - name: node3-logs-edge
+    group: node3-public
+    url: https://node3-logs.apikv.com/health
+    <<: *https-defaults
+    conditions:
+      - "[STATUS] == 302"
+      - "[CERTIFICATE_EXPIRATION] > 720h"
+
+  - name: node3-traces-edge
+    group: node3-public
+    url: https://node3-traces.apikv.com/health
+    <<: *https-defaults
+    conditions:
+      - "[STATUS] == 302"
+      - "[CERTIFICATE_EXPIRATION] > 720h"
+
+  - name: node3-vmalert-edge
+    group: node3-public
+    url: https://node3-vmalert.apikv.com/health
+    <<: *https-defaults
+    conditions:
+      - "[STATUS] == 302"
+      - "[CERTIFICATE_EXPIRATION] > 720h"
+
+  - name: node3-alertmanager-edge
+    group: node3-public
+    url: https://node3-alerts.apikv.com/-/healthy
+    <<: *https-defaults
+    conditions:
+      - "[STATUS] == 302"
+      - "[CERTIFICATE_EXPIRATION] > 720h"
+
+  - name: silo-api-edge
+    group: node3-public
+    url: https://silo-api.apikv.com/minio/health/live
+    <<: *https-defaults
+    conditions:
+      - "[STATUS] == 200"
+      - "[CERTIFICATE_EXPIRATION] > 720h"
+
+  - name: node3-otlp-edge
+    group: node3-public
+    url: https://node3-otlp.apikv.com/
+    <<: *https-defaults
+    conditions:
+      - "[STATUS] == 401"
+      - "[CERTIFICATE_EXPIRATION] > 720h"
+
+  - name: bugsink
+    group: node3-public
+    url: https://bugsink.apikv.com/health/ready
+    <<: *https-defaults
+    conditions:
+      - "[STATUS] == 200"
+      - "[CERTIFICATE_EXPIRATION] > 720h"
+      - "[RESPONSE_TIME] < 5000"
+
+  - name: healthchecks-edge   # 2026-09-15 实例已迁入 k8s(ops ns), 经 Pangolin hc.apikv.com; /api/v3/status/ 已在资源规则放行
+    group: node1-edge
+    url: https://hc.apikv.com/api/v3/status/
+    interval: 1m
+    alerts:
+      - type: ntfy
+    conditions:
+      - "[STATUS] == 200"
+      - "[RESPONSE_TIME] < 2000"
+
+  - name: grafana-origin
+    group: node3-origin
+    url: http://127.0.0.1:3000/api/health
+    interval: 1m
+    conditions:
+      - "[STATUS] == 200"
+
+  - name: victoriametrics-origin
+    group: node3-origin
+    url: http://127.0.0.1:8428/health
+    interval: 1m
+    conditions:
+      - "[STATUS] == 200"
+
+  - name: victorialogs-origin
+    group: node3-origin
+    url: http://127.0.0.1:9428/health
+    interval: 1m
+    conditions:
+      - "[STATUS] == 200"
+
+  - name: victoriatraces-origin
+    group: node3-origin
+    url: http://127.0.0.1:10428/health
+    interval: 1m
+    conditions:
+      - "[STATUS] == 200"
+
+  - name: vmalert-origin
+    group: node3-origin
+    url: http://127.0.0.1:8880/health
+    interval: 1m
+    conditions:
+      - "[STATUS] == 200"
+
+  - name: alertmanager-origin
+    group: node3-origin
+    url: http://127.0.0.1:9059/-/healthy
+    interval: 1m
+    conditions:
+      - "[STATUS] == 200"
+
+  - name: otel-collector-origin
+    group: node3-origin
+    url: http://127.0.0.1:13133/
+    interval: 1m
+    conditions:
+      - "[STATUS] == 200"
+
+  # ⚠️ 指标名必须用**下划线**:VictoriaMetrics 摄入 OTel 指标时会把点号规范化成下划线,
+  # 全库 3998 个指标里含点号的是 0 个。写成 OTel 原始的 `k8s.deployment.available`
+  # 会永远匹配不到,表现为「指标断流」的假故障(2026-09-01 实测:下划线写法 51 条 series、
+  # 数据年龄 0 秒,采集链路一直是好的)。
+  - name: k8s-cluster-state-ingestion
+    group: kubernetes-observability
+    url: 'http://127.0.0.1:8428/api/v1/query?query=%7B__name__%3D%22k8s_deployment_available%22%7D'
+    interval: 1m
+    alerts:
+      - type: ntfy
+    conditions:
+      - "[STATUS] == 200"
+      - "len([BODY].data.result) > 0"
+
+  - name: k8s-event-ingestion
+    group: kubernetes-observability
+    url: 'http://127.0.0.1:9428/select/logsql/field_values?query=object.kind%3A%3DEvent&field=object.kind&start=24h'
+    interval: 1m
+    alerts:
+      - type: ntfy
+    conditions:
+      - "[STATUS] == 200"
+      - "len([BODY].values) > 0"
+      - "[BODY].values[0].hits > 0"
+
+
+  - name: redis-origin-tls
+    group: node3-origin
+    url: tls://127.0.0.1:6379
+    interval: 1m
+    client:
+      timeout: 5s
+      insecure: true
+    conditions:
+      - "[CONNECTED] == true"
+      - "[CERTIFICATE_EXPIRATION] > 720h"
+
+  - name: postgres-origin
+    group: node3-origin
+    url: tcp://127.0.0.1:5432
+    interval: 1m
+    client:
+      timeout: 5s
+    conditions:
+      - "[CONNECTED] == true"
+
+
+  - name: node3-postgres-edge
+    group: node3-tcp
+    url: tcp://114.132.233.129:30001
+    interval: 1m
+    alerts:
+      - type: ntfy
+    client:
+      timeout: 5s
+    conditions:
+      - "[CONNECTED] == true"
+
+  - name: node3-redis-edge-tls
+    group: node3-tcp
+    url: tls://114.132.233.129:30002
+    interval: 1m
+    alerts:
+      - type: ntfy
+    client:
+      timeout: 5s
+      insecure: true
+    conditions:
+      - "[CONNECTED] == true"
+      - "[CERTIFICATE_EXPIRATION] > 720h"
+
+
+  - name: dsh-on-demand
+    group: auxiliary-public
+    url: https://dsh.apikv.com/
+    <<: *https-defaults
+    conditions:
+      - "[STATUS] == 302"
+      - "[CERTIFICATE_EXPIRATION] > 720h"
+
+  - name: stream-on-demand
+    group: auxiliary-public
+    url: https://stream.apikv.com/
+    <<: *https-defaults
+    conditions:
+      - "[STATUS] == 404"
+      - "[CERTIFICATE_EXPIRATION] > 720h"
+
+  # dev-preview-on-demand 已移除：`dev.apikv.com` 资源于 2026-08-29 随 dev 子域一并删除（实测 404）。
+  # 保留一个永远失败的检查只会让看板常驻标红，削弱对其余告警的信任。
+
+  # 探 /api/health 而不是 /:根路径本来就没有路由(404),cat 的健康端点是 /api/health
+  # (见 cat 仓 docs/HANDOFF.md)。用 / 探测会把健康的服务判成红。
+  # 仍保留 alerts: [] —— 它依赖 Mac 上的 newt 在线,离线是常态而非故障,不该半夜叫人。
+  - name: cat-on-demand
+    group: auxiliary-public
+    url: https://cat.apikv.com/api/health
+    <<: *https-defaults
+    alerts: []

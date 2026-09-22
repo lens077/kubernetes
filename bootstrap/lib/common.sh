@@ -591,7 +591,7 @@ active_unhealthy_pods_from_json() {
 
 terminal_pod_count() {
   kctl get pods -A -o json 2>/dev/null | jq -r '
-    [.items[]
+    [(.items // [])[]
       | select(
           (.status.phase == "Succeeded" or .status.phase == "Failed")
           and (.metadata.deletionTimestamp == null)

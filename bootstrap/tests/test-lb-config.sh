@@ -22,7 +22,7 @@ MAIN_LOG="$LOG_DIR/install.log"
 mkdir -p "$LOG_DIR"
 
 NODE_ROLE=control-plane
-NODE_NAME=node4
+NODE_NAME=k1
 NODE_IP=10.10.21.161
 POD_CIDR=10.244.0.0/16
 SERVICE_CIDR=10.96.0.0/12

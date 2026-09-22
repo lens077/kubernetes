@@ -1,0 +1,475 @@
+[
+  {
+    "Id": "390e4999dee6db4545bd74c3c323aff361f930cf211e94ac3c8beddbb397d875",
+    "Created": "2026-08-27T13:43:30.616978907Z",
+    "Path": "/gatus",
+    "Args": [],
+    "State": {
+      "Status": "running",
+      "Running": true,
+      "Paused": false,
+      "Restarting": false,
+      "OOMKilled": false,
+      "Dead": false,
+      "Pid": 40239,
+      "ExitCode": 0,
+      "Error": "",
+      "StartedAt": "2026-09-15T08:39:11.668566769Z",
+      "FinishedAt": "2026-09-15T08:39:11.619151993Z"
+    },
+    "Image": "sha256:d22329045db2029aa4d150b444893d8ecf4e5ed05ea1766cf41b800240949926",
+    "ResolvConfPath": "/data/docker/containers/390e4999dee6db4545bd74c3c323aff361f930cf211e94ac3c8beddbb397d875/resolv.conf",
+    "HostnamePath": "/data/docker/containers/390e4999dee6db4545bd74c3c323aff361f930cf211e94ac3c8beddbb397d875/hostname",
+    "HostsPath": "/data/docker/containers/390e4999dee6db4545bd74c3c323aff361f930cf211e94ac3c8beddbb397d875/hosts",
+    "LogPath": "/data/docker/containers/390e4999dee6db4545bd74c3c323aff361f930cf211e94ac3c8beddbb397d875/390e4999dee6db4545bd74c3c323aff361f930cf211e94ac3c8beddbb397d875-json.log",
+    "Name": "/gatus",
+    "RestartCount": 0,
+    "Driver": "overlay2",
+    "Platform": "linux",
+    "MountLabel": "",
+    "ProcessLabel": "",
+    "AppArmorProfile": "docker-default",
+    "ExecIDs": null,
+    "HostConfig": {
+      "Binds": [
+        "/data/gatus/config.yaml:/config/config.yaml:ro",
+        "/data/gatus/data:/data:rw"
+      ],
+      "ContainerIDFile": "",
+      "LogConfig": {
+        "Type": "json-file",
+        "Config": {
+          "max-size": "100m"
+        }
+      },
+      "NetworkMode": "host",
+      "PortBindings": {},
+      "RestartPolicy": {
+        "Name": "unless-stopped",
+        "MaximumRetryCount": 0
+      },
+      "AutoRemove": false,
+      "VolumeDriver": "",
+      "VolumesFrom": null,
+      "ConsoleSize": [
+        0,
+        0
+      ],
+      "CapAdd": null,
+      "CapDrop": null,
+      "CgroupnsMode": "private",
+      "Dns": [],
+      "DnsOptions": [],
+      "DnsSearch": [],
+      "ExtraHosts": [],
+      "GroupAdd": null,
+      "IpcMode": "private",
+      "Cgroup": "",
+      "Links": null,
+      "OomScoreAdj": 0,
+      "PidMode": "",
+      "Privileged": false,
+      "PublishAllPorts": false,
+      "ReadonlyRootfs": true,
+      "SecurityOpt": [
+        "no-new-privileges:true"
+      ],
+      "Tmpfs": {
+        "/tmp": "size=32m,mode=1777"
+      },
+      "UTSMode": "",
+      "UsernsMode": "",
+      "ShmSize": 67108864,
+      "Runtime": "runc",
+      "Isolation": "",
+      "CpuShares": 0,
+      "Memory": 201326592,
+      "NanoCpus": 500000000,
+      "CgroupParent": "",
+      "BlkioWeight": 0,
+      "BlkioWeightDevice": null,
+      "BlkioDeviceReadBps": null,
+      "BlkioDeviceWriteBps": null,
+      "BlkioDeviceReadIOps": null,
+      "BlkioDeviceWriteIOps": null,
+      "CpuPeriod": 0,
+      "CpuQuota": 0,
+      "CpuRealtimePeriod": 0,
+      "CpuRealtimeRuntime": 0,
+      "CpusetCpus": "",
+      "CpusetMems": "",
+      "Devices": null,
+      "DeviceCgroupRules": null,
+      "DeviceRequests": null,
+      "MemoryReservation": 0,
+      "MemorySwap": 402653184,
+      "MemorySwappiness": null,
+      "OomKillDisable": null,
+      "PidsLimit": 128,
+      "Ulimits": [
+        {
+          "Name": "nofile",
+          "Hard": 1048576,
+          "Soft": 1048576
+        }
+      ],
+      "CpuCount": 0,
+      "CpuPercent": 0,
+      "IOMaximumIOps": 0,
+      "IOMaximumBandwidth": 0,
+      "MaskedPaths": [
+        "/proc/acpi",
+        "/proc/asound",
+        "/proc/interrupts",
+        "/proc/kcore",
+        "/proc/keys",
+        "/proc/latency_stats",
+        "/proc/sched_debug",
+        "/proc/scsi",
+        "/proc/timer_list",
+        "/proc/timer_stats",
+        "/sys/devices/virtual/powercap",
+        "/sys/firmware"
+      ],
+      "ReadonlyPaths": [
+        "/proc/bus",
+        "/proc/fs",
+        "/proc/irq",
+        "/proc/sys",
+        "/proc/sysrq-trigger"
+      ],
+      "Init": true
+    },
+    "GraphDriver": {
+      "Data": {
+        "ID": "390e4999dee6db4545bd74c3c323aff361f930cf211e94ac3c8beddbb397d875",
+        "LowerDir": "/data/docker/overlay2/7fb36c9994edb17942abd86e251f0f27ede21a5ebfda799ec55e98b9d0a1c7e1-init/diff:/data/docker/overlay2/d4625107267c556e599994a1730baa5659be2af3612d158b61d95291b8b8505b/diff:/data/docker/overlay2/6c26a08d3a4f8d60fd0b5ca1636f24702272b9f88d00bbaf765cc86433fe7eba/diff:/data/docker/overlay2/870ace91281c2b87657edee192c2b014235c664eff89e5eeeee95aecb341b207/diff",
+        "MergedDir": "/data/docker/overlay2/7fb36c9994edb17942abd86e251f0f27ede21a5ebfda799ec55e98b9d0a1c7e1/merged",
+        "UpperDir": "/data/docker/overlay2/7fb36c9994edb17942abd86e251f0f27ede21a5ebfda799ec55e98b9d0a1c7e1/diff",
+        "WorkDir": "/data/docker/overlay2/7fb36c9994edb17942abd86e251f0f27ede21a5ebfda799ec55e98b9d0a1c7e1/work"
+      },
+      "Name": "overlay2"
+    },
+    "Mounts": [
+      {
+        "Type": "bind",
+        "Source": "/data/gatus/config.yaml",
+        "Destination": "/config/config.yaml",
+        "Mode": "ro",
+        "RW": false,
+        "Propagation": "rprivate"
+      },
+      {
+        "Type": "bind",
+        "Source": "/data/gatus/data",
+        "Destination": "/data",
+        "Mode": "rw",
+        "RW": true,
+        "Propagation": "rprivate"
+      }
+    ],
+    "Config": {
+      "Hostname": "node3",
+      "Domainname": "",
+      "User": "",
+      "AttachStdin": false,
+      "AttachStdout": true,
+      "AttachStderr": true,
+      "ExposedPorts": {
+        "8080/tcp": {}
+      },
+      "Tty": false,
+      "OpenStdin": false,
+      "StdinOnce": false,
+      "Env": [
+        "NTFY_URL=<REDACTED>",
+        "NTFY_TOPIC=<REDACTED>",
+        "NTFY_TOKEN=<REDACTED>",
+        "PATH=<REDACTED>",
+        "GATUS_CONFIG_PATH=<REDACTED>",
+        "GATUS_LOG_LEVEL=<REDACTED>",
+        "PORT=<REDACTED>"
+      ],
+      "Cmd": null,
+      "Image": "ghcr.io/twin/gatus:v5.36.0@sha256:c5f210d095fa78e6efaa20ffeb14803f2ba4f10615e16a6d12087697149617f0",
+      "Volumes": null,
+      "WorkingDir": "/",
+      "Entrypoint": [
+        "/gatus"
+      ],
+      "Labels": {
+        "com.docker.compose.config-hash": "d602946dd8fbb97a537a70fd674ccfc64079bab6891e6134dd6c588dba097732",
+        "com.docker.compose.container-number": "1",
+        "com.docker.compose.depends_on": "",
+        "com.docker.compose.image": "sha256:d22329045db2029aa4d150b444893d8ecf4e5ed05ea1766cf41b800240949926",
+        "com.docker.compose.oneoff": "False",
+        "com.docker.compose.project": "gatus",
+        "com.docker.compose.project.config_files": "/data/gatus/compose.yml",
+        "com.docker.compose.project.working_dir": "/data/gatus",
+        "com.docker.compose.replace": "gatus",
+        "com.docker.compose.service": "gatus",
+        "com.docker.compose.version": "5.5.0",
+        "org.opencontainers.image.created": "2026-05-19T23:53:24.952Z",
+        "org.opencontainers.image.description": "Automated developer-oriented status page with alerting and incident support",
+        "org.opencontainers.image.licenses": "Apache-2.0",
+        "org.opencontainers.image.revision": "ed1107b41a30e22047eecfb6dbc3be5e39829d5a",
+        "org.opencontainers.image.source": "https://github.com/TwiN/gatus",
+        "org.opencontainers.image.title": "gatus",
+        "org.opencontainers.image.url": "https://github.com/TwiN/gatus",
+        "org.opencontainers.image.version": "v5.36.0"
+      }
+    },
+    "NetworkSettings": {
+      "SandboxID": "f352fb2c2956172e9bae74c78f5472a5b918e8a9c692229e0f14dc674bc45cb5",
+      "SandboxKey": "/var/run/docker/netns/default",
+      "Ports": {},
+      "Networks": {
+        "host": {
+          "IPAMConfig": null,
+          "Links": null,
+          "Aliases": null,
+          "DriverOpts": null,
+          "GwPriority": 0,
+          "NetworkID": "dc4537fc6c79dfd54a6de7637ee651fabc8f60cfb506416032e773cf64b8a6b3",
+          "EndpointID": "7503979a46003841ae1af425af1d24363bdf9f19ba14e173653acf65afa96788",
+          "Gateway": "",
+          "IPAddress": "",
+          "MacAddress": "",
+          "IPPrefixLen": 0,
+          "IPv6Gateway": "",
+          "GlobalIPv6Address": "",
+          "GlobalIPv6PrefixLen": 0,
+          "DNSNames": null
+        }
+      }
+    }
+  },
+  {
+    "Id": "bc43fd19bd8be820e874572abfa5c49e5865495201ffecf50546f8853ce839ab",
+    "Created": "2026-08-31T04:39:50.928820742Z",
+    "Path": "/gatus",
+    "Args": [],
+    "State": {
+      "Status": "running",
+      "Running": true,
+      "Paused": false,
+      "Restarting": false,
+      "OOMKilled": false,
+      "Dead": false,
+      "Pid": 3145,
+      "ExitCode": 0,
+      "Error": "",
+      "StartedAt": "2026-09-11T06:36:40.006274269Z",
+      "FinishedAt": "2026-09-11T06:33:00.584437537Z"
+    },
+    "Image": "sha256:d22329045db2029aa4d150b444893d8ecf4e5ed05ea1766cf41b800240949926",
+    "ResolvConfPath": "/data/docker/containers/bc43fd19bd8be820e874572abfa5c49e5865495201ffecf50546f8853ce839ab/resolv.conf",
+    "HostnamePath": "/data/docker/containers/bc43fd19bd8be820e874572abfa5c49e5865495201ffecf50546f8853ce839ab/hostname",
+    "HostsPath": "/data/docker/containers/bc43fd19bd8be820e874572abfa5c49e5865495201ffecf50546f8853ce839ab/hosts",
+    "LogPath": "/data/docker/containers/bc43fd19bd8be820e874572abfa5c49e5865495201ffecf50546f8853ce839ab/bc43fd19bd8be820e874572abfa5c49e5865495201ffecf50546f8853ce839ab-json.log",
+    "Name": "/ecommerce-gatus",
+    "RestartCount": 0,
+    "Driver": "overlay2",
+    "Platform": "linux",
+    "MountLabel": "",
+    "ProcessLabel": "",
+    "AppArmorProfile": "docker-default",
+    "ExecIDs": null,
+    "HostConfig": {
+      "Binds": [
+        "/opt/ecommerce-gatus/config.yaml:/config/config.yaml:ro",
+        "/opt/ecommerce-gatus/data:/data"
+      ],
+      "ContainerIDFile": "",
+      "LogConfig": {
+        "Type": "json-file",
+        "Config": {
+          "max-size": "100m"
+        }
+      },
+      "NetworkMode": "host",
+      "PortBindings": {},
+      "RestartPolicy": {
+        "Name": "unless-stopped",
+        "MaximumRetryCount": 0
+      },
+      "AutoRemove": false,
+      "VolumeDriver": "",
+      "VolumesFrom": null,
+      "ConsoleSize": [
+        0,
+        0
+      ],
+      "CapAdd": null,
+      "CapDrop": null,
+      "CgroupnsMode": "private",
+      "Dns": [],
+      "DnsOptions": [],
+      "DnsSearch": [],
+      "ExtraHosts": null,
+      "GroupAdd": null,
+      "IpcMode": "private",
+      "Cgroup": "",
+      "Links": null,
+      "OomScoreAdj": 0,
+      "PidMode": "",
+      "Privileged": false,
+      "PublishAllPorts": false,
+      "ReadonlyRootfs": true,
+      "SecurityOpt": null,
+      "Tmpfs": {
+        "/tmp": "rw,noexec,nosuid,size=16m"
+      },
+      "UTSMode": "",
+      "UsernsMode": "",
+      "ShmSize": 67108864,
+      "Runtime": "runc",
+      "Isolation": "",
+      "CpuShares": 0,
+      "Memory": 0,
+      "NanoCpus": 0,
+      "CgroupParent": "",
+      "BlkioWeight": 0,
+      "BlkioWeightDevice": [],
+      "BlkioDeviceReadBps": [],
+      "BlkioDeviceWriteBps": [],
+      "BlkioDeviceReadIOps": [],
+      "BlkioDeviceWriteIOps": [],
+      "CpuPeriod": 0,
+      "CpuQuota": 0,
+      "CpuRealtimePeriod": 0,
+      "CpuRealtimeRuntime": 0,
+      "CpusetCpus": "",
+      "CpusetMems": "",
+      "Devices": [],
+      "DeviceCgroupRules": null,
+      "DeviceRequests": null,
+      "MemoryReservation": 0,
+      "MemorySwap": 0,
+      "MemorySwappiness": null,
+      "OomKillDisable": null,
+      "PidsLimit": null,
+      "Ulimits": [
+        {
+          "Name": "nofile",
+          "Hard": 1048576,
+          "Soft": 1048576
+        }
+      ],
+      "CpuCount": 0,
+      "CpuPercent": 0,
+      "IOMaximumIOps": 0,
+      "IOMaximumBandwidth": 0,
+      "MaskedPaths": [
+        "/proc/acpi",
+        "/proc/asound",
+        "/proc/interrupts",
+        "/proc/kcore",
+        "/proc/keys",
+        "/proc/latency_stats",
+        "/proc/sched_debug",
+        "/proc/scsi",
+        "/proc/timer_list",
+        "/proc/timer_stats",
+        "/sys/devices/virtual/powercap",
+        "/sys/firmware"
+      ],
+      "ReadonlyPaths": [
+        "/proc/bus",
+        "/proc/fs",
+        "/proc/irq",
+        "/proc/sys",
+        "/proc/sysrq-trigger"
+      ]
+    },
+    "GraphDriver": {
+      "Data": {
+        "ID": "bc43fd19bd8be820e874572abfa5c49e5865495201ffecf50546f8853ce839ab",
+        "LowerDir": "/data/docker/overlay2/2bba0b94cb993293bc52384cc3dd1c621dd7f67585bd0c3f959aa87c45f070ef-init/diff:/data/docker/overlay2/d4625107267c556e599994a1730baa5659be2af3612d158b61d95291b8b8505b/diff:/data/docker/overlay2/6c26a08d3a4f8d60fd0b5ca1636f24702272b9f88d00bbaf765cc86433fe7eba/diff:/data/docker/overlay2/870ace91281c2b87657edee192c2b014235c664eff89e5eeeee95aecb341b207/diff",
+        "MergedDir": "/data/docker/overlay2/2bba0b94cb993293bc52384cc3dd1c621dd7f67585bd0c3f959aa87c45f070ef/merged",
+        "UpperDir": "/data/docker/overlay2/2bba0b94cb993293bc52384cc3dd1c621dd7f67585bd0c3f959aa87c45f070ef/diff",
+        "WorkDir": "/data/docker/overlay2/2bba0b94cb993293bc52384cc3dd1c621dd7f67585bd0c3f959aa87c45f070ef/work"
+      },
+      "Name": "overlay2"
+    },
+    "Mounts": [
+      {
+        "Type": "bind",
+        "Source": "/opt/ecommerce-gatus/config.yaml",
+        "Destination": "/config/config.yaml",
+        "Mode": "ro",
+        "RW": false,
+        "Propagation": "rprivate"
+      },
+      {
+        "Type": "bind",
+        "Source": "/opt/ecommerce-gatus/data",
+        "Destination": "/data",
+        "Mode": "",
+        "RW": true,
+        "Propagation": "rprivate"
+      }
+    ],
+    "Config": {
+      "Hostname": "node3",
+      "Domainname": "",
+      "User": "",
+      "AttachStdin": false,
+      "AttachStdout": false,
+      "AttachStderr": false,
+      "ExposedPorts": {
+        "8080/tcp": {}
+      },
+      "Tty": false,
+      "OpenStdin": false,
+      "StdinOnce": false,
+      "Env": [
+        "PATH=<REDACTED>",
+        "GATUS_CONFIG_PATH=<REDACTED>",
+        "GATUS_LOG_LEVEL=<REDACTED>",
+        "PORT=<REDACTED>"
+      ],
+      "Cmd": null,
+      "Image": "ghcr.io/twin/gatus:v5.36.0@sha256:c5f210d095fa78e6efaa20ffeb14803f2ba4f10615e16a6d12087697149617f0",
+      "Volumes": null,
+      "WorkingDir": "/",
+      "Entrypoint": [
+        "/gatus"
+      ],
+      "Labels": {
+        "org.opencontainers.image.created": "2026-05-19T23:53:24.952Z",
+        "org.opencontainers.image.description": "Automated developer-oriented status page with alerting and incident support",
+        "org.opencontainers.image.licenses": "Apache-2.0",
+        "org.opencontainers.image.revision": "ed1107b41a30e22047eecfb6dbc3be5e39829d5a",
+        "org.opencontainers.image.source": "https://github.com/TwiN/gatus",
+        "org.opencontainers.image.title": "gatus",
+        "org.opencontainers.image.url": "https://github.com/TwiN/gatus",
+        "org.opencontainers.image.version": "v5.36.0"
+      }
+    },
+    "NetworkSettings": {
+      "SandboxID": "0936dc2fac553d957a90636c01b31e1797f2f765223e2722d07be4a904d98ae5",
+      "SandboxKey": "/var/run/docker/netns/default",
+      "Ports": {},
+      "Networks": {
+        "host": {
+          "IPAMConfig": null,
+          "Links": null,
+          "Aliases": null,
+          "DriverOpts": null,
+          "GwPriority": 0,
+          "NetworkID": "dc4537fc6c79dfd54a6de7637ee651fabc8f60cfb506416032e773cf64b8a6b3",
+          "EndpointID": "871473f853c17dc86cac43eecb1a611c99f0dc8ad93f1b668dcc921ecd76be54",
+          "Gateway": "",
+          "IPAddress": "",
+          "MacAddress": "",
+          "IPPrefixLen": 0,
+          "IPv6Gateway": "",
+          "GlobalIPv6Address": "",
+          "GlobalIPv6PrefixLen": 0,
+          "DNSNames": null
+        }
+      }
+    }
+  }
+]

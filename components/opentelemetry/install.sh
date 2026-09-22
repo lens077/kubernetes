@@ -27,7 +27,8 @@ JAEGER_SVC="jaeger.observability.svc.cluster.local"
 VL_SVC="vl-victoria-logs-single-server.logging.svc.cluster.local:9428"
 VT_SVC="victoria-traces.observability.svc.cluster.local:10428"
 
-# 远端观测后端(node3 Pigsty, 经 node1 的 Pangolin 公网入口)。
+# 远端观测后端(可选)。2026-09-22: 旧 node3 Pigsty 已随主机重装退役, 三个 REMOTE_*_URL
+# 在 component.env 里已清空, 默认全部落集群内 VM/VL/VT。要再推远端时填新地址即可。
 #
 # 为什么做成开关而不是写死: 三条信号各自可以独立地"推远端"或"落本地"。设了对应的
 # REMOTE_*_URL 就改推远端并**跳过本地后端**(这正是把观测负载挪出内网的意义 ——

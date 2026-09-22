@@ -260,6 +260,15 @@ install_openebs() {
     --set engines.replicated.mayastor.enabled=false \
     --set loki.enabled=false \
     --set alloy.enabled=false
+
+  # Docker Hub intermittently truncates these two OpenEBS layers in the hosting network.
+  # Quay carries the same upstream images and is reachable by the node mirror path.
+  kctl -n openebs set image deploy/openebs-localpv-provisioner \
+    openebs-localpv-provisioner=quay.io/openebs/provisioner-localpv:4.5.1
+  kctl -n openebs set image deploy/openebs-lvm-localpv-controller \
+    openebs-lvm-plugin=quay.io/openebs/lvm-driver:1.9.1
+  kctl -n openebs set image ds/openebs-lvm-localpv-node \
+    openebs-lvm-plugin=quay.io/openebs/lvm-driver:1.9.1
 }
 
 wait_openebs_ready() {

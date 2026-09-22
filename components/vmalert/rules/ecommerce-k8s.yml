@@ -3,7 +3,8 @@
 # 触发它的事故：12 个 Pod 崩溃循环 9 小时无人发现。当时告警链路完全可用，
 # 但没有任何一条规则看 Kubernetes——869 条规则全是 Pigsty 自带的基础设施规则。
 #
-# 数据来源：集群内 otel collector 的 k8s_cluster receiver → node3 VictoriaMetrics。
+# 数据来源：集群内 otel collector 的 k8s_cluster receiver → 集群内 VictoriaMetrics
+# （2026-09-22：旧 node3 Pigsty VictoriaMetrics 已随主机重装退役）。
 # 不需要 kube-state-metrics。
 #
 # ⚠️ 指标名与 label 名现为**下划线**（k8s_container_restarts / k8s_namespace_name）。
@@ -68,7 +69,7 @@ groups:
         labels: { severity: critical, category: observability }
         annotations:
           summary: K8s 集群指标停止写入 VictoriaMetrics
-          description: 连续 10 分钟收不到 k8s_container_restarts。检查集群内 otel-opentelemetry-collector（单副本，本链路单点）、其 k8s_cluster receiver 与到 node3 的远端写入。此时所有 K8s 告警均已失效。
+          description: 连续 10 分钟收不到 k8s_container_restarts。检查集群内 otel-opentelemetry-collector（单副本，本链路单点）、其 k8s_cluster receiver 与到集群内 VictoriaMetrics 的写入。此时所有 K8s 告警均已失效。
 
       - alert: AlertFiringTooLong
         # 元规则：长期红着的告警不再产生新信息，反而会把真事故淹掉。

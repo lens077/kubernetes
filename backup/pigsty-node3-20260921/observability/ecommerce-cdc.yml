@@ -1,0 +1,102 @@
+---
+#==============================================================#
+# File      :   ecommerce-cdc.yml
+# Ctime     :   2026-09-05
+# Desc      :   ecommerce 搜索 CDC 链（PG → Debezium → Kafka → ES Sink）可行动告警
+# Path      :   /infra/rules/ecommerce-cdc.yml（部署到 node3 Pigsty；源：本文件）
+#
+# 为什么不看容器健康：三次事故（09-01 / 09-03 / 09-04）都是 cdc-connect 容器 healthy、
+# connector 级 RUNNING、而 task 级 FAILED、复制槽被 Patroni 删掉，链路静默停摆。
+# 因此这里只看三类真相：Connect task 状态、PG 复制槽、Sink consumer lag。
+# 处置手顺：/home/docker/ecommerce-cdc/RUNBOOK.md §6（slot/offset）、§7（两段积压）。
+#==============================================================#
+
+groups:
+  - name: ecommerce-cdc
+    rules:
+      #---------------------------------------------------------#
+      # KafkaConnect task 状态
+      #---------------------------------------------------------#
+      # 2026-09-15 起 Connect 在 k8s；task 状态由 ops/gatus 直接查询
+      # KafkaConnect REST，非 node3 cdc-connect-exporter。sink lag 由
+      # Kafka exporter → OTel → node3 VictoriaMetrics，见末尾三条规则。
+
+      #---------------------------------------------------------#
+      # PostgreSQL 逻辑复制槽（pg_exporter, slot_name=ecommerce_cdc）
+      #---------------------------------------------------------#
+      - alert: CdcReplicationSlotMissing
+        expr: absent(pg_slot_active{slot_name="ecommerce_cdc"})
+        for: 2m
+        labels: { severity: critical, category: cdc }
+        annotations:
+          summary: '复制槽 ecommerce_cdc 不存在'
+          description: 历史根因是 Patroni 在 PG 重启时删除未在 DCS slots 声明的槽（09-01/09-03/09-04 三次）。先 patronictl show-config 确认 slots.ecommerce_cdc 仍在；槽丢失后 Debezium offset 必然失效，按 RUNBOOK §6.3 处理。
+
+      - alert: CdcReplicationSlotInactive
+        expr: pg_slot_active{slot_name="ecommerce_cdc"} == 0
+        for: 5m
+        labels: { severity: critical, category: cdc }
+        annotations:
+          summary: '复制槽 ecommerce_cdc 无消费者（inactive 5 分钟）'
+          description: Debezium source task 没在读 WAL。WAL 会在槽上持续堆积直到 max_slot_wal_keep_size(12GB) 作废槽。配合 CdcConnectorTaskNotRunning 定位；见 RUNBOOK §7.1。
+
+      - alert: CdcSlotWalRetentionHigh
+        expr: pg_slot_retained_bytes{slot_name="ecommerce_cdc"} > 2 * 1024 * 1024 * 1024
+        for: 15m
+        labels: { severity: warning, category: cdc }
+        annotations:
+          summary: '复制槽 ecommerce_cdc 滞留 WAL {{ $value | humanize1024 }}B'
+          description: 位点不推进。若 task RUNNING 且 lag 为 0，检查 lsn.flush.mode=connector_and_driver 是否仍在（低流量表钉住 WAL 的旧坑）；超过 12GB 槽会被作废并被迫全量重快照。
+
+      - alert: CdcSlotWalRetentionCritical
+        expr: pg_slot_retained_bytes{slot_name="ecommerce_cdc"} > 8 * 1024 * 1024 * 1024
+        for: 5m
+        labels: { severity: critical, category: cdc }
+        annotations:
+          summary: '复制槽 ecommerce_cdc 滞留 WAL {{ $value | humanize1024 }}B，接近 12GB 作废线'
+          description: 立即处理 source task；作废后只能按 RUNBOOK §6.3 重快照，且期间需隔离搜索读取。
+
+      - alert: CdcSlotInvalidated
+        expr: pg_slot_invalidation_reason{slot_name="ecommerce_cdc"} != 0
+        for: 1m
+        labels: { severity: critical, category: cdc }
+        annotations:
+          summary: '复制槽 ecommerce_cdc 已被作废'
+          description: WAL 已不可续读，Debezium 无法从旧位点继续。按 RUNBOOK §6.3 重置 offset 并重快照。
+
+      #---------------------------------------------------------#
+      # k8s Kafka exporter → OTel → node3 VictoriaMetrics：ES Sink 消费积压
+      #---------------------------------------------------------#
+      - alert: CdcSinkLagStuck
+        # kafka_exporter 多副本时去掉抓取身份再聚合（与 /infra/rules/kafka.yml 口径一致）。
+        # 正常增量约 1s 内消费完，lag>0 持续 10 分钟就是卡住，而不是流量大。
+        expr: >-
+          sum by (topic)
+          (max without (ins, ip, instance)
+          (kafka_consumergroup_lag{consumergroup="connect-ecommerce-elasticsearch-sink", topic=~"ecommerce_cdc\\..+"}))
+          > 0
+        for: 10m
+        labels: { severity: warning, category: cdc }
+        annotations:
+          summary: 'ES Sink 积压 {{ $value | printf "%.0f" }} 条：{{ $labels.topic }}'
+          description: k8s Kafka 里有记录 Sink 没消费。看 ops/gatus 的 sink task 探针与 KafkaConnect trace；见 RUNBOOK §7.2。
+
+      - alert: CdcSinkLagCritical
+        expr: >-
+          sum by (topic)
+          (max without (ins, ip, instance)
+          (kafka_consumergroup_lag{consumergroup="connect-ecommerce-elasticsearch-sink", topic=~"ecommerce_cdc\\..+"}))
+          > 0
+        for: 30m
+        labels: { severity: critical, category: cdc }
+        annotations:
+          summary: 'ES Sink 积压持续 30 分钟：{{ $labels.topic }}'
+          description: 搜索结果已明显落后 PostgreSQL。处理 Sink 后用 wait-sink-lag.sh 确认全部 partition 连续两次 lag 为零。
+
+      - alert: CdcSinkLagMetricAbsent
+        expr: absent(kafka_consumergroup_lag{consumergroup="connect-ecommerce-elasticsearch-sink", topic="ecommerce_cdc.products.search_catalog"})
+        for: 10m
+        labels: { severity: warning, category: cdc }
+        annotations:
+          summary: 'Sink consumer group 的 lag 指标消失'
+          description: OTel 或 k8s Kafka exporter 停了，或 consumer group 已不存在；lag 看不到不等于为零。

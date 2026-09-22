@@ -1,4 +1,4 @@
-# Debezium PostgreSQL source：node3 Pigsty PG → k8s Kafka。
+# Debezium PostgreSQL source：CNPG pg-main → k8s Kafka。
 # 配置与 postgres-kafka-es-streaming-pipeline/deploy/docker-node3/connectors/postgres-source.json 逐字段对齐
 # （原 node3 Docker Connect 已于 2026-09-15 下线，本清单是唯一正式版本）。
 # slot / publication / topic 前缀统一为 ecommerce_cdc；删除事件走 tombstone，由 sink 的 behavior.on.null.values=DELETE 落地。
@@ -13,7 +13,7 @@ spec:
   class: io.debezium.connector.postgresql.PostgresConnector
   tasksMax: 1
   config:
-    database.hostname: 10.10.21.172
+    database.hostname: pg-main-rw.postgresql.svc.cluster.local
     database.port: "5432"
     database.dbname: ecommerce
     database.user: ${secrets:kafka/cdc-postgres:username}

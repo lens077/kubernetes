@@ -1,0 +1,14 @@
+{
+  "name": "vmetrics-1",
+  "type": "prometheus",
+  "access": "proxy",
+  "url": "http://10.10.21.172:8428",
+  "isDefault": false,
+  "editable": true,
+  "jsonData": {
+    "timeInterval": "2s",
+    "queryTimeout": "60s",
+    "tlsAuth": false,
+    "tlsAuthWithCACert": false
+  }
+}

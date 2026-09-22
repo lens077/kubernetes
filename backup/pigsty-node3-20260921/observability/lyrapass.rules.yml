@@ -1,0 +1,70 @@
+groups:
+  - name: lyrapass-availability
+    interval: 30s
+    rules:
+      - alert: LyraPassEndpointDown
+        expr: probe_success{monitor="lyrapass"} == 0
+        for: 2m
+        labels: { severity: CRIT, category: lyrapass }
+        annotations:
+          summary: "{{ $labels.service }} / {{ $labels.component }} 连续 2 分钟不可用"
+          description: "HTTP 探针失败：{{ $labels.instance }}"
+      - alert: LyraPassEndpointSlow
+        expr: probe_duration_seconds{monitor="lyrapass"} > 2
+        for: 10m
+        labels: { severity: WARN, category: lyrapass }
+        annotations:
+          summary: "{{ $labels.service }} / {{ $labels.component }} 响应持续超过 2 秒"
+          description: "当前耗时 {{ $value | humanizeDuration }}：{{ $labels.instance }}"
+      - alert: LyraPassCertificateExpiring
+        expr: (probe_ssl_earliest_cert_expiry{monitor="lyrapass"} - time()) < 14 * 24 * 3600
+        for: 15m
+        labels: { severity: WARN, category: lyrapass }
+        annotations:
+          summary: "{{ $labels.service }} TLS 证书将在 14 天内到期"
+          description: "目标：{{ $labels.instance }}"
+      - alert: LyraPassProbeMissing
+        expr: absent(probe_success{monitor="lyrapass"})
+        for: 5m
+        labels: { severity: CRIT, category: lyrapass }
+        annotations:
+          summary: "LyraPass blackbox 探针指标缺失"
+          description: "检查 VictoriaMetrics scrape 配置和 blackbox_exporter。"
+  - name: lyrapass-hosts
+    interval: 30s
+    rules:
+      - alert: LyraPassExporterDown
+        expr: up{monitor="lyrapass-exporter"} == 0
+        for: 5m
+        labels: { severity: WARN, category: lyrapass }
+        annotations:
+          summary: "{{ $labels.service }} {{ $labels.component }} exporter 不可达"
+          description: "采集目标：{{ $labels.instance }}"
+      - alert: LyraPassHostDiskLow
+        expr: 100 * node_filesystem_avail_bytes{monitor="lyrapass-exporter",fstype!~"tmpfs|overlay"} / node_filesystem_size_bytes{monitor="lyrapass-exporter",fstype!~"tmpfs|overlay"} < 15
+        for: 15m
+        labels: { severity: WARN, category: lyrapass }
+        annotations:
+          summary: "{{ $labels.service }} 磁盘可用空间低于 15%"
+          description: "挂载点 {{ $labels.mountpoint }}，剩余 {{ $value | printf \"%.1f\" }}%"
+      - alert: LyraPassCloudContainerMissing
+        expr: absent(container_last_seen{monitor="lyrapass-exporter",name="lyrapass-cloud"})
+        for: 5m
+        labels: { severity: CRIT, category: lyrapass }
+        annotations:
+          summary: "LyraPass Cloud 容器指标缺失"
+          description: "检查容器状态与 cAdvisor。"
+      - alert: LyraPassPostgresContainerMissing
+        expr: absent(container_last_seen{monitor="lyrapass-exporter",name="lyrapass-cloud-pg"})
+        for: 5m
+        labels: { severity: CRIT, category: lyrapass }
+        annotations:
+          summary: "LyraPass PostgreSQL 容器指标缺失"
+          description: "检查容器状态与 cAdvisor。"
+      - alert: LyraPassContainerMemoryHigh
+        expr: container_memory_working_set_bytes{monitor="lyrapass-exporter",name=~"lyrapass-cloud|lyrapass-cloud-pg"} / container_spec_memory_limit_bytes{monitor="lyrapass-exporter",name=~"lyrapass-cloud|lyrapass-cloud-pg"} > 0.85
+        for: 15m
+        labels: { severity: WARN, category: lyrapass }
+        annotations:
+          summary: "{{ $labels.name }} 容器内存超过限制的 85%"
+          description: "当前占比 {{ $value | humanizePercentage }}"

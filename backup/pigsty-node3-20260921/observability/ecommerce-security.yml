@@ -1,0 +1,40 @@
+groups:
+  - name: ecommerce-security
+    interval: 15s
+    rules:
+      - alert: EcommerceServiceAccountTokenAccess
+        expr: increase(ecommerce_tetragon_security_events_total{event_type="token_access"}[5m]) > 0
+        labels:
+          severity: critical
+          category: runtime-security
+        annotations:
+          summary: ecommerce 工作负载读取了 projected ServiceAccount token
+          description: Tetragon 在最近 5 分钟观察到 token 文件访问。立即查询 VictoriaLogs 中的 policy_name、Pod、binary 和 parent chain；不要输出 token 内容。
+
+      - alert: EcommerceSuspiciousToolExec
+        expr: increase(ecommerce_tetragon_security_events_total{event_type="suspicious_exec"}[5m]) > 0
+        labels:
+          severity: warning
+          category: runtime-security
+        annotations:
+          summary: ecommerce 工作负载启动了 shell 或网络调试工具
+          description: 最近 5 分钟出现 bash、sh、curl、wget、nc、ncat 或 socat。先确认是否为授权运维，再按 Pod、binary、UID 和 parent chain 调查。
+
+      - alert: EcommerceNetworkPolicyDeniedBurst
+        expr: sum(increase(hubble_drop_total{reason="POLICY_DENIED"}[5m])) > 20
+        labels:
+          severity: warning
+          category: network-security
+        annotations:
+          summary: Cilium NetworkPolicy 拒绝流量突增
+          description: 最近 5 分钟 POLICY_DENIED 超过 20 次。通过 Hubble Relay 查询 DROPPED flow，定位 source、destination、port 和 CNP；不要为消除告警扩大 CIDR 或放开 default-deny。
+
+      - alert: HubbleFlowTelemetryMissing
+        expr: absent(hubble_flows_processed_total) == 1
+        for: 10m
+        labels:
+          severity: warning
+          category: observability
+        annotations:
+          summary: Hubble flow 指标停止写入 VictoriaMetrics
+          description: 连续 10 分钟没有 hubble_flows_processed_total。检查 Cilium DaemonSet、Hubble metrics、OTel Collector prometheus/cilium receiver 与远端写入链路。

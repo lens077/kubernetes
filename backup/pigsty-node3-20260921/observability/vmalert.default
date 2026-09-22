@@ -1,0 +1,3 @@
+# vmalert environment file
+# /etc/default/vmalert
+VMALERT_OPTS='-datasource.url=http://127.0.0.1:8428 -remoteRead.url=http://127.0.0.1:8428 -remoteWrite.url=http://127.0.0.1:8428 -notifier.url=http://127.0.0.1:9059 -httpListenAddr=:8880 -rule=/infra/rules/*.yml -evaluationInterval=10s  '

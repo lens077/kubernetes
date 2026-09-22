@@ -87,16 +87,16 @@ kubectl -n opentelemetry logs deploy/otel-opentelemetry-collector --since=10m \
   | grep -iE 'error|warn|drop'
 ```
 
-VictoriaMetrics 在 node3 本机监听 `127.0.0.1:8428`。公网查询路径受 Pangolin SSO 保护，可经 SSH 验证落库：
+2026-09-22 起 VictoriaMetrics 是集群内组件（`victoriametrics` 命名空间），旧 node3 Pigsty 实例已随主机重装退役。直接在 Pod 里查：
 
 ```bash
-ssh node3 "curl -fsSG http://127.0.0.1:8428/api/v1/query \
-  --data-urlencode 'query=count(cilium_bpf_map_pressure)'"
+kubectl -n victoriametrics exec vm-single-victoria-metrics-single-server-0 -- \
+  wget -qO- 'http://127.0.0.1:8428/api/v1/query?query=count(cilium_bpf_map_pressure)'
 ```
 
 采集成功的判据不是「Collector 配置里出现 receiver」，而是 VictoriaMetrics 能查到带 `k8s_node_name`、`k8s_pod_name`、`service_name` 标签的新样本。
 
-⚠️ **标签名用下划线**：node3 的 VictoriaMetrics 启动带 `-opentelemetry.usePrometheusNaming=true`〔实测 2026-09-01〕，把 OTel 的点号命名（`k8s.node.name`）转成 Prometheus 下划线命名。Collector 侧配置里写的仍是点号（那是摄入前的 OTel 属性名），**只有查询 VM 时要用下划线**。写错不报错、只是查不到，极易误判成「没采到」。
+⚠️ **标签名用下划线**：VictoriaMetrics 启动带 `-opentelemetry.usePrometheusNaming=true`〔实测 2026-09-01〕，把 OTel 的点号命名（`k8s.node.name`）转成 Prometheus 下划线命名。Collector 侧配置里写的仍是点号（那是摄入前的 OTel 属性名），**只有查询 VM 时要用下划线**。写错不报错、只是查不到，极易误判成「没采到」。
 
 ## 4. 机器与规模相关的旋钮
 
@@ -352,8 +352,9 @@ control-tower gateway 仍由共享 `cilium-gateway` 的 HTTPRoute 对外，后�
 
 ### 8.1 机房三节点：为什么仍开 L2，VIP 为什么不用 `10.10.21.x`
 
-机房节点是 `node4=10.10.21.161`、`node5=.162`、`node3=.163`，位于 VMware `vmxnet3` 的多租户
-`10.10.21.0/24`。2026-09-04 在未部署 k8s 前做了三项只读/瞬时网络验证：
+机房节点是 `k1=10.10.21.161`、`k2=.162`、`k3=.163`（2026-09-21 由旧 node4/node5/node3 重装改名，
+IP 未变），位于 VMware `vmxnet3` 的多租户 `10.10.21.0/24`。2026-09-04 在未部署 k8s 前做了三项只读/瞬时网络验证
+（当时主机名还是旧名，下文保留原始记录）：
 
 1. 从 node4 构造源地址 `10.244.99.99`（Pod CIDR）的 UDP 包，node5 `tcpdump` 收到 3/3；说明
    vSwitch 没有 SpoofGuard/源地址反欺骗，`routingMode=native + autoDirectNodeRoutes` 能携带 Pod 源 IP。
@@ -367,7 +368,7 @@ control-tower gateway 仍由共享 `cilium-gateway` 的 HTTPRoute 对外，后�
 ```text
 公网用户 → Pangolin/Traefik(node1 VPS) → WireGuard/newt Pod
           ├─ HTTPRoute: target=https://10.10.31.240:443 → Cilium Gateway → Service/Pod
-          └─ 节点服务: target=10.10.21.161|162|163:<port> → node4|5|3
+          └─ 节点服务: target=10.10.21.161|162|163:<port> → k1|k2|k3
 
 gateway-pool: CILIUM_GATEWAY_LB_IP = 10.10.31.240/32（只匹配共享 Gateway Service）
 default-pool: CILIUM_LB_POOL_START/STOP = 10.10.31.241-249（其它 LoadBalancer）
@@ -411,13 +412,15 @@ default-pool: CILIUM_LB_POOL_START/STOP = 10.10.31.241-249（其它 LoadBalancer
 答案存到 `/var/lib/k8s-installer/lb-ipam.env`，0600，重跑自动复用；`config.env` 显式写了的永远优先），无终端则报错退出，
 不会带着空地址走到 60 阶段。配置校验步骤每次重跑都重新执行，改了地址或开关不会被首次的完成标记跳过。
 
-验收分四层，互相不能替代（状态列为 2026-09-06 node4+node5 两节点集群的实测）：
+验收分四层，互相不能替代（状态列为 2026-09-06 两节点集群的实测；主机名当时还是旧的 node4/node5，
+现为 `k1`/`k2`，IP 未变。2026-09-22 三节点重建后 90 阶段冒烟复测：VIP 已分配并编程、L2 租约存在、
+节点自访未通，仍只作附加观测）：
 
 | 层 | 证明什么 | 由谁验证 | 状态 |
 |---|---|---|---|
 | 控制面/分配 | 两池 `PoolConflict=False`@当前 generation；Gateway 当前 generation `Programmed=True`；生成的 Service `default/cilium-gateway-cilium-gateway` 请求注解与实际分配都是 `.240`，`IPAMRequestSatisfied=True` | 60 阶段 l2 步骤（每次重跑都重校验）、`components/gateway/install.sh`、90 阶段 | ✅ 60/80/90 三处校验都通过 |
 | eBPF 编程 | `cilium-dbg service list` 含该 VIP | 90 阶段 LB 冒烟（L2 租约、节点自访只作附加观测分别记录） | ✅ 冒烟 VIP `.244` 已编程；租约存在；节点自访第一次未通、第二次通（附加观测，不作判据） |
-| Pod 路径（newt 的同一条路） | 从 Cilium 管理、非 hostNetwork 的 Pod 内带正确 Host 访问 `https://.240/...` 得到业务状态码（404/502 不算） | 探测 Pod（`curlimages/curl`，node4 与 node5 各一）；正式 newt Pod 待 `ADDON_NEWT` 打开后按 `components/gateway/README.md` §5 复测 | ✅ 两节点都：`metrics.dev.test`/`argocd.dev.test` 200 `server=envoy`；未匹配 Host 404；80→443 301；证书 `CN=dev.test`。newt Pod 本身尚未部署（站点 ID 与 node3 在线 newt 冲突） |
+| Pod 路径（newt 的同一条路） | 从 Cilium 管理、非 hostNetwork 的 Pod 内带正确 Host 访问 `https://.240/...` 得到业务状态码（404/502 不算） | 探测 Pod（`curlimages/curl`，node4 与 node5 各一）；正式 newt Pod 待 `ADDON_NEWT` 打开后按 `components/gateway/README.md` §5 复测 | ✅ 两节点都：`metrics.dev.test`/`argocd.dev.test` 200 `server=envoy`；未匹配 Host 404；80→443 301；证书 `CN=dev.test`。newt Pod 本身尚未部署（2026-09-22：旧 node3/node4/node5 三个 site 已随主机重装失效，需在 Pangolin 新建集群 site 拿凭据） |
 | 同链路外部主机 | 只有拿到机房专属 `10.10.21.x` 池后才有意义 | 人工，需先取得地址授权 | ⏳ 待机房答复（见上文 4 个问题） |
 
 `default/cilium-gateway` 通过 `spec.addresses` 固定在 `CILIUM_GATEWAY_LB_IP`（Cilium 把它写成生成 Service 的

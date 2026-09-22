@@ -103,7 +103,7 @@ dyn=$(mktemp)
   fi
 } > "$dyn"
 
-helm_install_component "$DIR" -f "$dyn"
+helm_install_component "$DIR" --version "$CHART_VERSION" -f "$dyn"
 rm -f "$dyn"
 
 routes_apply "$DIR"

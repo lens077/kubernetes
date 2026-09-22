@@ -242,7 +242,9 @@ render_tpl() {  # render_tpl <模板> <输出> [额外变量名...]
               KURED_REBOOT_WINDOW_START KURED_REBOOT_WINDOW_END
               # 2026-09-03 观测/告警/运维保障层(vmalert/alertmanager/victoria-traces/gatus/healthchecks/bugsink)
               VT_STORAGE_SIZE VT_RETENTION VT_DISK_CAP ALERTMANAGER_STORAGE_SIZE
-              GATUS_STORAGE_SIZE HEALTHCHECKS_STORAGE_SIZE BUGSINK_STORAGE_SIZE BUGSINK_EVENT_RETENTION_DAYS "$@")
+              GATUS_STORAGE_SIZE HEALTHCHECKS_STORAGE_SIZE BUGSINK_STORAGE_SIZE BUGSINK_EVENT_RETENTION_DAYS
+              # 2026-09-17 umami(网站分析; 库在集群外 node3 Pigsty, 故是 ENDPOINT 而非 STORAGE_SIZE)
+              UMAMI_IMAGE UMAMI_DB_ENDPOINT UMAMI_TRACKER_SCRIPT_NAME "$@")
   local sed_args=() v
   for v in "${vars[@]}"; do sed_args+=(-e "s|\${$v}|${!v-}|g"); done
   sed "${sed_args[@]}" "$src" > "$out"
@@ -334,7 +336,6 @@ PY
 helm_install_component() {  # helm_install_component <组件目录> [附加 helm 参数...]
   local dir=$1; shift
   [[ -n $HELM_CHART ]] || die "$ID 未定义 HELM_CHART"
-  [[ -n $HELM_REPO ]] && helm_repo_add ${HELM_REPO}   # 形如 "vm https://..."; 故意不加引号
   local values_arg=() rendered=""
   if [[ -f $dir/values.yaml ]]; then
     rendered=$(mktemp)
@@ -347,6 +348,10 @@ helm_install_component() {  # helm_install_component <组件目录> [附加 helm
     [[ ${!i} == --version ]] && { local j=$(( i + 1 )); version=${!j:-}; break; }
     [[ ${!i} == --version=* ]] && { version=${!i#--version=}; break; }
   done
+  local chart_name="${HELM_CHART#*/}"
+  if [[ -n $HELM_REPO ]] && [[ -z $version || ! -s "${CACHE_DIR:-/var/cache/k8s-installer}/charts/${chart_name}-${version}.tgz" ]]; then
+    helm_repo_add ${HELM_REPO}   # 形如 "vm https://..."; 故意不加引号
+  fi
   chart_ref=$(helm_chart_ref_via_github_proxy "$HELM_CHART" "$version")
   retry 2 10 helm_cmd upgrade --install "${RELEASE:-$ID}" "$chart_ref" \
     --namespace "$NAMESPACE" --create-namespace "${values_arg[@]}" "$@"

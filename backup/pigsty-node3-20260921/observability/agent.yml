@@ -1,0 +1,64 @@
+---
+#==============================================================#
+# File      :   agent.yml
+# Ctime     :   2022-11-09
+# Mtime     :   2024-08-08
+# Desc      :   Agent Rules
+# Path      :   /infra/rules/agent.yml
+# License   :   Apache-2.0 @ https://pigsty.io/docs/about/license/
+# Copyright :   2018-2026  Ruohang Feng / Vonng (rh@vonng.com)
+#==============================================================#
+
+groups:
+
+  - name: agent-rules
+    rules:
+
+      # NODE
+      - record: node_up
+        expr: up{instance=~".*:9100"}
+
+      - record: haproxy_up
+        expr: up{instance=~".*:9101"}
+
+      - record: keepalived_exporter_up
+        expr: up{instance=~".*:9650"}
+
+      - record: docker_up
+        expr: up{instance=~".*:9323"}
+
+      - record: vector_up
+        expr: up{instance=~".*:9598"}
+
+      # ETCD
+      - record: etcd_up
+        expr: up{job="etcd"}
+
+      # MINIO
+      - record: minio_up
+        expr: up{job="minio"}
+
+      # PGSQL
+      - record: pg_exporter_agent_up
+        expr: up{instance=~".*:9630"}
+
+      - record: pgbouncer_exporter_agent_up
+        expr: up{instance=~".*:9631"}
+
+      - record: pgbackrest_exporter_agent_up
+        expr: up{instance=~".*:9854"}
+
+      - record: patroni_up
+        expr: up{instance=~".*:8008"}
+
+      # MYSQL
+      - record: mysql_exporter_up
+        expr: up{job="mysql"}
+
+      # KAFKA
+      - record: kafka_up
+        expr: up{job="kafka",role=~".+"}
+
+      - record: kafka_exporter_up
+        expr: up{job="kafka",role=""}
+...

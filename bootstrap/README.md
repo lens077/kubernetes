@@ -53,18 +53,18 @@ sudo bash start.sh --yes
 kubeadm token create --print-join-command
 ```
 
-### 机房 node4/node5/node3
+### 机房 k1/k2/k3
 
-完整手顺见仓库根目录 [`RESTORE-RUNBOOK-2026-09-04.md`](../RESTORE-RUNBOOK-2026-09-04.md)。
+恢复以 `bootstrap/config.hosting.env`、`bootstrap/start.sh` 和根目录 `README.md` 为准；Pigsty 配置备份位于 `backup/pigsty-node3-20260921/`。
 三台使用同一个完整配置副本：
 
 ```bash
 cp config.hosting.env config.env
-# node4: control-plane, 先只到存储阶段(不装组件: 31 个组件不能挤进单节点)
+# k1: control-plane + 工作负载, 先只到存储阶段(不装组件: 组件不能挤进单节点)
 sudo bash start.sh --to 70-storage
-# node5/node3: worker（50 阶段粘贴 node4 的 join 命令）
+# k2/k3: worker（用 k1 的 kubeadm token create --print-join-command 生成 JOIN_* 环境变量）
 sudo bash start.sh --worker
-# node4: 三节点齐后 operator 扩到 2 副本(values 指纹变化 → 自动 helm upgrade), 再装组件与验收
+# k1: 三节点齐后 operator 扩到 2 副本(values 指纹变化 → 自动 helm upgrade), 再装组件与验收
 sed -i 's/^CILIUM_OPERATOR_REPLICAS="1"/CILIUM_OPERATOR_REPLICAS="2"/' config.env
 sudo bash start.sh --only 60-cilium
 sudo bash start.sh --from 80-components        # = 80-components + 90-verify
