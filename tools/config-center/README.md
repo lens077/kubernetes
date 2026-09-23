@@ -28,14 +28,15 @@
 
 | 资源 | 类型 | 新 target | 状态 |
 |---|---|---|---|
-| Dragonfly | raw TCP/TLS | `10.10.31.242:6379`，新集群 TCPRoute | K8s 已 Ready；Pangolin resource 待创建 |
-| PostgreSQL | TLS passthrough | `10.10.31.241:5432`，`pg-passthrough-gateway` + SNI `pg.dev.test` | K8s 已 Programmed；Pangolin resource 待创建 |
+| Dragonfly | raw TCP/TLS | `10.10.31.242:6379`，新集群 TCPRoute | **已建**：Pangolin `redis-dev`（resourceId 59，proxyPort 30005）→ site `k8s-cluster`；2026-09-22 Mac 实测 `redis-dev.apikv.com:30005` TLS(CA 校验+SNI)+AUTH 正反向通过 |
+| PostgreSQL | raw TCP（不是 passthrough） | `pg-main-rw` ClusterIP:5432（Pangolin `pg`，resourceId 26，proxyPort 30001） | **已建并实测**：2026-09-22 Mac `pg-dev.apikv.com:30001` `sslmode=verify-ca` + `pg-main-ca` 通过、错密码被拒。不能指 `10.10.31.241`：passthrough 监听器只认直接 ClientHello，PG 客户端的明文 SSLRequest 会被 Envoy 拒 |
 | Kafka | raw TCP | `my-cluster-kafka-bootstrap.kafka.svc:9092`，需要另建受限 TCPRoute | K8s 仅内部 listener；未对公网开放 |
-| Grafana | HTTPS/HTTPRoute | `10.10.31.240:443`，Host `grafana.dev.test` | K8s HTTPRoute 已 Ready；Pangolin resource 待迁移 |
+| Grafana | HTTPS/HTTPRoute | `10.10.31.240:443`，Host `grafana.dev.test` | 已迁到 `k8s-cluster`（`grafana.apikv.com`，`/api/health` 200） |
 | ArgoCD Web UI | HTTPS/HTTPRoute | `10.10.31.240:443`，Host `argocd.dev.test` | K8s HTTPRoute 已 Ready；Pangolin resource 待创建 |
 
-新建 raw TCP 资源前，确认 node1 gerbil/Traefik 对应端口和云防火墙放行；不要复用旧 `30005` target
-或旧 node4/node5 site。TLS passthrough 服务必须保留 SNI；HTTPRoute 服务由 Cilium Gateway 终止 TLS。
+新建 raw TCP 资源前，确认 node1 gerbil/Traefik 对应端口和云防火墙放行；`30005` 已被新 `redis-dev` 复用，target 是新集群 VIP，
+不是旧 node4/node5。面板的「创建资源」按钮在自动化填表时会一直 disabled，用 `PUT /api/v1/org/main/resource` +
+`PUT /api/v1/resource/{id}/target`（带 `X-CSRF-Token: x-csrf-protection`，页面会话）更稳。TLS passthrough 服务必须保留 SNI；HTTPRoute 服务由 Cilium Gateway 终止 TLS。
 
 
 `gateway` 策略的前提：开发机在集群 LAN 上（网关 VIP `10.10.31.x` 只在机房 L2 可达，家里的 Mac 经隧道只到 API server），且开发机能把 `<组件>.dev.test` 解析到网关 VIP（RFC 6761 保留域，公网永不解析）。`/etc/hosts` 不支持通配，要么逐条写（`10.10.31.240 consul.dev.test`、`10.10.31.243 redis.dev.test`……每个组件一行，HOSTNAME 见各 `component.env`），要么用本机 split DNS：macOS 放一个 `/etc/resolver/dev.test` 指向跑 dnsmasq 的地址（`address=/.dev.test/10.10.31.240`，TCP 组件另指其独立 Gateway VIP），Linux 用 systemd-resolved/dnsmasq 同理。2026-09-12 在节点宿主机实测：`consul.dev.test:443` 经共享网关 HTTPS 200、证书链过私有 CA（CN `dev.test`）；`redis.dev.test:6380` 经 dragonfly-gateway TLS 校验通过、`AUTH` +OK / `PING` +PONG、错密码 `-WRONGPASS`。写入 Config Center `dev` 环境需要一枚 `ENVIRONMENT=dev` 的 operator token（Secret `config-center-operator-dev`）。

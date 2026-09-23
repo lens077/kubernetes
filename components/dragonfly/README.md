@@ -8,8 +8,19 @@
 - 协议：TLS-only + AUTH
 - 存储：`openebs-lvm`，2Gi
 - 外部 L4：独立 Cilium `Gateway`/`TCPRoute`，VIP `10.10.31.242:6379`
-- Secret：`dragonfly-auth`（只在集群 Secret/本地 credentials 中，不能提交明文）
+- Secret：`dragonfly-auth`，由 ESO 从 OpenBao `k8s/<集群>/dragonfly` 物化（`externalsecret.yaml`）；OpenBao 不可用时 `install.sh` 退回 `get_cred`。首次迁移 `tools/openbao-seed.sh dragonfly`（取现值），轮换 `--rotate dragonfly`
 - 证书：cert-manager `global-ca-issuer`，Secret `dragonfly-tls`
 
-Pangolin/remote-dev 资源必须指向 `10.10.31.242:6379`，并保留 TLS passthrough；公网域名和
-resource id 由 Pangolin 面板创建后再写入 Config Center，不把未知域名写入仓库。
+## remote-dev（开发机不在机房 LAN）
+
+Pangolin raw TCP 资源 `redis-dev`（resourceId 59，proxyPort 30005）→ site `k8s-cluster` → `10.10.31.242:6379`，TLS 直通。
+契约字段在 `component.env`（`REMOTE_HOST=redis-dev.apikv.com` / `REMOTE_PORT=30005` / `REMOTE_CA=private`），
+证书 SAN 含 `redis-dev.apikv.com`，客户端必须带私有根 CA 并做主机名/SNI 校验。2026-09-22 Mac 实测：
+
+```bash
+redis-cli --tls --cacert <global-root-ca> --sni redis-dev.apikv.com -h redis-dev.apikv.com -p 30005 PING   # PONG
+# 错密码 → WRONGPASS; 错 CA → certificate verify failed
+```
+
+旧 `components/dragonflydb`（6380、`dragonfly-password-secret`、node4 site）是集群重建前的形态；`CC_PROVIDERS` 已把
+`redis` 指到本组件。

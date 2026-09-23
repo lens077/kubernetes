@@ -1,4 +1,4 @@
-# vpa —— Vertical Pod Autoscaler（只装 recommender）
+# vpa —— Vertical Pod Autoscaler（recommender + updater + admission webhook）
 
 ## 1. 定位
 
@@ -6,8 +6,9 @@
 本仓 [TODO.md](../../TODO.md) 里多处写着「resources 取值待 VPA 校准」
 （kafka-connect 的 1Gi/`-Xmx768m` 就是按一次实测 RSS 拍的），这个组件就是那件事的落地。
 
-**只装 recommender：出推荐值，不碰任何 Pod。**改 `resources` 是人的动作，
-看完推荐值自己改进 values/CR 再滚动更新。
+**三组件全装，但业务 VPA 对象默认 `Off`/`RequestsOnly`（2026-09-22 起）。**是否让 VPA 改 Pod
+由每个 VPA CR 的 `updateMode` 决定，不由「装没装 updater」决定：装 updater ≠ 允许它驱逐业务 Pod。
+改 `resources` 仍以人看推荐值后改 values/CR 为主；`Initial`/`InPlaceOrRecreate` 只给显式选择它的对象用。
 
 不装的后果：没有历史用量模型，`resources` 只能靠 `kubectl top` 的瞬时值猜。
 
@@ -30,12 +31,12 @@
 
 | 上游默认/建议 | 本集群 | 原因 |
 |---|---|---|
-| 三组件全装 | **只装 recommender** | 关掉 admission-controller 就没有 webhook——连带整个证书链（certgen job / cert-manager 签发 / CA 注入）和「webhook 挂了导致全集群 Pod 创建失败」的经典事故一起消失。关掉 updater 就没人驱逐 Pod：单控制面集群里自动驱逐的风险远大于收益。 |
+| 三组件全装 | **三组件全装**（2026-09-22 起） | webhook 证书交给 cert-manager（`certManager.enabled` + `global-ca-issuer`），不用 chart 的 certgen job；`failurePolicy: Ignore` 保证 webhook 挂了 Pod 照常创建。updater 装上但所有业务 VPA 仍 `Off`/`RequestsOnly`，`examples/smoke.sh` 每次跑都断言这一点。 |
 | 各组件 `replicas: 2` | **1** | recommender 不在数据面；三节点集群也不需要用第二个副本换取推荐值高可用。recommender 挂了只会停止更新推荐值，不影响工作负载。 |
 | `podDisruptionBudget.enabled: true` | **false** | 单副本 + `minAvailable: 1` 会让节点永远排空不掉，与 [kured](../kured/) 的自动重启窗口直接打架。 |
 | 无 resources 默认值 | requests 50m/200Mi，limits.memory 500Mi | recommender 在内存里为每个容器建直方图模型，Pod 越多越涨，必须给上限。 |
 | 推荐地板 25m/250Mi | 10m/32Mi | 默认内存地板会把当前低负载 Go 服务全部顶到 250Mi，产生看似一致但不可用的推荐值；工作负载自身的安全下限必须在压测后确定。 |
-| chart 自动跟最新 | 钉 `VPA_CHART_VERSION`（0.11.0 / app 1.7.1） | 官方 chart README 至今写着 "under development"；只装 recommender 风险面虽小，版本仍要可控。 |
+| chart 自动跟最新 | 钉 `VPA_CHART_VERSION`（0.12.0 / app 1.7.1） | 官方 chart README 至今写着 "under development"；只装 recommender 风险面虽小，版本仍要可控。 |
 
 > chart 的官方仓库是 `https://kubernetes.github.io/autoscaler`（SIG Autoscaling 维护）。
 > 旧 `hack/vpa-up.sh` 脚本用 openssl 现场生成证书 + kubectl 直插 kube-system，不适合本仓的

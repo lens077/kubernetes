@@ -2,7 +2,7 @@
 
 ## 1. 定位
 
-Tetragon 在节点内核侧观察容器进程行为，为运行时取证、异常执行调查和合规审计提供证据。当前 chart `1.7.1` 在 `node101`、`node102`、`node103` 三节点运行，仅导出 `ecommerce` 命名空间的进程与 audit-only 策略事件，不执行阻断。
+Tetragon 在节点内核侧观察容器进程行为，为运行时取证、异常执行调查和合规审计提供证据。当前 chart `1.7.1` 面向 `k1`、`k2`、`k3` 三节点运行，仅导出 `ecommerce` 命名空间的进程与 audit-only 策略事件，不执行阻断。
 
 部署职责分为两处：
 
@@ -24,7 +24,7 @@ Tetragon 在节点内核侧观察容器进程行为，为运行时取证、异�
 
 | 上游默认 | 本集群 | 原因 |
 |---|---|---|
-| 所有节点运行 DaemonSet | `node101`/`node102`/`node103` 三节点 `3/3` Ready | 消除工作负载调度后的观察盲区 |
+| 所有节点运行 DaemonSet | `k1`/`k2`/`k3` 三节点 `3/3` Ready | 消除工作负载调度后的观察盲区 |
 | 导出多个 namespace | 仅导出 `ecommerce` 的 `PROCESS_EXEC`/`PROCESS_EXIT`/`PROCESS_KPROBE` | 控制日志量与敏感信息范围 |
 | 默认进程缓存 65536 | 16384 | 降低小集群内存占用 |
 | 指标含 pod/binary 标签 | 只保留 namespace/workload | 控制 VictoriaMetrics 基数 |
@@ -53,6 +53,8 @@ Tetragon export-stdout
 ```
 
 当前告警覆盖 token-access、`ecommerce` 可疑工具执行和 Hubble deny burst。业务告警规则及完整调查入口见 ecommerce 仓 `infrastructure/observability/README.md`。
+
+`examples/cnp-smoke.yaml` + `examples/cnp-smoke.sh` 保存 CiliumNetworkPolicy 的可复跑正反向测试；测试使用隔离的 `cnp-smoke` 命名空间，不触碰 ecommerce。它验证 client→echo 和 DNS 允许，验证无授权公网 egress 拒绝。
 
 ## 5. 验证
 
