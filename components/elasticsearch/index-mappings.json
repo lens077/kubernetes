@@ -1,0 +1,147 @@
+{
+  "ecommerce_orders_order_main": {
+    "dynamic": "strict",
+    "properties": {
+      "id": {"type": "long"},
+      "order_no": {"type": "keyword"},
+      "group_no": {"type": "keyword"},
+      "merchant_id": {"type": "keyword"},
+      "merchant_name": {"type": "text", "analyzer": "ik_max_word", "search_analyzer": "ik_smart", "fields": {"keyword": {"type": "keyword", "ignore_above": 256}}},
+      "user_id": {"type": "keyword"},
+      "order_status": {"type": "keyword"},
+      "shipping_status": {"type": "keyword"},
+      "address_name": {"type": "text", "analyzer": "ik_max_word", "search_analyzer": "ik_smart", "fields": {"keyword": {"type": "keyword", "ignore_above": 128}}},
+      "address_phone": {"type": "keyword"},
+      "address_province": {"type": "keyword"},
+      "address_city": {"type": "keyword"},
+      "address_district": {"type": "keyword"},
+      "address_detail": {"type": "text", "analyzer": "ik_max_word", "search_analyzer": "ik_smart"},
+      "address_postal_code": {"type": "keyword"},
+      "address_full_text": {"type": "text", "analyzer": "ik_max_word", "search_analyzer": "ik_smart"},
+      "total_amount": {"type": "double"},
+      "freight_amount": {"type": "double"},
+      "discount_amount": {"type": "double"},
+      "pay_amount": {"type": "double"},
+      "courier_code": {"type": "keyword"},
+      "courier_name": {"type": "text", "analyzer": "ik_max_word", "search_analyzer": "ik_smart", "fields": {"keyword": {"type": "keyword", "ignore_above": 128}}},
+      "tracking_no": {"type": "keyword"},
+      "shipped_at": {"type": "date", "format": "strict_date_optional_time_nanos||epoch_millis"},
+      "delivered_at": {"type": "date", "format": "strict_date_optional_time_nanos||epoch_millis"},
+      "pay_channel": {"type": "keyword"},
+      "pay_no": {"type": "keyword"},
+      "paid_at": {"type": "date", "format": "strict_date_optional_time_nanos||epoch_millis"},
+      "pay_deadline": {"type": "date", "format": "strict_date_optional_time_nanos||epoch_millis"},
+      "remark": {"type": "text", "analyzer": "ik_max_word", "search_analyzer": "ik_smart"},
+      "merchant_remark": {"type": "text", "analyzer": "ik_max_word", "search_analyzer": "ik_smart"},
+      "created_at": {"type": "date", "format": "strict_date_optional_time_nanos||epoch_millis"},
+      "updated_at": {"type": "date", "format": "strict_date_optional_time_nanos||epoch_millis"}
+    }
+  },
+  "ecommerce_orders_order_item": {
+    "dynamic": "strict",
+    "properties": {
+      "id": {"type": "long"},
+      "order_id": {"type": "keyword"},
+      "order_no": {"type": "keyword"},
+      "merchant_id": {"type": "keyword"},
+      "spu_id": {"type": "keyword"},
+      "sku_id": {"type": "keyword"},
+      "spu_name": {"type": "text", "analyzer": "ik_max_word", "search_analyzer": "ik_smart", "fields": {"keyword": {"type": "keyword", "ignore_above": 256}}},
+      "sku_name": {"type": "text", "analyzer": "ik_max_word", "search_analyzer": "ik_smart", "fields": {"keyword": {"type": "keyword", "ignore_above": 256}}},
+      "sku_attributes": {"type": "text", "analyzer": "ik_max_word", "search_analyzer": "ik_smart"},
+      "sku_thumbnail_url": {"type": "keyword", "ignore_above": 1024},
+      "price": {"type": "double"},
+      "cost_price": {"type": "double"},
+      "quantity": {"type": "integer"},
+      "total_amount": {"type": "double"},
+      "created_at": {"type": "date", "format": "strict_date_optional_time_nanos||epoch_millis"}
+    }
+  },
+  "ecommerce_orders_order_log": {
+    "dynamic": "strict",
+    "properties": {
+      "id": {"type": "long"},
+      "order_id": {"type": "keyword"},
+      "order_no": {"type": "keyword"},
+      "merchant_id": {"type": "keyword"},
+      "old_status": {"type": "keyword"},
+      "new_status": {"type": "keyword"},
+      "operator_type": {"type": "keyword"},
+      "operator_id": {"type": "keyword"},
+      "remark": {"type": "text", "analyzer": "ik_max_word", "search_analyzer": "ik_smart"},
+      "created_at": {"type": "date", "format": "strict_date_optional_time_nanos||epoch_millis"}
+    }
+  },
+  "ecommerce_products_skus": {
+    "dynamic": "strict",
+    "properties": {
+      "id": {"type": "long"},
+      "sku_code": {"type": "keyword"},
+      "spu_id": {"type": "keyword"},
+      "merchant_id": {"type": "keyword"},
+      "price": {"type": "double"},
+      "cost_price": {"type": "double"},
+      "stock_quantity": {"type": "integer"},
+      "stock_locked": {"type": "integer"},
+      "attributes": {"type": "text", "analyzer": "ik_max_word", "search_analyzer": "ik_smart"},
+      "bar_code": {"type": "keyword"},
+      "thumbnail_url": {"type": "keyword", "ignore_above": 1024},
+      "status": {"type": "keyword"},
+      "created_at": {"type": "date", "format": "strict_date_optional_time_nanos||epoch_millis"},
+      "updated_at": {"type": "date", "format": "strict_date_optional_time_nanos||epoch_millis"}
+    }
+  },
+  "ecommerce_products_spus": {
+    "dynamic": "strict",
+    "properties": {
+      "id": {"type": "long"},
+      "spu_code": {"type": "keyword"},
+      "name": {"type": "text", "analyzer": "ik_max_word", "search_analyzer": "ik_smart", "fields": {"keyword": {"type": "keyword", "ignore_above": 256}}},
+      "specs": {"type": "text", "analyzer": "ik_max_word", "search_analyzer": "ik_smart"},
+      "spec_template": {"type": "text", "analyzer": "ik_max_word", "search_analyzer": "ik_smart"},
+      "description": {"type": "text", "analyzer": "ik_max_word", "search_analyzer": "ik_smart"},
+      "category_id": {"type": "keyword"},
+      "merchant_id": {"type": "keyword"},
+      "brand_id": {"type": "keyword"},
+      "status": {"type": "keyword"},
+      "main_media_url": {"type": "keyword", "ignore_above": 1024},
+      "images_gallery": {"type": "keyword", "ignore_above": 8191},
+      "created_at": {"type": "date", "format": "strict_date_optional_time_nanos||epoch_millis"},
+      "updated_at": {"type": "date", "format": "strict_date_optional_time_nanos||epoch_millis"}
+    }
+  },
+  "ecommerce_products_sale_detail": {
+    "dynamic": "strict",
+    "properties": {
+      "id": {"type": "long"},
+      "order_no": {"type": "keyword"},
+      "merchant_id": {"type": "keyword"},
+      "spu_id": {"type": "keyword"},
+      "sku_id": {"type": "keyword"},
+      "category_id": {"type": "keyword"},
+      "brand_id": {"type": "keyword"},
+      "quantity": {"type": "integer"},
+      "price": {"type": "double"},
+      "total_amount": {"type": "double"},
+      "type": {"type": "keyword"},
+      "paid_at": {"type": "date", "format": "strict_date_optional_time_nanos||epoch_millis"},
+      "dt": {"type": "long"},
+      "created_at": {"type": "date", "format": "strict_date_optional_time_nanos||epoch_millis"}
+    }
+  },
+  "ecommerce_catalog_products": {
+    "dynamic": "strict",
+    "properties": {
+      "id": {"type": "long"},
+      "spu_code": {"type": "keyword", "fields": {"search": {"type": "text", "analyzer": "standard"}}},
+      "name": {"type": "text", "analyzer": "ik_max_word", "search_analyzer": "ik_smart"},
+      "description": {"type": "text", "analyzer": "ik_max_word", "search_analyzer": "ik_smart"},
+      "status": {"type": "keyword"},
+      "main_media_url": {"type": "keyword", "index": false, "doc_values": false},
+      "merchant_id": {"type": "keyword"},
+      "price": {"type": "scaled_float", "scaling_factor": 100},
+      "sale_count": {"type": "long"},
+      "updated_at": {"type": "date", "format": "strict_date_optional_time_nanos||epoch_millis"}
+    }
+  }
+}
