@@ -37,6 +37,8 @@ Connect 的 JMX Prometheus Exporter 规则在 `connect-metrics-configmap.yaml`�
 关键指标：`kafka_connect_connector_task_status{connector,task,status}`、`debezium_metrics_connected{context="streaming"}`、
 `debezium_metrics_millisecondsbehindsource`（-1 = 空闲无事件）。规则 `components/vmalert/rules/ecommerce-cdc.yml`：
 `CDCConnectTaskNotRunning`(2m) / `CDCDebeziumDisconnected`(3m) / `CDCDebeziumLagHigh`(>5min) / `CDCConnectMetricsMissing`。
+它们**看不见** Connect offset 落后复制槽——那是 `connector_and_driver` 的结构性现象，靠 source 的
+`offset.mismatch.strategy=trust_greater_lsn` 自愈（重启实测不重快照），不做差值告警；完整性靠定期对账（待做）。
 
 两个坑：① jmx_exporter 的 pattern 是 `domain<prop=val, ...><>attr`——域名后是 `<`，写成 `debezium.x:type=` 匹配 0 条；
 ② 改 ConfigMap 后 `kubectl delete pod` **不会**让 Strimzi 重渲染 `/opt/kafka/custom-config/metrics-config.json`，
