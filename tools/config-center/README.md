@@ -29,9 +29,12 @@
 | `pg` | 26 | raw TCP `30001` | `pg-dev.apikv.com:30001` | `pg-main-rw` ClusterIP:5432（**不是** TLSRoute VIP：PG 先发明文 SSLRequest，Passthrough 会回 400） | `app` 用户 TLS 登录、`ecommerce` 33 表 |
 | `redis-dev` | 59 | raw TCP `30005` | `redis-dev.apikv.com:30005` | `10.10.31.242:6379`（dragonfly-gateway TCPRoute） | CA(`global-root-ca`)+SNI 校验、`AUTH`/`PING`/`SET`/`GET`、错密码拒绝 |
 | `kafka-dev` | 61 | raw TCP `30004` | `kafka-dev.apikv.com:30004` | `10.10.31.243:9094`（kafka-external-gateway TCPRoute → Strimzi external listener） | SASL_SSL/SCRAM-SHA-512 用户 `remote-dev`，metadata 里 broker 0 advertised 即公网地址，produce→consume 往返，错密码 `Authentication failed` |
+| `otlp-dev` | 65 | HTTP | `otlp-dev.apikv.com` | `10.10.31.240:443`，Host `otlp.dev.test` → collector `:4319`（`otlp/public`，bearertokenauth；4318 不对外） | 三条信号匿名 401 / Bearer 200；Mac 手工 span 落 VictoriaTraces |
+| `es-dev` | 64 | HTTP | `es-dev.apikv.com` | `10.10.31.240:443`，Host `es.dev.test` → `:9200` | 只读 API key 读 alias 200 / 写 403 / 匿名 401 |
+| `config` / `config-api` | 62/63 | HTTP | `config(-api).apikv.com` | VIP:443，Host `config(-api).dev.test` | web 标题「配置中心」；API 匿名 `ListKeys` 是应用自己的 401；Mac 用 service token 拉 bootstrap |
 | `grafana` / `metrics` / `traces` / `vmalert` / `alerts` / `healthchecks` / `argocd` | 20/21/23/24/25/56/60 | HTTP | `<name>.apikv.com` | `10.10.31.240:443`，`tlsServerName`/`setHostHeader`=`<name>.dev.test` | grafana/argocd/metrics SSO 关（应用自认证）；traces/vmalert/alerts/hc 挂 Pangolin SSO，匿名 401 是**边缘**在拦，业务内容用 resource access token 或登录会话验（vmalert 6 组 23 条规则、Alertmanager `Watchdog`、hc 1 check） |
 
-对应契约字段在 `components/{postgres,dragonfly,kafka}/component.env` 的 `REMOTE_*`（kafka 的 `mapping.yaml` 能力尚未定义，harvest 会「跳过」——业务服务还没接 Kafka 客户端，这是预期）。
+对应契约字段在 `components/{postgres,dragonfly,kafka,elasticsearch,opentelemetry}/component.env` 的 `REMOTE_*`（kafka 的 `mapping.yaml` 能力尚未定义，harvest 会「跳过」——业务服务还没接 Kafka 客户端，这是预期）。OTLP 的 Bearer 不在 schema 里：Mac 走 `~/.config/apikv/otel.mk`，k8s 走 Secret `otel-auth`；token 真相源 k1 `creds/otlp-public-token`。
 
 新建 raw TCP 资源前，确认 node1 gerbil/Traefik 对应端口和云防火墙放行；`30005` 已被新 `redis-dev` 复用，target 是新集群 VIP，
 不是旧 node4/node5。面板的「创建资源」按钮在自动化填表时会一直 disabled，用 `PUT /api/v1/org/main/resource` +

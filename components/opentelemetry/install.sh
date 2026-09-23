@@ -57,7 +57,7 @@ if [[ -n $REMOTE_METRICS_URL ]]; then
         queue_size: 1000
 "
   pipelines+="      metrics:
-        receivers: [otlp, prometheus, prometheus/cilium, prometheus/kafka]
+        receivers: [otlp, otlp/public, prometheus, prometheus/cilium, prometheus/kafka]
         processors: [memory_limiter, delta_to_cumulative, batch]
         exporters: [otlp_http/remote_metrics]
 "
@@ -74,7 +74,7 @@ elif comp_installed victoriametrics vm-single-victoria-metrics-single-server; th
   # pipeline, 等于死配置) —— 挂上后 otelcol_* 自观测指标才会进后端, 队列积压才看得见。
   # k8s_cluster 由 clusterMetrics preset 自动追加, 不用写。
   pipelines+="      metrics:
-        receivers: [otlp, prometheus, prometheus/cilium, prometheus/kafka]
+        receivers: [otlp, otlp/public, prometheus, prometheus/cilium, prometheus/kafka]
         processors: [memory_limiter, delta_to_cumulative, batch]
         exporters: [otlp_http/victoriametrics]
 "
@@ -96,7 +96,7 @@ if [[ -n $REMOTE_LOGS_URL ]]; then
         queue_size: 1000
 "
   pipelines+="      logs:
-        receivers: [otlp]
+        receivers: [otlp, otlp/public]
         processors: [memory_limiter, batch]
         exporters: [otlp_http/remote_logs]
 "
@@ -112,7 +112,7 @@ elif comp_installed logging vl-victoria-logs-single-server; then
         insecure: true
 "
   pipelines+="      logs:
-        receivers: [otlp]
+        receivers: [otlp, otlp/public]
         processors: [memory_limiter, batch]
         exporters: [otlp_http/victorialogs]
 "
@@ -125,7 +125,7 @@ elif comp_installed logging loki; then
         insecure: true
 "
   pipelines+="      logs:
-        receivers: [otlp]
+        receivers: [otlp, otlp/public]
         processors: [memory_limiter, batch]
         exporters: [otlp_http/loki]
 "
@@ -147,7 +147,7 @@ if [[ -n $REMOTE_TRACES_URL ]]; then
         queue_size: 1000
 "
   pipelines+="      traces:
-        receivers: [otlp]
+        receivers: [otlp, otlp/public]
         processors: [memory_limiter, batch]
         exporters: [otlp_http/remote_traces]
 "
@@ -162,7 +162,7 @@ elif comp_installed observability victoria-traces; then
         insecure: true
 "
   pipelines+="      traces:
-        receivers: [otlp]
+        receivers: [otlp, otlp/public]
         processors: [memory_limiter, batch]
         exporters: [otlp_http/victoriatraces]
 "
@@ -174,7 +174,7 @@ elif comp_installed observability jaeger; then
         insecure: true
 "
   pipelines+="      traces:
-        receivers: [otlp]
+        receivers: [otlp, otlp/public]
         processors: [memory_limiter, batch]
         exporters: [otlp_grpc/jaeger]
 "
@@ -191,12 +191,17 @@ log_step "安装 $ID → 命名空间 $NAMESPACE (${signals[*]})"
 
 # 组件名用新命名(otlp_http/otlp_grpc/delta_to_cumulative): 旧别名在 collector 0.130+
 # 每次启动刷 deprecation warn; 新名自 0.130 起可用
+# 公网 OTLP 入口的 bearer token(values.yaml 的 otlp/public receiver 用); 幂等, 值只在节点 creds 与 Secret 里
+kctl -n "$NAMESPACE" create secret generic otlp-public-auth --from-literal=token="$(get_cred otlp-public-token)" \
+  --dry-run=client -o yaml | kctl apply -f - >/dev/null
+
 dyn=$(mktemp)
 cat > "$dyn" <<EOF
 config:
   exporters:
 $exporters
   service:
+    extensions: [health_check, bearertokenauth/public]
     pipelines:
 $pipelines
 EOF
@@ -204,4 +209,5 @@ EOF
 helm_install_component "$DIR" --version "$CHART_VERSION" -f "$dyn"
 rm -f "$dyn"
 
-log_ok "$ID 安装完成(应用把 OTLP 推到 otel-opentelemetry-collector.$NAMESPACE.svc:4317/4318)"
+routes_apply "$DIR"   # gateway/httproute.yaml: otlp.dev.test → :4319(带 bearer 鉴权的公网 receiver)
+log_ok "$ID 安装完成(集群内 OTLP → otel-opentelemetry-collector.$NAMESPACE.svc:4317/4318; 公网 → otlp-dev.apikv.com 带 Bearer)"
