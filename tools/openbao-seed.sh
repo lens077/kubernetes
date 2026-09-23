@@ -61,7 +61,8 @@ pick() {  # pick <id> <值来源...>: 第一个非空; ROTATE 且可轮换时直
 
 # ---- 集群内组件(值 = 运行中的现值, 保证切换到 ESO 后零行为变化) ----
 if selected dragonfly; then
-  jq -n --arg p "$(pick dragonfly "$(secret_val dragonfly dragonfly-password-secret password)" "$(cred_file dragonfly-password)")" '{password:$p}' | bao_put dragonfly
+  # dragonfly-auth = components/dragonfly(2026-09-22 起的现行组件); dragonfly-password-secret = 旧 components/dragonflydb
+  jq -n --arg p "$(pick dragonfly "$(secret_val dragonfly dragonfly-auth password)" "$(secret_val dragonfly dragonfly-password-secret password)" "$(cred_file dragonfly-password)")" '{password:$p}' | bao_put dragonfly
 fi
 if selected grafana; then
   jq -n --arg u admin --arg p "$(pick grafana "$(secret_val observability grafana-admin admin-password)" "$(secret_val observability grafana admin-password)" "$(cred_file grafana-admin)")" \

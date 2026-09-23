@@ -23,5 +23,5 @@ ns_ensure "$NAMESPACE"
 kctl -n "$NAMESPACE" create secret generic openfga-datastore \
   --from-literal=uri="postgresql://openfga:${pass}@pg-main-rw.postgresql.svc:5432/openfga?sslmode=require" \
   --dry-run=client -o yaml | kctl apply -f -
-helm_install_component "$DIR" --version 0.3.12
+helm_install_component "$DIR" --version 0.3.15
 log_ok "$ID 安装完成(验证见 examples/smoke.sh)"

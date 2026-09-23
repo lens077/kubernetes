@@ -2,12 +2,12 @@
 #   kubectl apply -f vpa-off-mode.yaml
 #   kubectl -n <ns> describe vpa <name>      # 看 Recommendation 段
 #
-# updateMode 取值（本集群只用 Off —— updater/admissionController 都没装，其余模式无效）：
-#   Off              只算推荐值，不改任何东西          ← 本仓唯一使用的模式
+# updateMode 取值（业务对象默认 Off；updater/admissionController 已装，其余模式对显式选择它的对象生效）：
+#   Off              只算推荐值，不改任何东西          ← 业务工作负载的默认模式
 #   Initial          只在 Pod 创建时套用推荐值
 #   Recreate         驱逐重建 Pod 套用（风险最大）
 #   InPlaceOrRecreate  K8s 1.35 起 in-place resize 已 GA、VPA 1.6 起该模式 GA，
-#                    但仍需装 updater + admissionController
+#                    updater + admissionController 已装（2026-09-22）
 #   ⚠️ Auto 自 VPA 1.5 起已 deprecated，别再照旧文档写
 #
 # 推荐值要"养"：recommender 按滑动窗口建直方图，**至少跑满一天**才有参考价值，

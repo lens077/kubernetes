@@ -1,25 +1,67 @@
 # Kyverno —— 2026-08-20 选型定稿 §11: audit 14 天零误报 → enforce;
 # enforce 前必须处理「签名纪元」(存量镜像补签+删pod重建演练, 对抗第3轮 C1 补丁)
+#
+# 镜像走 TCR 镜像仓 (2026-09-22): reg.kyverno.io 在机房侧单个镜像拉 1 小时以上, 5 个控制器
+# 串起来装不完。镜像由 Mac 经 `docker pull --platform linux/amd64` → `docker push --platform
+# linux/amd64` 推到 ccr.ccs.tencentyun.com/sumery/<name>:<tag>。**必须带 --platform**: Mac 是
+# arm64, 不带就推 arm64 层, 节点上 `exec format error` CrashLoop(2026-09-22 实测踩过)。
+# 拉取凭据 Secret `tcr-pull-secret` 由 install.sh 从 CREDS 目录物化, 不进 values。
 admissionController:
   replicas: 1
+  imagePullSecrets:
+    - name: tcr-pull-secret
+  initContainer:
+    image:
+      registry: ccr.ccs.tencentyun.com
+      repository: sumery/kyvernopre
+  container:
+    image:
+      registry: ccr.ccs.tencentyun.com
+      repository: sumery/kyverno
   resources:
     requests: { cpu: 50m, memory: 64Mi }
     limits: { memory: 256Mi }
 backgroundController:
   replicas: 1
+  imagePullSecrets:
+    - name: tcr-pull-secret
+  image:
+    registry: ccr.ccs.tencentyun.com
+    repository: sumery/background-controller
   resources:
     requests: { cpu: 50m, memory: 64Mi }
     limits: { memory: 256Mi }
 cleanupController:
   replicas: 1
+  imagePullSecrets:
+    - name: tcr-pull-secret
+  image:
+    registry: ccr.ccs.tencentyun.com
+    repository: sumery/cleanup-controller
   resources:
     requests: { cpu: 25m, memory: 48Mi }
     limits: { memory: 128Mi }
 reportsController:
   replicas: 1
+  imagePullSecrets:
+    - name: tcr-pull-secret
+  image:
+    registry: ccr.ccs.tencentyun.com
+    repository: sumery/reports-controller
   resources:
     requests: { cpu: 50m, memory: 64Mi }
     limits: { memory: 256Mi }
+# verifyImages 要能读 TCR 私有仓的签名 manifest(ecommerce 仓 infrastructure/kyverno/ 的策略),
+# 用同一个拉取凭据; 这是 --imagePullSecrets 参数, 不是 Pod 的 imagePullSecrets
+existingImagePullSecrets:
+  - tcr-pull-secret
+crds:
+  migration:
+    image:
+      registry: ccr.ccs.tencentyun.com
+      repository: sumery/kyverno-cli
+    imagePullSecrets:
+      - name: tcr-pull-secret
 features:
   backgroundScan:
     backgroundScanInterval: 24h

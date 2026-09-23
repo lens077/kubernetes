@@ -8,5 +8,5 @@ comp_require_cluster
 
 log_step "安装 $ID → 命名空间 $NAMESPACE"
 ns_ensure "$NAMESPACE"
-helm_install_component "$DIR" --version 2.41.1
+helm_install_component "$DIR" --version 2.43.2
 log_ok "$ID 安装完成(验证: kubectl apply -f examples/rollout-demo.yaml)"

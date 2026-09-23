@@ -1,0 +1,84 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cnp-smoke
+  labels:
+    app.kubernetes.io/name: cnp-smoke
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: echo
+  namespace: cnp-smoke
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: echo}
+  template:
+    metadata:
+      labels: {app: echo}
+    spec:
+      containers:
+        - name: echo
+          image: hashicorp/http-echo:1.0
+          args: ["-listen=:8080", "-text=cnp-ok"]
+          ports: [{name: http, containerPort: 8080}]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: echo
+  namespace: cnp-smoke
+spec:
+  selector: {app: echo}
+  ports: [{name: http, port: 8080, targetPort: http}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: client
+  namespace: cnp-smoke
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: client}
+  template:
+    metadata:
+      labels: {app: client}
+    spec:
+      containers:
+        - name: client
+          image: curlimages/curl:8.10.1
+          command: ["sleep", "3600"]
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: client-egress
+  namespace: cnp-smoke
+spec:
+  endpointSelector:
+    matchLabels: {app: client}
+  egress:
+    - toEndpoints:
+        - matchLabels: {k8s:io.kubernetes.pod.namespace: cnp-smoke, app: echo}
+      toPorts:
+        - ports: [{port: "8080", protocol: TCP}]
+    - toEndpoints:
+        - matchLabels: {k8s:io.kubernetes.pod.namespace: kube-system, k8s-app: kube-dns}
+      toPorts:
+        - ports: [{port: "53", protocol: UDP}, {port: "53", protocol: TCP}]
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: echo-ingress
+  namespace: cnp-smoke
+spec:
+  endpointSelector:
+    matchLabels: {app: echo}
+  ingress:
+    - fromEndpoints:
+        - matchLabels: {k8s:io.kubernetes.pod.namespace: cnp-smoke, app: client}
+      toPorts:
+        - ports: [{port: "8080", protocol: TCP}]

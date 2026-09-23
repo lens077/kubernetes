@@ -8,11 +8,15 @@ comp_require_cluster
 
 ns_ensure "$NAMESPACE"
 
-if ! kctl -n "$NAMESPACE" get secret dragonfly-auth >/dev/null 2>&1; then
-  pw=$(get_cred dragonfly-password)
-  kctl -n "$NAMESPACE" create secret generic dragonfly-auth \
-    --from-literal=password="$pw" --dry-run=client -o yaml | kctl apply -f -
-  unset pw
+# AUTH 密码: ESO 从 OpenBao 物化 Secret dragonfly-auth(externalsecret.yaml); 降级时 get_cred + 自建同名 Secret。
+# 首次接 OpenBao 前先 tools/openbao-seed.sh dragonfly(取现值, 不换密码), 否则 ESO 拿不到路径会走降级。
+if ! cred_via_eso "$DIR" "$NAMESPACE" dragonfly-auth; then
+  if ! kctl -n "$NAMESPACE" get secret dragonfly-auth >/dev/null 2>&1; then
+    pw=$(get_cred dragonfly-password)
+    kctl -n "$NAMESPACE" create secret generic dragonfly-auth \
+      --from-literal=password="$pw" --dry-run=client -o yaml | kctl apply -f -
+    unset pw
+  fi
 fi
 
 kctl -n "$NAMESPACE" apply -f "$DIR/manifests/00-certificate.yaml"

@@ -28,11 +28,23 @@ endpoints:
     interval: 1m
     conditions: ["[STATUS] == 200"]
     alerts: [{type: ntfy}]
-  - name: bugsink
+  # 2026-09-22: bugsink 在本轮重建里没有部署(ops 命名空间下无该 Service), 探针恒红并刷 ntfy,
+  # 与 public-edge 里删掉的那批同因。启用 ADDON_BUGSINK 重新部署后, 把下面五行取消注释即可。
+  # - name: bugsink
+  #   group: cluster-origin
+  #   url: http://bugsink.ops.svc.cluster.local:8000/health/ready
+  #   interval: 1m
+  #   conditions: ["[STATUS] == 200"]
+  #   alerts: [{type: ntfy}]
+  - name: openbao-unsealed
     group: cluster-origin
-    url: http://bugsink.ops.svc.cluster.local:8000/health/ready
+    # 2026-09-22: OpenBao 是 shamir + file 存储的 standalone, Pod 一重启就回到 sealed, ESO 立刻 SecretSyncedError,
+    # 组件只能走 get_cred 降级——但没有任何东西会叫人。/v1/sys/health 只在 initialized+unsealed+active 时 200
+    # (sealed=503, 未初始化=501), 所以这条红了就是「去跑 components/openbao/examples/unseal.sh」。
+    url: http://openbao.openbao.svc.cluster.local:8200/v1/sys/health
     interval: 1m
-    conditions: ["[STATUS] == 200"]
+    client: {timeout: 10s}
+    conditions: ["[STATUS] == 200", "[BODY].sealed == false", "[BODY].initialized == true"]
     alerts: [{type: ntfy}]
   - name: postgres-cnpg
     group: cluster-origin
@@ -45,8 +57,8 @@ endpoints:
 
   # ---------- observability-pipeline (数据真的进了集群内 VictoriaMetrics 吗) ----------
   # 2026-09-22: 旧 node3 Pigsty 栈随主机重装退役, VM/VL/VT/Alertmanager 全部回到集群内,
-  # 采集器 (otel / otel-node / vector) 直发集群内后端。探针改走 ClusterIP, 不再依赖公网入口,
-  # 因此这两条在 newt 公网入口恢复之前也有效。日志入库的端到端探针仍缺, 见 README「已知缺口」。
+  # 采集器 (otel / vector) 直发集群内后端。探针改走 ClusterIP, 不再依赖公网入口,
+  # 因此这条在 newt 公网入口恢复之前也有效。日志入库的端到端探针仍缺, 见 README「已知缺口」。
   - name: k8s-cluster-state-ingestion
     group: observability-pipeline
     # otel k8s_cluster receiver → 集群内 VM: 最近 5 分钟必须有 k8s_deployment_available 样本
@@ -55,16 +67,6 @@ endpoints:
     client: {timeout: 10s}
     conditions: ["[STATUS] == 200", "[BODY].status == success", "len([BODY].data.result) > 0"]
     alerts: [{type: ntfy}]
-  - name: hostmetrics-ingestion
-    group: observability-pipeline
-    # otel-node DaemonSet → 集群内 VM: 最近 5 分钟有主机指标样本 (system.cpu.time → system_cpu_time_seconds_total)
-    # ⚠️ 依赖 ADDON_OTEL_NODE; 该组件未启用时这条会持续红, 关掉它而不是改判据。
-    url: "http://vm-single-victoria-metrics-single-server.victoriametrics.svc.cluster.local:8428/api/v1/query?query=count(max_over_time(system_cpu_time_seconds_total%5B5m%5D))"
-    interval: 2m
-    client: {timeout: 10s}
-    conditions: ["[STATUS] == 200", "[BODY].status == success", "len([BODY].data.result) > 0"]
-    alerts: [{type: ntfy}]
-
   # ---------- cdc (PG → Debezium → Kafka → ES, 全在集群内; 替代原 node3 cdc-connect-exporter 的 task 级告警) ----------
   # connector 级 RUNNING 而 task 级 FAILED 是这条链三次事故的共同形态, 所以两级都看。
   # Connect REST 默认被 Strimzi NetworkPolicy 封住, 由 components/kafka/cdc/connect-rest-netpol.yaml 放行 ops。
@@ -88,43 +90,26 @@ endpoints:
     conditions: ["[STATUS] == 401", "[RESPONSE_TIME] < 3000"]
     alerts: [{type: ntfy}]
 
-  # ---------- public-edge (经 Pangolin/newt 的公网入口, 清单沿用旧 node3 时代) ----------
-  # ⚠️ 2026-09-22: 旧 node3/node4/node5 三个 newt site 已失效, 集群 newt 尚未部署,
-  #    这一组在新 site 建好并迁移资源之前会持续红。要么先关这一组, 要么先完成迁移。
-  - name: gateway
-    group: public-edge
-    url: https://gateway.apikv.com/healthz
-    interval: 1m
-    client: {timeout: 10s, ignore-redirect: true}
-    conditions: ["[STATUS] == 200", "[CERTIFICATE_EXPIRATION] > 720h", "[RESPONSE_TIME] < 5000"]
-    alerts: [{type: ntfy}]
-  - name: mall
-    group: public-edge
-    url: https://shop.apikv.com/
-    interval: 1m
-    client: {timeout: 10s, ignore-redirect: true}
-    conditions: ["[STATUS] == 200", "[CERTIFICATE_EXPIRATION] > 720h", "[RESPONSE_TIME] < 5000"]
-    alerts: [{type: ntfy}]
+  # ---------- public-edge (经 Pangolin/newt 的公网入口) ----------
+  # 2026-09-22 重写。这一组走的是完整链路:
+  #   公网 → Pangolin(node1) → newt(集群 Pod, site k8s-cluster) → Gateway VIP 10.10.31.240:443
+  #   → HTTPRoute → 后端 Service
+  # 所以它是**唯一**能证明「公网真的能访问到集群」的一组; cluster-origin 那组只证明后端进程活着。
+  #
+  # 删掉了 gateway / mall / config-center-web / config-center-api / bugsink-edge 五条:
+  # 对应组件在新集群里没有部署, Pangolin 里的资源已于本次迁移一并删除, 留着必然长红刷 ntfy。
+  # 业务重新上线时连同 Pangolin 资源一起加回来(域名与 target 约定见 HANDOFF 的迁移对照表)。
+  #
+  # ⚠️ 只放**匿名可达**的入口。traces / vmalert / alerts / hc 这四个资源在 Pangolin 侧
+  # 开了 SSO(policy sso=1), 匿名请求恒为 401 —— 拿 401 当"活着"只能证明 Pangolin 边缘在,
+  # 证明不了集群后端, 反而会掩盖后端故障, 所以不放进来; 它们的后端由 cluster-origin 覆盖。
   - name: casdoor
     group: public-edge
+    # node1 本地站点(node1-local), 与集群无关, 重建期间一直正常
     url: https://casdoor.apikv.com/api/health
     interval: 1m
     client: {timeout: 10s, ignore-redirect: true}
     conditions: ["[STATUS] == 200", "[CERTIFICATE_EXPIRATION] > 720h", "[RESPONSE_TIME] < 5000"]
-    alerts: [{type: ntfy}]
-  - name: config-center-web
-    group: public-edge
-    url: https://config.apikv.com/
-    interval: 1m
-    client: {timeout: 10s, ignore-redirect: true}
-    conditions: ["[STATUS] == 200", "[CERTIFICATE_EXPIRATION] > 720h", "[RESPONSE_TIME] < 5000"]
-    alerts: [{type: ntfy}]
-  - name: config-center-api
-    group: public-edge
-    url: https://config-api.apikv.com/health
-    interval: 1m
-    client: {timeout: 10s, ignore-redirect: true}
-    conditions: ["[STATUS] == 401", "[CERTIFICATE_EXPIRATION] > 720h", "[RESPONSE_TIME] < 5000"]
     alerts: [{type: ntfy}]
   - name: grafana-edge
     group: public-edge
@@ -133,12 +118,32 @@ endpoints:
     client: {timeout: 10s, ignore-redirect: true}
     conditions: ["[STATUS] == 200", "[CERTIFICATE_EXPIRATION] > 720h"]
     alerts: [{type: ntfy}]
-  - name: bugsink-edge
+  - name: metrics-edge
     group: public-edge
-    url: https://bugsink.apikv.com/health/ready
+    # VictoriaMetrics 经公网; 与 grafana-edge 一起构成「公网 → 集群」的端到端判据
+    url: https://metrics.apikv.com/api/v1/query?query=vm_app_version
     interval: 2m
     client: {timeout: 10s, ignore-redirect: true}
-    conditions: ["[STATUS] == 200", "[CERTIFICATE_EXPIRATION] > 720h"]
+    conditions: ["[STATUS] == 200", "[BODY].status == success", "[CERTIFICATE_EXPIRATION] > 720h"]
+    alerts: [{type: ntfy}]
+  - name: redis-edge
+    group: public-edge
+    # 原始 TCP 资源 redis-dev(Pangolin resourceId 59, proxyPort 30005) → newt → dragonfly-gateway 10.10.31.242:6379。
+    # 2026-09-22 Mac 端 TLS+AUTH 实测通过; 这里只探 TCP 可达, TLS/AUTH 由 cluster-origin 与开发机自证。
+    url: tcp://redis-dev.apikv.com:30005
+    interval: 5m
+    client: {timeout: 10s}
+    conditions: ["[CONNECTED] == true"]
+    alerts: [{type: ntfy}]
+  - name: pg-edge
+    group: public-edge
+    # 原始 TCP 资源(Pangolin proxyPort 30001) → newt → pg-main-rw ClusterIP:5432。
+    # 注意不要指回 pg-passthrough-gateway(10.10.31.241): 那是 TLS Passthrough 监听器,
+    # 只认直接 ClientHello+SNI, 标准 PG 客户端的明文 SSLRequest 会被 Envoy 回 400(实测)。
+    url: tcp://pangolin.apikv.com:30001
+    interval: 5m
+    client: {timeout: 10s}
+    conditions: ["[CONNECTED] == true"]
     alerts: [{type: ntfy}]
 
   # ---------- node1-public ----------
@@ -155,13 +160,6 @@ endpoints:
     interval: 5m
     client: {timeout: 10s, ignore-redirect: true}
     conditions: ["[STATUS] == 200", "[CERTIFICATE_EXPIRATION] > 720h"]
-    alerts: [{type: ntfy}]
-  - name: vault
-    group: node1-public
-    url: https://vault.apikv.com/
-    interval: 5m
-    client: {timeout: 10s, ignore-redirect: true}
-    conditions: ["[STATUS] == 307", "[CERTIFICATE_EXPIRATION] > 720h"]
     alerts: [{type: ntfy}]
   - name: ntfy
     group: node1-public

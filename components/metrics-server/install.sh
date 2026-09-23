@@ -11,6 +11,6 @@ comp_load_meta "$DIR"
 comp_require_cluster
 
 log_step "安装 $ID → 命名空间 $NAMESPACE"
-helm_install_component "$DIR"
+helm_install_component "$DIR" --version 3.14.0   # 钉版本才走得了 /var/cache 里的 chart(机房直连 github 不稳)
 
 log_ok "$ID 安装完成(验证: kubectl top nodes)"

@@ -4,7 +4,7 @@ set -Eeuo pipefail
 
 ns=tetragon
 selector='app.kubernetes.io/name=tetragon,app.kubernetes.io/component=agent'
-expected_nodes='node101 node102 node103'
+expected_nodes='k1 k2 k3'
 actual_nodes=$(kubectl -n "$ns" get pods -l "$selector" -o jsonpath='{range .items[*]}{.spec.nodeName}{"\n"}{end}' | sort | xargs)
 [[ $actual_nodes == "$expected_nodes" ]] \
   || { echo "失败：agent 节点为 [$actual_nodes]，预期 [$expected_nodes]" >&2; exit 1; }
