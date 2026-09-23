@@ -19,7 +19,12 @@ PostgreSQL（node3 Pigsty，`10.10.21.172:5432`）→ Debezium → Kafka（本�
 
 - PG 复制槽 `ecommerce_cdc` 必须在 Patroni `slots` 里声明（否则 PG 重启会被删，历史三次事故）；告警在 node3 `/infra/rules/ecommerce-cdc.yml`。
 - Connect task 状态由 `ops/gatus` 的 `cdc-source-task` / `cdc-sink-task` 探针盯（connector 级 RUNNING 而 task FAILED 是事故形态）。Kafka exporter 的 `kafka_consumergroup_lag` 由 OTel Prometheus receiver 抓取 `:9404` 并转发 node3 Pigsty；node3 vmalert 的 `CdcSinkLag*` 规则消费该指标。
-- ES 索引先由 `components/elasticsearch` 的模板创建（`<alias>_v1` + write alias，replicas=0），再起 sink；让 sink 自动建索引会得到错 mapping。
+- ES 索引先由 `components/elasticsearch/bootstrap-indices.sh` 创建（模板 + `<alias>_v1` + write alias，replicas=0），再起 sink；让 sink 自动建索引会得到错 mapping（2026-09-23 新集群踩过，见 elasticsearch/README）。
+- source 必须带 `lsn.flush.mode=connector_and_driver` + `heartbeat.interval.ms`：被监控表不写时槽不推进，CNPG `max_slot_wal_keep_size=-1` 会涨到盘满。告警 `vmalert/rules/ecommerce-cdc.yml`（`restart_lsn` 差 >256MB / 槽 inactive / 指标缺失）。
+
+## 重灌（索引换版本后）
+
+`bash components/kafka/cdc/reflow-sink.sh`：STOP sink → consumer group `connect-ecommerce-elasticsearch-sink` offset reset 到 earliest → resume → 等 lag 归零 → 打印各 alias 文档数。不动 PG 槽、不重快照——topic 里保留了全部事件。
 
 ## 重快照
 

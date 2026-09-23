@@ -1,0 +1,40 @@
+# CDC 链路(CNPG pg-main → Debezium → Kafka → ES)的规则。
+# 只探「位点有没有推进」这类功能信号, 不探 Pod 存活——Connect REST 活着、task RUNNING 都不等于位点在走
+# (ecommerce 仓 context/project/ecommerce/events/experience/debezium-idle-slot-wal-retention.md)。
+groups:
+  - name: ecommerce-cdc
+    interval: 60s
+    rules:
+      - alert: CDCSlotWalRetention
+        # 逻辑复制槽的位点差(字节), 来自 CNPG 内置 collector 的 pg_replication_slots 查询。
+        # 判断槽健康只看这个差, 不看 pg_stat_replication 的 *_lag 时间(连接一重建就归零, 会骗人)。
+        # 阈值 256MB: 2026-09-23 新集群回归时 lag 167MB / pg_wal 433MB, max_slot_wal_keep_size=-1 无上限,
+        # 放着不管会一直涨到 10Gi 盘满。正常态(lsn.flush.mode=connector_and_driver + heartbeat 60s)为 0。
+        expr: 'max by (slot_name) (cnpg_pg_replication_slots_pg_wal_lsn_diff) > 256 * 1024 * 1024'
+        for: 30m
+        labels: { severity: warning, category: cdc }
+        annotations:
+          summary: '逻辑复制槽 {{ $labels.slot_name }} 位点差 {{ $value | humanize1024 }}B, WAL 被钉住'
+          description: >-
+            被监控表无写入时 Debezium 不推进 confirmed_flush_lsn, 整库 WAL 被槽保留。
+            核对 components/kafka/cdc/ecommerce-postgres-source.yaml 的 lsn.flush.mode=connector_and_driver
+            与 heartbeat.interval.ms 是否还在, KafkaConnector task 是否 RUNNING;
+            psql: select slot_name, pg_wal_lsn_diff(pg_current_wal_lsn(), confirmed_flush_lsn) from pg_replication_slots。
+
+      - alert: CDCSlotInactive
+        # 槽存在但没有客户端连着(active=false): Debezium task 掉了/被删, WAL 照样被槽钉住, 且 CDC 事件在丢。
+        expr: 'cnpg_pg_replication_slots_active{slot_name="ecommerce_cdc"} == 0'
+        for: 10m
+        labels: { severity: critical, category: cdc }
+        annotations:
+          summary: '复制槽 ecommerce_cdc 无活跃消费者'
+          description: kubectl -n kafka get kafkaconnector ecommerce-postgres-source; task 非 RUNNING 就看 Connect 日志。
+
+      - alert: CDCSlotMetricsMissing
+        # 上面两条依赖的指标断了, 它们会静默变绿——这条把「看不见」本身变成告警。
+        expr: 'absent(cnpg_pg_replication_slots_pg_wal_lsn_diff{slot_name="ecommerce_cdc"}) == 1'
+        for: 15m
+        labels: { severity: warning, category: cdc }
+        annotations:
+          summary: 'CNPG 复制槽指标缺失, CDC 位点告警已失效'
+          description: 检查 cnpg pg-main 的 metrics 端口是否被 otel/VM 抓取, 以及槽 ecommerce_cdc 是否还存在。

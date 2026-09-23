@@ -24,6 +24,15 @@ spec:
     publication.autocreate.mode: disabled
     slot.name: ecommerce_cdc
     slot.drop.on.stop: "false"
+    # 被监控表长期无写入时默认模式不推进 confirmed_flush_lsn，槽把整库 WAL 钉住
+    # （2026-09-23 新集群回归：lag 150MB、pg_wal 417MB 且 max_slot_wal_keep_size=-1 无上限）。
+    # connector_and_driver 让 pgjdbc 用 keepalive LSN 刷位点，不需要心跳表；heartbeat.interval.ms 单独无效。
+    # 见 ecommerce 仓 context/project/ecommerce/events/experience/debezium-idle-slot-wal-retention.md
+    lsn.flush.mode: connector_and_driver
+    # 3.6.1 起 connector_and_driver 会把 heartbeat 自动设成 600000ms(dbz#1605): 位点只在心跳触发 offset commit
+    # 后推进, 10 分钟窗口对观测和 WAL 回收都太粗。显式 60s; 心跳 topic __debezium-heartbeat.ecommerce_cdc。
+    # 本 Kafka 无 authorization, 不存在经验文档里「加 heartbeat 前先开 ACL 否则 task FAILED」的前置。
+    heartbeat.interval.ms: "60000"
     snapshot.mode: initial
     snapshot.locking.mode: none
     schema.include.list: orders,products
