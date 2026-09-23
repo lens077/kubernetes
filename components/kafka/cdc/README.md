@@ -29,3 +29,15 @@ PostgreSQL（node3 Pigsty，`10.10.21.172:5432`）→ Debezium → Kafka（本�
 ## 重快照
 
 删 KafkaConnector CR → 删 slot（`select pg_drop_replication_slot('ecommerce_cdc')`）→ 删 `ecommerce_cdc.*` topic → 清空 `<alias>_v1` 索引（或建新版本索引换 alias）→ 重新 apply source、sink。
+
+## 指标与告警（2026-09-23）
+
+Connect 的 JMX Prometheus Exporter 规则在 `connect-metrics-configmap.yaml`，由 `kafka-connect.yaml` 的 `spec.metricsConfig`
+引用；otel collector `prometheus/kafka` 的 `strimzi-jmx` job 按 Pod 标签 `strimzi.io/kind∈{Kafka,KafkaConnect}` + 端口名 `tcp-prometheus` 抓 :9404。
+关键指标：`kafka_connect_connector_task_status{connector,task,status}`、`debezium_metrics_connected{context="streaming"}`、
+`debezium_metrics_millisecondsbehindsource`（-1 = 空闲无事件）。规则 `components/vmalert/rules/ecommerce-cdc.yml`：
+`CDCConnectTaskNotRunning`(2m) / `CDCDebeziumDisconnected`(3m) / `CDCDebeziumLagHigh`(>5min) / `CDCConnectMetricsMissing`。
+
+两个坑：① jmx_exporter 的 pattern 是 `domain<prop=val, ...><>attr`——域名后是 `<`，写成 `debezium.x:type=` 匹配 0 条；
+② 改 ConfigMap 后 `kubectl delete pod` **不会**让 Strimzi 重渲染 `/opt/kafka/custom-config/metrics-config.json`，
+要 `kubectl -n kafka annotate pod my-connect-cluster-connect-0 strimzi.io/manual-rolling-update=true` 让 operator 滚。

@@ -1,0 +1,78 @@
+# Kafka Connect + Debezium 的 JMX Prometheus Exporter 规则(2026-09-23)。
+# 挂法: kafka-connect.yaml 的 spec.metricsConfig 引用本 ConfigMap; Strimzi 往 Connect Pod 注 javaagent,
+# 容器暴露 9404(端口名 tcp-prometheus), 由 otel collector 的 prometheus/strimzi-jmx job 抓走。
+# 依赖顺序: 本 ConfigMap 必须先于 KafkaConnect CR 存在, 否则 operator reconcile 卡住。
+#
+# 为什么要它: 2026-09-23 broker 滚动后 Debezium task FAILED 而 connector 仍 RUNNING, 现有告警只能靠
+# 「复制槽失活 10 分钟」间接发现。下面两组指标直接给出 task 状态与 Debezium 是否连着源库、落后多少:
+#   kafka_connect_connector_task_status{connector,task,status}  = 1   ← task 级状态, running/failed/paused/unassigned
+#   debezium_metrics_Connected{context="streaming"}                    ← 与 PG 复制流的连接
+#   debezium_metrics_MilliSecondsBehindSource{context="streaming"}     ← 位点落后源库多少毫秒
+#   debezium_metrics_SnapshotCompleted / SnapshotRunning{context="snapshot"}
+# 告警规则见 components/vmalert/rules/ecommerce-cdc.yml。
+# 规则来源: Strimzi examples/metrics/kafka-connect-metrics.yaml + Debezium examples/monitoring 的 jmx 配置, 按需精简。
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: connect-metrics
+  namespace: kafka
+  labels:
+    app: strimzi
+data:
+  connect-metrics-config.yml: |
+    lowercaseOutputName: true
+    lowercaseOutputLabelNames: true
+    rules:
+      # ---- Kafka Connect worker / connector / task ----
+      # task 状态是字符串属性, jmx_exporter 用「值进 pattern、value 固定 1」的写法把它变成带 status 标签的 gauge
+      - pattern: "kafka.connect<type=connector-task-metrics, connector=(.+), task=(.+)><>status: ([a-z-]+)"
+        name: kafka_connect_connector_task_status
+        value: 1
+        labels:
+          connector: "$1"
+          task: "$2"
+          status: "$3"
+      - pattern: "kafka.connect<type=connector-metrics, connector=(.+)><>status: ([a-z-]+)"
+        name: kafka_connect_connector_status
+        value: 1
+        labels:
+          connector: "$1"
+          status: "$2"
+      - pattern: "kafka.connect<type=connector-task-metrics, connector=(.+), task=(.+)><>([^:]+)"
+        name: kafka_connect_connector_task_$3
+        labels:
+          connector: "$1"
+          task: "$2"
+      - pattern: "kafka.connect<type=(source|sink)-task-metrics, connector=(.+), task=(.+)><>([^:]+)"
+        name: kafka_connect_$1_task_$4
+        labels:
+          connector: "$2"
+          task: "$3"
+      - pattern: "kafka.connect<type=task-error-metrics, connector=(.+), task=(.+)><>([^:]+)"
+        name: kafka_connect_task_error_$3
+        labels:
+          connector: "$1"
+          task: "$2"
+      - pattern: "kafka.connect<type=connect-worker-metrics>([^:]+)"
+        name: kafka_connect_worker_$1
+      - pattern: "kafka.connect<type=connect-worker-rebalance-metrics>([^:]+)"
+        name: kafka_connect_worker_rebalance_$1
+      # ---- Debezium(所有连接器插件; 本集群只有 postgres) ----
+      # jmx_exporter 的 pattern 语法是 domain<prop=val, ...><>attr(域名后是 <, 不是 :type=; 2026-09-23 写错过一次, 0 条指标)。
+      # RowsScanned 是按表的 map(key=...), 显式吞掉避免刷错误日志
+      - pattern: "debezium.([^:]+)<type=connector-metrics, context=([^,]+), server=([^,]+), key=([^>]+)><>RowsScanned"
+        name: debezium_metrics_RowsScanned_ignored
+        value: 0
+      - pattern: "debezium.([^:]+)<type=connector-metrics, context=([^,]+), server=([^,]+), task=([^>]+)><>([^:]+)"
+        name: debezium_metrics_$5
+        labels:
+          plugin: "$1"
+          context: "$2"
+          server: "$3"
+          task: "$4"
+      - pattern: "debezium.([^:]+)<type=connector-metrics, context=([^,]+), server=([^>]+)><>([^:]+)"
+        name: debezium_metrics_$4
+        labels:
+          plugin: "$1"
+          context: "$2"
+          server: "$3"

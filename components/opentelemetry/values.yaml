@@ -251,6 +251,30 @@ config:
                 target_label: pod
               - source_labels: [__meta_kubernetes_pod_node_name]
                 target_label: node
+          # Strimzi 注入的 JMX exporter(broker 与 Connect 的 :9404, 端口名 tcp-prometheus)。
+          # 2026-09-23 前只抓 kafka-exporter, broker/Connect 的 metricsConfig 开了却没人来抓。
+          # Connect 侧给出 kafka_connect_connector_task_status 与 debezium_metrics_*(规则见 kafka/cdc/connect-metrics-configmap.yaml)。
+          - job_name: strimzi-jmx
+            scrape_interval: 30s
+            scrape_timeout: 10s
+            kubernetes_sd_configs:
+              - role: pod
+                namespaces:
+                  names: [kafka]
+            relabel_configs:
+              - source_labels: [__meta_kubernetes_pod_label_strimzi_io_kind]
+                action: keep
+                regex: Kafka|KafkaConnect
+              - source_labels: [__meta_kubernetes_pod_container_port_name]
+                action: keep
+                regex: tcp-prometheus
+              - source_labels: [__meta_kubernetes_pod_phase]
+                action: keep
+                regex: Running
+              - source_labels: [__meta_kubernetes_pod_name]
+                target_label: pod
+              - source_labels: [__meta_kubernetes_pod_label_strimzi_io_kind]
+                target_label: strimzi_kind
 
 resources:
   requests:

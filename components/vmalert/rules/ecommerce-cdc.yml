@@ -38,3 +38,41 @@ groups:
         annotations:
           summary: 'CNPG 复制槽指标缺失, CDC 位点告警已失效'
           description: 检查 cnpg pg-main 的 metrics 端口是否被 otel/VM 抓取, 以及槽 ecommerce_cdc 是否还存在。
+
+      # ---- 2026-09-23 起来自 Connect JMX exporter(kafka/cdc/connect-metrics-configmap.yaml) 的直接信号 ----
+      # 背景: 同日 broker 滚动后 Debezium task FAILED 而 connector 仍 RUNNING, 上面 CDCSlotInactive 要等槽失活 10 分钟
+      # 才响。这两条直接看 task 状态和 Debezium 与源库的连接, 2 分钟内就响; 也覆盖「task 活着但没连上源」。
+      - alert: CDCConnectTaskNotRunning
+        # 每个 (connector,task) 的 status 标签只有一个取值为 1; 不是 running 就告警。
+        expr: 'kafka_connect_connector_task_status{connector=~"ecommerce-.*", status!="running"} == 1'
+        for: 2m
+        labels: { severity: critical, category: cdc }
+        annotations:
+          summary: 'Connect task {{ $labels.connector }}/{{ $labels.task }} 状态 {{ $labels.status }}'
+          description: >-
+            kubectl -n kafka get kafkaconnector {{ $labels.connector }} -o jsonpath='{.status.connectorStatus.tasks[0].trace}';
+            source 已是 snapshot.mode=when_needed, 位点不可用会自愈; 其它原因看 Connect 日志。
+      - alert: CDCDebeziumDisconnected
+        # Debezium streaming 上下文与 PG 复制流断开(Connected=0)。task 可能仍 RUNNING(在重试), 但事件在积压。
+        expr: 'debezium_metrics_connected{context="streaming"} == 0'
+        for: 3m
+        labels: { severity: critical, category: cdc }
+        annotations:
+          summary: 'Debezium {{ $labels.server }} 与 PG 复制流断开'
+          description: 看 pg-main 是否切主/重启, 槽 ecommerce_cdc 是否还在; kubectl -n kafka logs my-connect-cluster-connect-0 | grep -i replication
+      - alert: CDCDebeziumLagHigh
+        # 位点落后源库超过 5 分钟。-1 表示空闲无事件(不告警), 所以要 > 0 过滤。
+        expr: 'debezium_metrics_millisecondsbehindsource{context="streaming"} > 300000'
+        for: 5m
+        labels: { severity: warning, category: cdc }
+        annotations:
+          summary: 'Debezium {{ $labels.server }} 落后源库 {{ $value | humanizeDuration }}'
+          description: 看 Connect CPU/内存与 Kafka broker 是否在滚动; 持续增长说明消费不过来。
+      - alert: CDCConnectMetricsMissing
+        # 新指标断了(Connect 没了 javaagent / 抓取 job 掉了), 上面三条会静默变绿。
+        expr: 'absent(kafka_connect_connector_task_status{connector="ecommerce-postgres-source"}) == 1'
+        for: 15m
+        labels: { severity: warning, category: cdc }
+        annotations:
+          summary: 'Connect JMX 指标缺失, task 级 CDC 告警已失效'
+          description: 检查 KafkaConnect CR 的 metricsConfig、Pod 端口 tcp-prometheus、otel prometheus/kafka 的 strimzi-jmx job。

@@ -32,3 +32,12 @@ spec:
   resources:
     requests: {cpu: 100m, memory: 1Gi}
     limits: {memory: 1Gi}
+  # JMX Prometheus Exporter(2026-09-23): 规则在 connect-metrics-configmap.yaml, 必须先 apply 它。
+  # javaagent 常驻约 50-100Mi 堆外; 加前实测 RSS 614Mi / limit 1Gi, 还有余量, 顶不住再把 limit 提到 1152Mi。
+  # 改这里会滚动重启 Connect → Debezium task 重启; source 已是 snapshot.mode=when_needed, 位点不可用时自愈。
+  metricsConfig:
+    type: jmxPrometheusExporter
+    valueFrom:
+      configMapKeyRef:
+        name: connect-metrics
+        key: connect-metrics-config.yml
