@@ -15,6 +15,12 @@ spec:
       - pg.dev.test                  # 对外域名进服务端证书 SAN。CNPG 默认只签各 Service 的
                                      # 内部 DNS 名，经网关用 sslmode=verify-full 连必须加这条，
                                      # 否则主机名校验失败（实测踩过）
+  monitoring:
+    # CDC 对账: 7 张被 CDC 的表的行数(kafka/cdc/reconcile/cnpg-cdc-rowcount-queries.yaml), 与 ES 侧 _count 比对。
+    # ConfigMap 必须先于本 CR 存在; 默认查询集(cnpg-default-monitoring)由算子自动保留。
+    customQueriesConfigMap:
+      - name: cnpg-cdc-reconcile
+        key: queries
   storage:
     size: 10Gi
     storageClass: ${SC_NAME}

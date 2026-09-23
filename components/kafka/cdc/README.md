@@ -38,8 +38,19 @@ Connect 的 JMX Prometheus Exporter 规则在 `connect-metrics-configmap.yaml`�
 `debezium_metrics_millisecondsbehindsource`（-1 = 空闲无事件）。规则 `components/vmalert/rules/ecommerce-cdc.yml`：
 `CDCConnectTaskNotRunning`(2m) / `CDCDebeziumDisconnected`(3m) / `CDCDebeziumLagHigh`(>5min) / `CDCConnectMetricsMissing`。
 它们**看不见** Connect offset 落后复制槽——那是 `connector_and_driver` 的结构性现象，靠 source 的
-`offset.mismatch.strategy=trust_greater_lsn` 自愈（重启实测不重快照），不做差值告警；完整性靠定期对账（待做）。
+`offset.mismatch.strategy=trust_greater_lsn` 自愈（重启实测不重快照），不做差值告警；完整性靠对账（下节）。
 
 两个坑：① jmx_exporter 的 pattern 是 `domain<prop=val, ...><>attr`——域名后是 `<`，写成 `debezium.x:type=` 匹配 0 条；
 ② 改 ConfigMap 后 `kubectl delete pod` **不会**让 Strimzi 重渲染 `/opt/kafka/custom-config/metrics-config.json`，
 要 `kubectl -n kafka annotate pod my-connect-cluster-connect-0 strimzi.io/manual-rolling-update=true` 让 operator 滚。
+
+## 完整性对账（2026-09-23）
+
+`reconcile/`：PG 侧 CNPG custom query `cnpg_cdc_rows_count{cdc_table}`（`cnpg-cdc-rowcount-queries.yaml`，挂在
+`pg-cluster.yaml` 的 `spec.monitoring.customQueriesConfigMap`；exporter 角色的读权限用 `cnpg-exporter-grants.sql` 授，
+含默认权限），ES 侧 CronJob `cdc-reconcile-es` 每 5 分钟 `_count` 推进 VM 为 `cdc_es_docs_count{cdc_table}`。
+规则 `CDCReconcileMismatch`（差值持续 15m）/ `CDCReconcileStale`（CronJob 20m 无成功）。
+
+**`trust_greater_lsn` 压力实验**（同日）：800 条独立事务 UPDATE（50ms 间隔）期间重启 task 三次——spus topic +800、
+search_catalog topic +800，不丢不重；7 个 id 最终态 PG = ES。结论：driver 推过的区间不含监控表事件，「信任槽」在这个
+配置下是安全的。样本 800/3 次重启；上副本后要重跑一次（槽在故障切换时的持久性是另一个前提）。

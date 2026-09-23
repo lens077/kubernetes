@@ -1,0 +1,31 @@
+# CDC 对账 PG 侧(2026-09-23): CNPG custom query, 每次抓取时数 7 张被 CDC 的表, 暴露为
+#   cnpg_cdc_rows_count{cdc_table="products.spus"}
+# 由 pg-cluster.yaml 的 spec.monitoring.customQueriesConfigMap 引用, cnpg.io/reload=true 改了自动重载。
+# count(*) 走全表; 表小无所谓, 表上百万行时改成 pg_class.reltuples(近似)或加只读物化视图。
+# ES 侧对应 cdc_es_docs_count{cdc_table=...}(reconcile-cronjob.yaml), 规则见 vmalert/rules/ecommerce-cdc.yml CDCReconcileMismatch。
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cnpg-cdc-reconcile
+  namespace: postgresql
+  labels:
+    cnpg.io/reload: "true"
+data:
+  queries: |
+    cdc_rows:
+      target_databases: ["ecommerce"]
+      query: |
+        SELECT 'orders.order_main'          AS cdc_table, count(*) AS count FROM orders.order_main
+        UNION ALL SELECT 'orders.order_item',           count(*) FROM orders.order_item
+        UNION ALL SELECT 'orders.order_log',            count(*) FROM orders.order_log
+        UNION ALL SELECT 'products.skus',               count(*) FROM products.skus
+        UNION ALL SELECT 'products.spus',               count(*) FROM products.spus
+        UNION ALL SELECT 'products.sale_detail',        count(*) FROM products.sale_detail
+        UNION ALL SELECT 'products.search_catalog',     count(*) FROM products.search_catalog
+      metrics:
+        - cdc_table:
+            usage: "LABEL"
+            description: "被 CDC 的表(schema.table)"
+        - count:
+            usage: "GAUGE"
+            description: "PG 当前行数"

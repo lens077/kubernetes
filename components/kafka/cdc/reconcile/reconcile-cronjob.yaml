@@ -1,0 +1,58 @@
+# CDC 对账 ES 侧(2026-09-23): 每 5 分钟对 7 个 alias 做 _count, 以 Prometheus 文本推进 VictoriaMetrics:
+#   cdc_es_docs_count{cdc_table="products.spus", alias="ecommerce_products_spus"}
+# cdc_table 标签与 PG 侧 cnpg_cdc_rows_count 同值, 规则里 on(cdc_table) 直接相减。
+# 凭据: sink 自己的账号 kafka/cdc-elasticsearch(角色 ecommerce-cdc-sink, 能读 ecommerce_*), 不用 elastic。
+# 镜像 curlimages/curl 节点上已有(其它探针在用), 不引入新拉取。
+# 为什么推 VM 而不是暴露 /metrics: CronJob 不常驻, 没有可抓的端点; VM 的 import 接口就是给这种场景的。
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: cdc-reconcile-es
+  namespace: kafka
+spec:
+  schedule: "*/5 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 120
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: reconcile
+              image: docker.io/curlimages/curl:8.10.1
+              env:
+                - name: ES_USER
+                  valueFrom: { secretKeyRef: { name: cdc-elasticsearch, key: username } }
+                - name: ES_PASS
+                  valueFrom: { secretKeyRef: { name: cdc-elasticsearch, key: password } }
+                - name: ES_URL
+                  value: http://elasticsearch.elasticsearch.svc:9200
+                - name: VM_IMPORT
+                  value: http://vm-single-victoria-metrics-single-server.victoriametrics.svc:8428/api/v1/import/prometheus
+              command: ["/bin/sh", "-ec"]
+              args:
+                - |
+                  out=/tmp/metrics; : > "$out"; fail=0
+                  for pair in orders.order_main=ecommerce_orders_order_main \
+                              orders.order_item=ecommerce_orders_order_item \
+                              orders.order_log=ecommerce_orders_order_log \
+                              products.skus=ecommerce_products_skus \
+                              products.spus=ecommerce_products_spus \
+                              products.sale_detail=ecommerce_products_sale_detail \
+                              products.search_catalog=ecommerce_catalog_products; do
+                    t=${pair%%=*}; a=${pair#*=}
+                    n=$(curl -sS --max-time 10 -u "$ES_USER:$ES_PASS" "$ES_URL/$a/_count" | sed -n 's/.*"count":\([0-9]*\).*/\1/p')
+                    if [ -z "$n" ]; then echo "count failed: $a" >&2; fail=1; continue; fi
+                    echo "cdc_es_docs_count{cdc_table=\"$t\",alias=\"$a\"} $n" >> "$out"
+                  done
+                  echo "cdc_es_reconcile_run_ok $((1-fail))" >> "$out"
+                  cat "$out"
+                  curl -sS --max-time 10 --fail -X POST --data-binary @"$out" "$VM_IMPORT"
+                  exit $fail
+              resources:
+                requests: { cpu: 10m, memory: 16Mi }
+                limits: { memory: 64Mi }

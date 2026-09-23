@@ -76,3 +76,28 @@ groups:
         annotations:
           summary: 'Connect JMX 指标缺失, task 级 CDC 告警已失效'
           description: 检查 KafkaConnect CR 的 metricsConfig、Pod 端口 tcp-prometheus、otel prometheus/kafka 的 strimzi-jmx job。
+
+      # ---- 完整性对账(2026-09-23): 两头直接比, 给 offset.mismatch.strategy=trust_greater_lsn 的「信任槽」兜底 ----
+      # PG 侧 cnpg_cdc_rows_count 来自 CNPG custom query(kafka/cdc/reconcile/), ES 侧 cdc_es_docs_count 由 CronJob 每 5 分钟推进 VM。
+      # sink 是异步的, 差值瞬时非零正常; 持续 15 分钟才算丢。删除走 tombstone → ES 删文档, 所以行数应严格相等。
+      - alert: CDCReconcileMismatch
+        expr: |
+          abs(
+            max by (cdc_table) (cnpg_cdc_rows_count)
+            - on (cdc_table) max by (cdc_table) (cdc_es_docs_count)
+          ) > 0
+        for: 15m
+        labels: { severity: critical, category: cdc }
+        annotations:
+          summary: 'CDC 对账不平: {{ $labels.cdc_table }} PG 与 ES 相差 {{ $value }} 行'
+          description: >-
+            链路各部件可能全绿(见 experience/debezium-offset-behind-slot-after-broker-roll.md 的「信任槽」代价)。
+            先看 DLQ topic ecommerce_cdc.elasticsearch.dlq 有没有消息, 再比对具体 id: PG 查 id 列表 vs ES _search _source=false。
+      - alert: CDCReconcileStale
+        # CronJob 没跑/推不进 VM, 上面那条会静默变绿。
+        expr: 'absent_over_time(cdc_es_reconcile_run_ok[20m]) == 1 or max_over_time(cdc_es_reconcile_run_ok[20m]) == 0'
+        for: 5m
+        labels: { severity: warning, category: cdc }
+        annotations:
+          summary: 'CDC 对账 CronJob 20 分钟无成功运行'
+          description: kubectl -n kafka get jobs -l job-name | grep cdc-reconcile; kubectl -n kafka logs job/<最近一个>
