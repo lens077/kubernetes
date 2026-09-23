@@ -22,17 +22,16 @@
 | `gateway` | 机房 LAN 上的开发机，直连 Cilium Gateway VIP | `HOSTNAME:DEV_PORT`（`*.dev.test`） | 必须带 `ca_pem`（私有 CA） | `HOSTNAME/DEV_PORT/DEV_SCHEME` |
 | `pangolin`（`dev` 默认） | 不在机房 LAN 的开发机，经 Pangolin 新建的集群 newt site → VIP | `REMOTE_HOST:REMOTE_PORT`（`*.apikv.com`） | `REMOTE_CA=public`（Traefik 终止，清空 ca_pem）或 `private`（raw TCP 直通，带 ca_pem，证书 SAN 须含 REMOTE_HOST） | `REMOTE_HOST/REMOTE_PORT/REMOTE_SCHEME/REMOTE_CA` |
 
-`pangolin` 策略需要在 Pangolin 面板/API 创建资源；旧 `consul-dev`/`redis-dev` 仍指向失效的 node4/node5 newt site，不能继续作为新集群入口。
+`pangolin` 策略用到的 Pangolin 资源（全部挂 site `k8s-cluster`，2026-09-23 逐条协议级实测）：
 
-当前新集群后端：
+| 资源 | rid | 类型 | 公网 | target | 实测 |
+|---|---:|---|---|---|---|
+| `pg` | 26 | raw TCP `30001` | `pg-dev.apikv.com:30001` | `pg-main-rw` ClusterIP:5432（**不是** TLSRoute VIP：PG 先发明文 SSLRequest，Passthrough 会回 400） | `app` 用户 TLS 登录、`ecommerce` 33 表 |
+| `redis-dev` | 59 | raw TCP `30005` | `redis-dev.apikv.com:30005` | `10.10.31.242:6379`（dragonfly-gateway TCPRoute） | CA(`global-root-ca`)+SNI 校验、`AUTH`/`PING`/`SET`/`GET`、错密码拒绝 |
+| `kafka-dev` | 61 | raw TCP `30004` | `kafka-dev.apikv.com:30004` | `10.10.31.243:9094`（kafka-external-gateway TCPRoute → Strimzi external listener） | SASL_SSL/SCRAM-SHA-512 用户 `remote-dev`，metadata 里 broker 0 advertised 即公网地址，produce→consume 往返，错密码 `Authentication failed` |
+| `grafana` / `metrics` / `traces` / `vmalert` / `alerts` / `healthchecks` / `argocd` | 20/21/23/24/25/56/60 | HTTP | `<name>.apikv.com` | `10.10.31.240:443`，`tlsServerName`/`setHostHeader`=`<name>.dev.test` | grafana/argocd/metrics SSO 关（应用自认证）；traces/vmalert/alerts/hc 挂 Pangolin SSO，匿名 401 是**边缘**在拦，业务内容用 resource access token 或登录会话验（vmalert 6 组 23 条规则、Alertmanager `Watchdog`、hc 1 check） |
 
-| 资源 | 类型 | 新 target | 状态 |
-|---|---|---|---|
-| Dragonfly | raw TCP/TLS | `10.10.31.242:6379`，新集群 TCPRoute | **已建**：Pangolin `redis-dev`（resourceId 59，proxyPort 30005）→ site `k8s-cluster`；2026-09-22 Mac 实测 `redis-dev.apikv.com:30005` TLS(CA 校验+SNI)+AUTH 正反向通过 |
-| PostgreSQL | raw TCP（不是 passthrough） | `pg-main-rw` ClusterIP:5432（Pangolin `pg`，resourceId 26，proxyPort 30001） | **已建并实测**：2026-09-22 Mac `pg-dev.apikv.com:30001` `sslmode=verify-ca` + `pg-main-ca` 通过、错密码被拒。不能指 `10.10.31.241`：passthrough 监听器只认直接 ClientHello，PG 客户端的明文 SSLRequest 会被 Envoy 拒 |
-| Kafka | raw TCP | `my-cluster-kafka-bootstrap.kafka.svc:9092`，需要另建受限 TCPRoute | K8s 仅内部 listener；未对公网开放 |
-| Grafana | HTTPS/HTTPRoute | `10.10.31.240:443`，Host `grafana.dev.test` | 已迁到 `k8s-cluster`（`grafana.apikv.com`，`/api/health` 200） |
-| ArgoCD Web UI | HTTPS/HTTPRoute | `10.10.31.240:443`，Host `argocd.dev.test` | K8s HTTPRoute 已 Ready；Pangolin resource 待创建 |
+对应契约字段在 `components/{postgres,dragonfly,kafka}/component.env` 的 `REMOTE_*`（kafka 的 `mapping.yaml` 能力尚未定义，harvest 会「跳过」——业务服务还没接 Kafka 客户端，这是预期）。
 
 新建 raw TCP 资源前，确认 node1 gerbil/Traefik 对应端口和云防火墙放行；`30005` 已被新 `redis-dev` 复用，target 是新集群 VIP，
 不是旧 node4/node5。面板的「创建资源」按钮在自动化填表时会一直 disabled，用 `PUT /api/v1/org/main/resource` +

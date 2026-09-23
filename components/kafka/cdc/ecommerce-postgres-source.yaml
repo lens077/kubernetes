@@ -33,7 +33,15 @@ spec:
     # 后推进, 10 分钟窗口对观测和 WAL 回收都太粗。显式 60s; 心跳 topic __debezium-heartbeat.ecommerce_cdc。
     # 本 Kafka 无 authorization, 不存在经验文档里「加 heartbeat 前先开 ACL 否则 task FAILED」的前置。
     heartbeat.interval.ms: "60000"
-    snapshot.mode: initial
+    # 2026-09-23 事故: broker 滚动(加 external listener)→ Connect rebalance 重启 task → Debezium 用
+    # Connect offsets 里的 LSN 0/1E001108 续流, 但 slot 的 restart_lsn 已推进到 0/21000130(位点已向 PG
+    # 确认、对 Kafka 的 offset 提交却没落地), PG 无法从更旧的位点解码 → task FAILED, connector 仍显 RUNNING。
+    # initial 模式下这种情况只能人工删 offsets 重建; when_needed 是 Debezium 文档对该场景的官方答案:
+    # 「无 offset, 或记录的位点在服务器上不可用时, 自动重做快照」。种子数据量小, ES sink 按 key 幂等
+    # (write.method=INSERT + external version=offset), 重快照只是覆盖同 key 文档, 不产生脏数据。
+    # 代价: 以后任何 offsets 丢失都会静默重快照一遍(小库可接受); 大库要改回 initial 并走 README 的重建手顺。
+    # https://debezium.io/documentation/reference/stable/connectors/postgresql.html#postgresql-property-snapshot-mode
+    snapshot.mode: when_needed
     snapshot.locking.mode: none
     schema.include.list: orders,products
     table.include.list: orders.order_main,orders.order_item,orders.order_log,products.skus,products.spus,products.sale_detail,products.search_catalog

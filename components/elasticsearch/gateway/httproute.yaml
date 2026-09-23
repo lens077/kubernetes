@@ -1,0 +1,23 @@
+# Elasticsearch 只给 search 服务的 remote-dev 走公网: Pangolin es-dev.apikv.com(SSO 关, ES 自己鉴权) → VIP:443
+# → 本路由 → :9200。只挂 https 段, 不做 80→443 重定向(机器客户端不需要, 少一条匿名可探的路)。
+# 凭据边界: 公网只用只读 API key(角色 ecommerce-search-read, 见 install.sh), 不是 elastic 超级用户。
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: ${RELEASE}
+  namespace: ${NAMESPACE}
+spec:
+  parentRefs:
+    - name: cilium-gateway
+      namespace: default
+      sectionName: https
+  hostnames:
+    - "${HOSTNAME}"
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: elasticsearch
+          port: 9200

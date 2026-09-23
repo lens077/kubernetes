@@ -1,4 +1,8 @@
-# VPA 控制器完整部署；业务 VPA 对象仍默认 Off/RequestsOnly，只有显式 Auto 才允许驱逐。
+# VPA 策略(2026-09-23 拍板, k1/k2/k3 三节点):
+#   Recommender 开 = 只算建议; Admission webhook 保留但不作为自动调节手段(所有 VPA updateMode=Off,
+#   webhook 无建议可注入); Updater 关 = 永远不主动驱逐 Pod 去套建议。
+#   改 requests 只走「kubectl describe vpa 看 Target/Lower/Upper → 人工确认 → 改 Deployment」。
+#   要重开 updater 必须先把对应 VPA 改成 Auto/Recreate 并接受驱逐, 不要只翻这一个开关。
 admissionController:
   enabled: true
   replicas: 2
@@ -13,7 +17,7 @@ admissionController:
   mutatingWebhookConfiguration:
     failurePolicy: Ignore
 updater:
-  enabled: true
+  enabled: false                 # 见顶部策略; 2026-09-22 首装时曾为 true, 09-23 关闭
   replicas: 1
 
 recommender:

@@ -1,0 +1,37 @@
+# Kafka external listener 的 L4 入口：独立 Gateway + TCPRoute，固定 VIP 10.10.31.243:9094。
+# 为什么不挂共享 cilium-gateway：TCP listener 与 HTTPS Terminate 不能共用 443，L4 组件各自带 Gateway
+# (与 postgresql/pg-passthrough-gateway、dragonfly/dragonfly-gateway 同一模式)。
+# 后端指 broker 0 的 per-broker Service 而不是 external-bootstrap：单 broker 下 bootstrap 与
+# broker 连接落到同一个 Pod，少一层 Service 跳转；扩成多 broker 时要改成每 broker 一个 VIP。
+# Pangolin raw 资源 kafka-dev(proxyPort 30004) 的 target 就是这个 VIP:9094。
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: kafka-external-gateway
+  namespace: kafka
+spec:
+  gatewayClassName: cilium
+  addresses:
+    - type: IPAddress
+      value: "10.10.31.243"
+  listeners:
+    - name: kafka
+      port: 9094
+      protocol: TCP
+      allowedRoutes:
+        namespaces:
+          from: Same
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: TCPRoute
+metadata:
+  name: kafka-external
+  namespace: kafka
+spec:
+  parentRefs:
+    - name: kafka-external-gateway
+      sectionName: kafka
+  rules:
+    - backendRefs:
+        - name: my-cluster-dual-role-0
+          port: 9094

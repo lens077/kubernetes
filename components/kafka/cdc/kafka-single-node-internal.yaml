@@ -115,6 +115,30 @@ spec:
         port: 9093
         type: internal
         tls: true
+      # ── 2026-09-23 remote-dev 公网入口 ──────────────────────────────────────
+      # Mac 上的 make dev 经 Pangolin raw TCP 30004 → newt(k8s-cluster) → Cilium Gateway
+      # 10.10.31.243:9094(components/kafka/cdc/kafka-external-gateway.yaml) → 本 listener。
+      # 三个必须一起成立的点：
+      #   1. advertisedHost/Port 必须是客户端能连到的公网地址。Kafka 客户端先连 bootstrap
+      #      拿 metadata，再按 metadata 里的 advertised 地址连 broker；写集群内地址客户端
+      #      第二跳就断。单 broker 所以只有 broker 0 一条。
+      #   2. TLS 由 Strimzi cluster CA 签，SAN 含 advertisedHost；客户端 truststore 用
+      #      Secret my-cluster-cluster-ca-cert 的 ca.crt。Pangolin/Cilium 全程 TCP 直通，不终止 TLS。
+      #   3. 只在本 listener 开 SCRAM 认证，**不加集群级 authorization**——plain listener
+      #      上的 Kafka Connect 是匿名的，加了 authorization 会把 CDC 链打断。
+      #      账号是 KafkaUser remote-dev(kafka-remote-dev-user.yaml)，密码在 Secret kafka/remote-dev。
+      # 线上是 kubectl -n kafka patch kafka my-cluster --type=json 追加的，不是整份 apply(见文件顶部)。
+      - name: external
+        port: 9094
+        type: cluster-ip
+        tls: true
+        authentication:
+          type: scram-sha-512
+        configuration:
+          brokers:
+            - broker: 0
+              advertisedHost: kafka-dev.apikv.com
+              advertisedPort: 30004
     config:
       offsets.topic.replication.factor: 1
       transaction.state.log.replication.factor: 1

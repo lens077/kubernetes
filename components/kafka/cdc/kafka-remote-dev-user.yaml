@@ -1,0 +1,13 @@
+# remote-dev 用的 Kafka 账号：只在 external listener(9094, SCRAM-SHA-512)上被要求。
+# User Operator 会把密码生成到 Secret kafka/remote-dev(键 password + sasl.jaas.config)，
+# 仓库里不写值。集群没开 authorization，所以这里不写 acls——写了也不生效，别被误导。
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaUser
+metadata:
+  name: remote-dev
+  namespace: kafka
+  labels:
+    strimzi.io/cluster: my-cluster
+spec:
+  authentication:
+    type: scram-sha-512

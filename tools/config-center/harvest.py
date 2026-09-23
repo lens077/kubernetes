@@ -738,6 +738,14 @@ def main() -> int:
         missing = [c for c in needed_caps(schema, mapping) if c not in providers]
         if missing:
             log(f"⚠ {svc}: schema 需要 {' '.join(missing)} 但没有启用的提供方, 这些块保持原值")
+        # 提供方显式声明 REMOTE_POLICY=keep: 该能力没有远程入口是决策不是遗漏(2026-09-23 opentelemetry:
+        # 公网 OTLP 写入口没有鉴权就是任人灌数据, 集群内 collector 从 Mac 打不到只是每 30s 一条 warning),
+        # pangolin 策略下保持原值而不是 die。别拿集群 DNS 冒充 REMOTE_HOST 绕过这里。
+        if args.strategy == "pangolin":
+            keep = [c for c in caps if not providers[c].c.get("pangolin") and providers[c].c.get("remote_policy") == "keep"]
+            if keep:
+                log(f"⚠ {svc}: {' '.join(keep)} 的提供方声明 REMOTE_POLICY=keep(无远程入口, 决策), 这些块保持原值")
+                caps = [c for c in caps if c not in keep]
 
         # 3) 只改映射路径
         changes, unresolved = apply_caps(doc, orig, caps, mapping, providers, args.strategy, args.dry_run, svc)
