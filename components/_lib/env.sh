@@ -82,6 +82,19 @@ get_cred() {  # get_cred <名字>
   cat "$f"
 }
 
+# TCR 拉取凭据 → 指定 ns 的 kubernetes.io/dockerconfigjson Secret(幂等)。
+#   tcr_pull_secret_ensure <ns> [secret名=tcr-pull-secret]
+# 输入是 $STATE_DIR/creds/tcr-dockerconfig.json —— 标准 docker config.json(只含 auths), 由操作者
+# 从本机 `docker login ccr.ccs.tencentyun.com` 的凭据落到节点, chmod 600, 不进 git。
+# 2026-09-22 起个别上游 registry(reg.kyverno.io 等)在机房侧单镜像拉 1h+, 走 TCR 镜像仓兜底;
+# 这是外部凭据, 不能用 get_cred 随机生成, 缺了就 die 让人放文件。
+tcr_pull_secret_ensure() {  # tcr_pull_secret_ensure <ns> [name]
+  local ns=$1 name=${2:-tcr-pull-secret} f="$STATE_DIR/creds/tcr-dockerconfig.json"
+  [[ -s $f ]] || die "$ID: 缺 $f(TCR 拉取凭据, docker config.json 格式, chmod 600); 见 components/kyverno/README.md"
+  kctl -n "$ns" create secret generic "$name" --type=kubernetes.io/dockerconfigjson \
+    --from-file=.dockerconfigjson="$f" --dry-run=client -o yaml | kctl apply -f - >/dev/null
+}
+
 # --------------------------- 凭据: ESO 优先, get_cred 显式降级 ----------------
 # 2026-09-11 起凭据真相源是 OpenBao/Vault(config.env ESO_STORE 指定的 ClusterSecretStore),
 # 组件不再自己 create secret; 改为 apply 同目录的 externalsecret.yaml, 由 ESO 物化成同名 Secret。
@@ -348,11 +361,17 @@ helm_install_component() {  # helm_install_component <组件目录> [附加 helm
     [[ ${!i} == --version ]] && { local j=$(( i + 1 )); version=${!j:-}; break; }
     [[ ${!i} == --version=* ]] && { version=${!i#--version=}; break; }
   done
-  local chart_name="${HELM_CHART#*/}"
-  if [[ -n $HELM_REPO ]] && [[ -z $version || ! -s "${CACHE_DIR:-/var/cache/k8s-installer}/charts/${chart_name}-${version}.tgz" ]]; then
-    helm_repo_add ${HELM_REPO}   # 形如 "vm https://..."; 故意不加引号
+  # 缓存里有精确版本的 tgz 就直接用它, 既不 repo add 也不查 index(机房侧两者都可能超时)。
+  # 2026-09-22 事故: 之前只跳过了 repo add 却仍把 "repo/chart" 交给 helm → "repo xxx not found",
+  # 手工 scp 进缓存的 chart 全部装不上(openfga/kyverno 两次踩中)。
+  local chart_name="${HELM_CHART#*/}" cached=""
+  [[ -n $version ]] && cached="${CACHE_DIR:-/var/cache/k8s-installer}/charts/${chart_name}-${version}.tgz"
+  if [[ -n $cached && -s $cached ]]; then
+    chart_ref=$cached
+  else
+    [[ -n $HELM_REPO ]] && helm_repo_add ${HELM_REPO}   # 形如 "vm https://..."; 故意不加引号
+    chart_ref=$(helm_chart_ref_via_github_proxy "$HELM_CHART" "$version")
   fi
-  chart_ref=$(helm_chart_ref_via_github_proxy "$HELM_CHART" "$version")
   retry 2 10 helm_cmd upgrade --install "${RELEASE:-$ID}" "$chart_ref" \
     --namespace "$NAMESPACE" --create-namespace "${values_arg[@]}" "$@"
   [[ -n $rendered ]] && rm -f "$rendered"
