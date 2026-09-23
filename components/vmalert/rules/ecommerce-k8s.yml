@@ -74,7 +74,9 @@ groups:
       - alert: AlertFiringTooLong
         # 元规则：长期红着的告警不再产生新信息，反而会把真事故淹掉。
         # ALERTS_FOR_STATE 不带 alertstate label，不要加该过滤条件（会永远查不到）。
-        expr: '(time() - ALERTS_FOR_STATE{alertname!="AlertFiringTooLong"}) > 4*3600'
+        # Watchdog 是设计上永远 firing 的心跳（observability-pipeline.yml），必须排除——
+        # 否则本规则对它永久 firing，自己变成一条慢性红（2026-09-21 起挂了 1d11h 才发现）。
+        expr: '(time() - ALERTS_FOR_STATE{alertname!~"AlertFiringTooLong|Watchdog"}) > 4*3600'
         for: 15m
         labels: { severity: warning, category: observability }
         annotations:
