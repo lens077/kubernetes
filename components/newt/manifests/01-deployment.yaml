@@ -37,7 +37,10 @@ spec:
           # 写错成 1.5.0 会得到一个"Pod Running 但只打印 usage"的假象
           # (老版本没有 -endpoint 这个 flag, 解析失败后打帮助然后退出, 而 restartPolicy
           #  让它一直重启, kubectl get pod 看着一切正常 —— 实测踩过)。
-          image: docker.io/fosrl/newt:1.15.0
+          # 2026-09-22: 随 Pangolin 升到 1.23.0，把客户端一起拉到 1.17.0
+          # （node0 的容器、node2 的 systemd 二进制同版本，三处别各自漂移）。
+          # newt 启动时会打印一行 `Server version: <服务端版本>`，版本对不上先看它。
+          image: docker.io/fosrl/newt:1.17.0
           imagePullPolicy: IfNotPresent
           securityContext:
             allowPrivilegeEscalation: false
