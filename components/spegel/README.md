@@ -1,6 +1,6 @@
 # Spegel
 
-Spegel 在节点间共享 containerd 已缓存的 OCI layer，作为上游 registry 之前的集群本地 mirror。当前 chart 固定为 `v0.7.4`。
+Spegel 在节点间共享 containerd 已缓存的 OCI layer，作为上游 registry 之前的集群本地 mirror。
 
 ## 本集群取舍
 
