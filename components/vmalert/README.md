@@ -36,9 +36,9 @@ chart `victoria-metrics-alert` 0.47.0（app v1.150.0）
    2026-08-31 点号规则整体断供且不报错的事故就是这么来的。
 
 **应用层告警的 annotation 约定**（`rules/ecommerce-app.yml`，2026-09-24）：除 `summary`/`description` 外必须带
-`dashboard`（`https://` 开头，alert-bridge 转成 ntfy 的 `Click`，点通知直达该服务的 APM 盘）和 `logs_query`
+`dashboard`（`https://` 开头，alert-bridge 转成 ntfy 的 `Click`；目前指向预填了该服务错误查询的 Grafana Explore，用 `queryEscape` 拼，因为 APM 盘还没在重建后的 Grafana 里）和 `logs_query`
 （可直接粘进 VictoriaLogs 的 LogsQL）。只有 summary 的告警，值班者得自己去找服务、对时间窗，定位慢在这一步。
-主机名用 `{{ $externalLabels.cluster }}` 拼，不要写死。改规则后先在 vmalert Pod 里跑
+主机名用 Grafana 的 `root_url`（`components/grafana/values.yaml`，公网 `grafana.apikv.com`），**不要**用 `{{ $externalLabels.cluster }}` 拼——那是内网域 `dev.test`，手机点开解析不了（2026-09-24 第一版就这么错过）。改规则后先在 vmalert Pod 里跑
 `/vmalert-prod -dryRun -rule=<文件>`：它会同时解析 MetricsQL 和模板，坏一处就 rc≠0。
 
 ## 4. 暴露方式

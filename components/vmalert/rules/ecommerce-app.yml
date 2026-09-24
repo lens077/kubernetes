@@ -12,7 +12,11 @@
 #   （2026-09-24 实测 dev 占 rpc 序列的大头），不排除的话开发者本地调试报错会给值班手机推 critical。
 #
 # annotations 约定：除 summary/description 外，每条应用告警必须带
-#   dashboard  —— alert-bridge 转成 ntfy 的 Click，点通知直接打开定位到该服务的 APM 盘；
+#   dashboard  —— alert-bridge 转成 ntfy 的 Click，点通知直接打开 Grafana Explore，已预填该服务（与环境）的错误查询。
+#                 不链 APM 盘：2026-09-24 集群重建后 ecommerce-apm 等三张盘不在 Grafana 里（404），
+#                 且生成的 JSON 仍含退役的 Loki/Jaeger 数据源不能直接导入；APM 盘重建后可改回看板链接。
+#                 主机名与 components/grafana/values.yaml 的 root_url 一致（公网 grafana.apikv.com）；
+#                 不能用 $externalLabels.cluster 拼：那是集群内网域 dev.test，手机上解析不了。
 #   logs_query —— 可直接粘进 VictoriaLogs 的 LogsQL（字段名 2026-09-24 在 VL 实测）。
 # 目的：让「告警 → 定位」不超过 5 分钟（ecommerce TODO「SLO 与定位验收」）。
 groups:
@@ -38,7 +42,8 @@ groups:
             先看 APM 盘「错误分析」区：错误码分布定位是哪类故障，「错误 by 业务 reason」看是否集中在某条业务规则；
             再按 logs_query 查日志，用 error.origin 找到抛错的数据层那一行，用 trace_id 跳 VictoriaTraces 看调用链。
             同时看时间轴上的紫色「发布」标记：刚发过版优先考虑回滚。
-          dashboard: 'https://grafana.{{ $externalLabels.cluster }}/d/ecommerce-apm/?var-service={{ $labels.service_name }}&from=now-1h&to=now'
+          dashboard: >-
+            https://grafana.apikv.com/explore?schemaVersion=1&orgId=1&panes={{ printf `{"a":{"datasource":"P4169E866C3094E38","queries":[{"refId":"A","datasource":{"type":"prometheus","uid":"P4169E866C3094E38"},"expr":"sum by (rpc_method, rpc_connect_rpc_error_code) (rate(rpc_server_duration_milliseconds_count{service_name=\"%s\",deployment_environment_name=\"%s\",rpc_connect_rpc_error_code!=\"\"}[5m]))"}],"range":{"from":"now-1h","to":"now"}}}` $labels.service_name $labels.deployment_environment_name | queryEscape }}
           logs_query: 'service.name:="{{ $labels.service_name }}" deployment.environment.name:="{{ $labels.deployment_environment_name }}" rpc.code:in(unknown,internal,unavailable,deadline_exceeded,resource_exhausted,data_loss,unimplemented)'
 
       - alert: EcommerceUnknownErrorShareHigh
@@ -60,7 +65,8 @@ groups:
           description: >-
             有错误路径没有被 service 层映射归类。按 logs_query 找出这些错误的 error.origin 与错误文本，
             在 service 层补 errors.Is 映射（或给领域错误声明 errinfo reason）。不是故障，不需要立即处置。
-          dashboard: 'https://grafana.{{ $externalLabels.cluster }}/d/ecommerce-apm/?var-service={{ $labels.service_name }}&from=now-6h&to=now'
+          dashboard: >-
+            https://grafana.apikv.com/explore?schemaVersion=1&orgId=1&panes={{ printf `{"a":{"datasource":"P4169E866C3094E38","queries":[{"refId":"A","datasource":{"type":"prometheus","uid":"P4169E866C3094E38"},"expr":"sum by (rpc_method) (increase(rpc_server_duration_milliseconds_count{service_name=\"%s\",deployment_environment_name=\"%s\",rpc_connect_rpc_error_code=\"unknown\"}[1h]))"}],"range":{"from":"now-6h","to":"now"}}}` $labels.service_name $labels.deployment_environment_name | queryEscape }}
           logs_query: 'service.name:="{{ $labels.service_name }}" deployment.environment.name:="{{ $labels.deployment_environment_name }}" rpc.code:="unknown"'
 
       - alert: EcommerceRPCMetricsMissing
@@ -77,5 +83,5 @@ groups:
           description: >-
             服务 OTLP 指标链路断了：应用错误率告警此刻全部失效（无数据不会触发）。检查服务 observability.enable 配置、
             OTel collector 的 metrics pipeline 与 VictoriaMetrics 写入口认证。
-          dashboard: 'https://grafana.{{ $externalLabels.cluster }}/d/ecommerce-infrastructure/?from=now-3h&to=now'
+          dashboard: 'https://grafana.apikv.com/explore?schemaVersion=1&orgId=1&panes=%7B%22a%22%3A%7B%22datasource%22%3A%22P4169E866C3094E38%22%2C%22queries%22%3A%5B%7B%22refId%22%3A%22A%22%2C%22datasource%22%3A%7B%22type%22%3A%22prometheus%22%2C%22uid%22%3A%22P4169E866C3094E38%22%7D%2C%22expr%22%3A%22count%20by%20%28service_name%2C%20deployment_environment_name%29%20%28rpc_server_duration_milliseconds_count%29%22%7D%5D%2C%22range%22%3A%7B%22from%22%3A%22now-3h%22%2C%22to%22%3A%22now%22%7D%7D%7D'
           logs_query: 'deployment.environment.name:!="dev" severity_text:=error'
