@@ -40,7 +40,7 @@ def compact(value, limit):
     return text[:limit]
 
 
-def send_raw(title, message, priority, tags):
+def send_raw(title, message, priority, tags, click=""):
     if not NTFY_READY:
         log({"source": "ntfy", "skipped": "ntfy not configured", "title": compact(title, 160)})
         return
@@ -50,6 +50,8 @@ def send_raw(title, message, priority, tags):
         "Tags": tags,
         "Title": Header(compact(title, 160), "utf-8").encode(),
     }
+    if click:
+        headers["Click"] = click
     if NTFY_TOKEN:
         headers["Authorization"] = f"Bearer {NTFY_TOKEN}"
     request = Request(
@@ -71,6 +73,7 @@ def send_alertmanager(payload):
     name = labels.get("alertname") or "multiple alerts"
     severity = labels.get("severity", "unknown")
     summary = annotations.get("summary") or annotations.get("description") or ""
+    click = dashboard_url(annotations, alerts)
 
     resolved = status == "resolved"
     title = f"[{status.upper()}] {compact(name, 120)}"
@@ -81,7 +84,19 @@ def send_alertmanager(payload):
     )
     priority = 3 if resolved else (5 if severity.lower() in ("crit", "critical") else 4)
     tags = "white_check_mark" if resolved else "rotating_light"
-    send_raw(title, message, priority, tags)
+    send_raw(title, message, priority, tags, click)
+
+
+def dashboard_url(annotations, alerts):
+    """告警的 dashboard annotation → ntfy Click（点通知直接打开定位到服务的看板）。
+
+    2026-09-24 加：告警只带 summary 时，值班者要自己去 Grafana 找服务、对时间窗，
+    「告警至定位 ≤5 分钟」的验收卡在这一步。分组里多条告警的 dashboard 不同时
+    commonAnnotations 不含它，退回第一条告警的。只接受 https，防止 annotation 被写成别的协议。
+    """
+    url = annotations.get("dashboard") or next(
+        (a.get("annotations", {}).get("dashboard") for a in alerts if a.get("annotations", {}).get("dashboard")), "")
+    return url if str(url).startswith("https://") else ""
 
 
 def slack_text(payload):

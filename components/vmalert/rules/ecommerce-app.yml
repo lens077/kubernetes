@@ -1,0 +1,81 @@
+# 应用层 RED 告警（2026-09-24 新增）
+#
+# 触发它的发现：2026-09-24 逐条核对 vmalert 规则，39 条全是基础设施类（CNPG、CDC、K8s、
+# 观测链自身），**一条应用层错误率告警都没有**。ecommerce 仓 docs/observability/面板设计.md
+# 的 A1「服务侧错误率 > 5%」在 Grafana unified alerting → vmalert 迁移时没有跟过来——
+# 服务全挂成 unknown 时只有看板会变红，不会有人被叫醒。
+#
+# 口径与 ecommerce 仓 docs/observability/grafana/common.py 一致（改一边必须改另一边）：
+#   服务侧错误 = rpc_connect_rpc_error_code ∈ SERVER_FAULT_CODES；客户端异常不进错误率。
+#   config-service（control-tower）不在这里；payment 全部 RPC 是 Unimplemented 桩，恒 100%，排除。
+#   **排除 deployment_environment_name="dev"**：本地开发机经公网 OTLP 入口把指标写进同一个 VM
+#   （2026-09-24 实测 dev 占 rpc 序列的大头），不排除的话开发者本地调试报错会给值班手机推 critical。
+#
+# annotations 约定：除 summary/description 外，每条应用告警必须带
+#   dashboard  —— alert-bridge 转成 ntfy 的 Click，点通知直接打开定位到该服务的 APM 盘；
+#   logs_query —— 可直接粘进 VictoriaLogs 的 LogsQL（字段名 2026-09-24 在 VL 实测）。
+# 目的：让「告警 → 定位」不超过 5 分钟（ecommerce TODO「SLO 与定位验收」）。
+groups:
+  - name: ecommerce-app
+    interval: 30s
+    rules:
+      - alert: EcommerceServiceErrorRateHigh
+        # 最低流量门槛 0.02 rps（约 1.2 次/分钟）：pre 环境流量稀疏，没有门槛时
+        # 5 分钟里 1 次失败 / 2 次请求 = 50%，会把单个坏请求当成事故。
+        expr: |
+          (
+            sum by (service_name, deployment_environment_name) (rate(rpc_server_duration_milliseconds_count{service_name!~"config-service|payment-service",deployment_environment_name!="dev",rpc_connect_rpc_error_code=~"unknown|internal|unavailable|deadline_exceeded|resource_exhausted|data_loss|unimplemented"}[5m]))
+            /
+            sum by (service_name, deployment_environment_name) (rate(rpc_server_duration_milliseconds_count{service_name!~"config-service|payment-service",deployment_environment_name!="dev"}[5m]))
+          ) > 0.05
+          and
+          sum by (service_name, deployment_environment_name) (rate(rpc_server_duration_milliseconds_count{service_name!~"config-service|payment-service",deployment_environment_name!="dev"}[5m])) > 0.02
+        for: 5m
+        labels: { severity: critical, category: application }
+        annotations:
+          summary: '[{{ $labels.deployment_environment_name }}] {{ $labels.service_name }} 服务侧错误率 {{ $value | humanizePercentage }}（> 5%，持续 5 分钟）'
+          description: >-
+            先看 APM 盘「错误分析」区：错误码分布定位是哪类故障，「错误 by 业务 reason」看是否集中在某条业务规则；
+            再按 logs_query 查日志，用 error.origin 找到抛错的数据层那一行，用 trace_id 跳 VictoriaTraces 看调用链。
+            同时看时间轴上的紫色「发布」标记：刚发过版优先考虑回滚。
+          dashboard: 'https://grafana.{{ $externalLabels.cluster }}/d/ecommerce-apm/?var-service={{ $labels.service_name }}&from=now-1h&to=now'
+          logs_query: 'service.name:="{{ $labels.service_name }}" deployment.environment.name:="{{ $labels.deployment_environment_name }}" rpc.code:in(unknown,internal,unavailable,deadline_exceeded,resource_exhausted,data_loss,unimplemented)'
+
+      - alert: EcommerceUnknownErrorShareHigh
+        # unknown 来自 service 层错误映射的 default 分支 = 没被归类的错误路径。这是代码债信号不是事故：
+        # 只有「持续 1 小时占服务侧错误一半以上，且每小时至少 10 次」才响，偶发的一两次不打扰人。
+        # 响了要做的事是补 errors.Is 映射或 errinfo reason，不是去救火。
+        expr: |
+          (
+            sum by (service_name, deployment_environment_name) (increase(rpc_server_duration_milliseconds_count{service_name!~"config-service|payment-service",deployment_environment_name!="dev",rpc_connect_rpc_error_code="unknown"}[1h]))
+            /
+            sum by (service_name, deployment_environment_name) (increase(rpc_server_duration_milliseconds_count{service_name!~"config-service|payment-service",deployment_environment_name!="dev",rpc_connect_rpc_error_code=~"unknown|internal|unavailable|deadline_exceeded|resource_exhausted|data_loss|unimplemented"}[1h]))
+          ) > 0.5
+          and
+          sum by (service_name, deployment_environment_name) (increase(rpc_server_duration_milliseconds_count{service_name!~"config-service|payment-service",deployment_environment_name!="dev",rpc_connect_rpc_error_code="unknown"}[1h])) >= 10
+        for: 1h
+        labels: { severity: warning, category: application }
+        annotations:
+          summary: '[{{ $labels.deployment_environment_name }}] {{ $labels.service_name }} 的服务侧错误里 {{ $value | humanizePercentage }} 是兜底码 unknown'
+          description: >-
+            有错误路径没有被 service 层映射归类。按 logs_query 找出这些错误的 error.origin 与错误文本，
+            在 service 层补 errors.Is 映射（或给领域错误声明 errinfo reason）。不是故障，不需要立即处置。
+          dashboard: 'https://grafana.{{ $externalLabels.cluster }}/d/ecommerce-apm/?var-service={{ $labels.service_name }}&from=now-6h&to=now'
+          logs_query: 'service.name:="{{ $labels.service_name }}" deployment.environment.name:="{{ $labels.deployment_environment_name }}" rpc.code:="unknown"'
+
+      - alert: EcommerceRPCMetricsMissing
+        # absent 兜底（README 规矩 2），但只在后端 Deployment 确实可用时才判：
+        # 2026-09-24 集群重建后 ecommerce 命名空间还是空的，无条件的 absent() 会一上线就慢性 firing。
+        expr: |
+          (count(k8s_deployment_available{k8s_namespace_name="ecommerce",k8s_deployment_name=~"ecommerce-.+-deploy"} > 0) > 0)
+          unless on ()
+          (count(rpc_server_duration_milliseconds_count{service_name!="config-service",deployment_environment_name!="dev"}) > 0)
+        for: 15m
+        labels: { severity: warning, category: application }
+        annotations:
+          summary: ecommerce 后端 Deployment 在跑，但 15 分钟内没有任何 RPC 指标
+          description: >-
+            服务 OTLP 指标链路断了：应用错误率告警此刻全部失效（无数据不会触发）。检查服务 observability.enable 配置、
+            OTel collector 的 metrics pipeline 与 VictoriaMetrics 写入口认证。
+          dashboard: 'https://grafana.{{ $externalLabels.cluster }}/d/ecommerce-infrastructure/?from=now-3h&to=now'
+          logs_query: 'deployment.environment.name:!="dev" severity_text:=error'

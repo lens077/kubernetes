@@ -35,6 +35,12 @@ chart `victoria-metrics-alert` 0.47.0（app v1.150.0）
    `usePrometheusNaming`：OTLP 点号名变下划线、counter 带 `_total`、带单位的加 `_seconds/_bytes`。
    2026-08-31 点号规则整体断供且不报错的事故就是这么来的。
 
+**应用层告警的 annotation 约定**（`rules/ecommerce-app.yml`，2026-09-24）：除 `summary`/`description` 外必须带
+`dashboard`（`https://` 开头，alert-bridge 转成 ntfy 的 `Click`，点通知直达该服务的 APM 盘）和 `logs_query`
+（可直接粘进 VictoriaLogs 的 LogsQL）。只有 summary 的告警，值班者得自己去找服务、对时间窗，定位慢在这一步。
+主机名用 `{{ $externalLabels.cluster }}` 拼，不要写死。改规则后先在 vmalert Pod 里跑
+`/vmalert-prod -dryRun -rule=<文件>`：它会同时解析 MetricsQL 和模板，坏一处就 rc≠0。
+
 ## 4. 暴露方式
 
 - 集群内：`http://vmalert.observability.svc.cluster.local:8880`（`/api/v1/rules`、`/api/v1/alerts`）
