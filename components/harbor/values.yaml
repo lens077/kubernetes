@@ -55,15 +55,35 @@ ipFamily:
   ipv4:
     enabled: true
 
+# ── 放置与配额（2026-09-17 按集群实测定；改之前先重测，别照抄）──────────────
+#
+# 三节点实测（`kubectl describe node` 的 Allocated resources + openebs `lvmnode` 的 VG free）：
+#   node3  内存 requests 只占 12%,但**带污点 workload=pigsty-host:NoSchedule**,且没有
+#          openebs-vg。那份余量是给 Pigsty(业务 PG 数据面)预留的,不是空闲容量——去容忍
+#          这个污点等于和「一挂就级联 14 个 Pod CrashLoop」的数据面抢内存。
+#   node4  control-plane;openebs-vg free 29.0GiB;内存 requests 已占 85%(余 1.1GiB)
+#   node5  worker;      openebs-vg free 24.0GiB;内存 requests 已占 84%(余 1.1GiB),
+#          实际用量 65%(真实空闲约 2.5GiB)
+#
+# 选 node5:唯一「非 control-plane、无预留污点、且同时有内存与 LVM」的节点。
+# 全部组件钉同一节点是 RWO + WaitForFirstConsumer 的必然要求——不钉则各组件的卷散落到
+# 不同节点(首次安装实测:redis 落 node4、database 被提名 node5,其余因钉错节点全 Pending)。
+#
+# requests 按闲时真实用量给、limits 保留原值兜住爆发,合计 requests 736Mi,进得了 node5 的
+# 1.1GiB 余量。**这里调小的依据是 Harbor 闲时实际占用,不是为了过调度器**——「把 requests
+# 压到能塞进去」正是 node3 那次内存风暴的成因模式,不要用那个思路改这里。
+#
+# ⚠️ 内置 PG/Valkey 的键在 database.internal / redis.internal 下;写在顶层会被 chart 静默忽略。
+# 2026-09-22 重建改名: 旧 node5 → k2(10.10.21.162)。启用 Harbor 前先确认 k2 的 openebs-vg
+# 与内存余量仍放得下本文件里的 PVC 与 requests, 不要照抄旧数字。
+_placement: &nodeSelector
+  kubernetes.io/hostname: k2
+
+# Trivy 关闭:ecommerce 的 CI 已用 aquasecurity/trivy-action 在签名前扫描并上传 SARIF,
+# Harbor 再扫一遍是重复劳动,而它的 512Mi requests 是本组件最大的单项开销,还要跨境拉漏洞库。
+# 要重开:enabled: true + 重算 EST_MEM_MI + 确认 node5 的 VG 还放得下 trivy 的 5Gi PVC。
 trivy:
-  enabled: true
-  resources:
-    requests:
-      cpu: 200m
-      memory: 512Mi
-    limits:
-      cpu: 1
-      memory: 1Gi
+  enabled: false
 
 metrics:
   enabled: true
@@ -75,40 +95,44 @@ trace:
 
 portal:
   replicas: 1
+  nodeSelector: *nodeSelector
   resources:
     requests:
-      cpu: 50m
-      memory: 64Mi
+      cpu: 25m
+      memory: 32Mi
     limits:
       cpu: 200m
       memory: 128Mi
 
 core:
   replicas: 1
+  nodeSelector: *nodeSelector
   resources:
     requests:
       cpu: 100m
-      memory: 256Mi
+      memory: 192Mi
     limits:
       cpu: 500m
       memory: 512Mi
 
 jobservice:
   replicas: 1
+  nodeSelector: *nodeSelector
   resources:
     requests:
       cpu: 50m
-      memory: 128Mi
+      memory: 64Mi
     limits:
       cpu: 500m
       memory: 512Mi
 
 registry:
   replicas: 1
+  nodeSelector: *nodeSelector
   resources:
     requests:
       cpu: 100m
-      memory: 256Mi
+      memory: 128Mi
     limits:
       cpu: 500m
       memory: 512Mi
@@ -116,7 +140,7 @@ registry:
     resources:
       requests:
         cpu: 25m
-        memory: 64Mi
+        memory: 32Mi
       limits:
         cpu: 200m
         memory: 128Mi
@@ -124,10 +148,26 @@ registry:
 database:
   type: internal
   internal:
+    nodeSelector: *nodeSelector
+    # chart 默认给 /docker-healthcheck.sh 的超时是 1s,在本集群的存储延迟下过不去。
+    # 实测 2026-09-17:探针 1s 超时 → kubelet 反复杀 PG("Container database failed liveness
+    # probe, will be restarted") → core 连不上库在 60s 后 FATAL 退出 → jobservice 拿不到
+    # /api/v2.0/internalconfig 直接 panic。整条级联的起点就是这 1 秒。
+    # 放宽到 10s 并把 failureThreshold 提高:宁可晚一点发现真故障,也不要让探针自己制造故障。
+    livenessProbe:
+      initialDelaySeconds: 60
+      periodSeconds: 20
+      timeoutSeconds: 10
+      failureThreshold: 6
+    readinessProbe:
+      initialDelaySeconds: 30
+      periodSeconds: 10
+      timeoutSeconds: 10
+      failureThreshold: 6
     resources:
       requests:
         cpu: 100m
-        memory: 256Mi
+        memory: 192Mi
       limits:
         cpu: 500m
         memory: 512Mi
@@ -135,19 +175,21 @@ database:
 redis:
   type: internal
   internal:
+    nodeSelector: *nodeSelector
     resources:
       requests:
         cpu: 50m
-        memory: 128Mi
+        memory: 64Mi
       limits:
         cpu: 300m
         memory: 256Mi
 
 exporter:
+  nodeSelector: *nodeSelector
   resources:
     requests:
       cpu: 25m
-      memory: 64Mi
+      memory: 32Mi
     limits:
       cpu: 200m
       memory: 128Mi

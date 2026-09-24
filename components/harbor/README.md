@@ -19,7 +19,7 @@ Harbor 保存 OCI 镜像和制品，并通过 Trivy 执行漏洞扫描。组件�
 | Ingress、NodePort、LoadBalancer 三套脚本 | chart 原生 Gateway API `HTTPRoute` | 对外入口统一接入 `default/cilium-gateway`。 |
 | `Harbor12345` 等明文默认值 | K8s Secret + 节点本地随机凭据 | 仓库不保存密码，重复执行不轮换现有凭据。 |
 | `helm uninstall` 后重新安装 | `helm upgrade --install` | 避免误删 release 和中断服务。 |
-| 外部 PostgreSQL/Redis 占位地址 | chart 内置 PostgreSQL/Valkey | 当前两节点环境没有专用 Harbor 数据库；先使用可持久化的单副本拓扑。 |
+| 外部 PostgreSQL/Redis 占位地址 | chart 内置 PostgreSQL/Valkey | 集群里虽有 CNPG(`postgresql/pg-main`)与 Dragonfly，但前者服务对象未核实、后者 TLS-only，接过去会把 Harbor 的可用性绑在两个不相干组件上；先用可持久化的单副本内置拓扑。 |
 | TLS 在每套暴露方式中单独生成 | 共享 Gateway 终结 TLS | 复用 `*.dev.test` 证书，Harbor Pod 之间保持集群内 HTTP。 |
 | 手工修改 Docker/containerd 配置 | 不修改节点运行时 | 客户端只需信任共享 Gateway 的根证书。 |
 
@@ -39,7 +39,7 @@ registry、jobservice、PostgreSQL、Valkey 和 Trivy 分别使用 RWO PVC。PVC
 前置条件：
 
 - chart 的 Harbor `appVersion` 必须支持集群中所有节点的 CPU 架构。官方 ARM64 release
-  从 `v2.16.0` 开始；`v2.15.x` 只有 amd64 镜像。
+  从 `v2.16.0` 开始；`v2.15.x` 只有 amd64 镜像。**当前集群 k1/k2/k3 全是 amd64，闸门放行**；换回 ARM64 节点时它会重新拦截。
 - `default/cilium-gateway` 已存在，并包含 `https` listener。
 - Gateway 证书覆盖 `harbor.dev.test`。
 - 默认配置中的 StorageClass 支持动态创建 RWO PVC。
@@ -59,11 +59,11 @@ kubectl -n harbor get pods,pvc,httproute
 ## 5. 验证
 
 ```bash
-curl --resolve harbor.dev.test:443:192.168.3.100 \
+curl --resolve harbor.dev.test:443:10.10.31.240 \
   --cacert /path/to/global-root-ca.crt \
   https://harbor.dev.test/api/v2.0/health
 
-curl --resolve harbor.dev.test:443:192.168.3.100 \
+curl --resolve harbor.dev.test:443:10.10.31.240 \
   --cacert /path/to/global-root-ca.crt \
   https://harbor.dev.test/v2/
 ```
@@ -73,9 +73,9 @@ curl --resolve harbor.dev.test:443:192.168.3.100 \
 
 ## 6. 限制与升级
 
-- **ARM64 暂停安装**：2026-08-18 在两台 ARM64 节点实测官方 `v2.15.2`，所有已拉取
-  Pod 均因 amd64 可执行文件报 `exec format error`。失败 release 和路由已清理，五个 PVC、
-  管理员 Secret、加密 Secret 与节点凭据已保留。跟踪官方
+- **ARM64 阻断已解除（2026-09-17）**：原 ARM64 集群已删除，现集群三节点全是 amd64，
+  `ADDON_HARBOR` 可以打开（hosting 档当前仍为 `false`，本轮未启用）。历史记录：2026-08-18 在两台 ARM64 节点实测官方
+  `v2.15.2`，所有已拉取 Pod 均因 amd64 可执行文件报 `exec format error`。换回 ARM64 前先看官方
   [#23558](https://github.com/goharbor/harbor/issues/23558) 和
   [#23674](https://github.com/goharbor/harbor/issues/23674)。
 - 当前 PostgreSQL、Valkey、registry 和 Trivy 都是单副本。节点或本地卷故障会中断服务。
@@ -84,3 +84,11 @@ curl --resolve harbor.dev.test:443:192.168.3.100 \
 - 升级前先阅读 Harbor 和 `harbor-helm` 的迁移说明，并备份 registry 数据和 PostgreSQL。
 - 不要直接提高有 RWO PVC 的工作负载副本数。生产高可用需要共享对象存储、外部 PostgreSQL、
   外部 Valkey/Redis，以及可跨节点运行的多副本拓扑。
+- **放置钉单节点是约束**：所有组件的 RWO 本地卷必须落在同一节点（WaitForFirstConsumer），
+  所以 `values.yaml` 用一个 nodeSelector 锚点统一钉住，当前写 `k2`。2026-09-17 的选点依据
+  （node3 有 Pigsty 预留污点、node4 是控制面）随旧集群作废；**启用前重测 k2 的内存 requests 与
+  `openebs-vg` 余量**，不要照抄旧数字。
+- **Trivy 已关**：ecommerce 的 CI 在签名前就用 trivy-action 扫过并上传 SARIF，Harbor 再扫是重复；
+  它 512Mi 的 requests 是本组件最大单项，且要跨境拉漏洞库。要重开见 `values.yaml` 里的注释。
+- **registry PVC 10Gi 起步**：旧集群 node5 的 `openebs-vg` 只剩 24.0GiB，放不下 20+2+5+2=29Gi；
+  k1/k2/k3 的 VG 是 80G loopback，启用前重新核对。`openebs-lvm` 支持在线扩容，不够再 expand。

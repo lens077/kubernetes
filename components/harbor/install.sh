@@ -63,4 +63,7 @@ routes_apply "$DIR"
 
 rm -f "$dyn"
 trap - EXIT
-log_ok "$ID 安装完成(https://$HOSTNAME；用户 admin；初始密码见 $STATE_DIR/creds/harbor-admin)"
+# ${HOSTNAME} 必须带花括号:后面紧跟的是全角「；」,set -u 下 bash 会把它的字节当成变量名的
+# 一部分,报 "HOSTNAME？: unbound variable"。2026-09-17 首次真正执行本脚本时踩到——
+# 这行在 ADDON_HARBOR=false 的两年里从没跑过。同类写法在 argo/grafana 用的是半角逗号分号,不受影响。
+log_ok "$ID 安装完成(https://${HOSTNAME}；用户 admin；初始密码见 ${STATE_DIR}/creds/harbor-admin)"
