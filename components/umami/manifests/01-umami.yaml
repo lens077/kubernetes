@@ -1,0 +1,95 @@
+# Umami —— 隐私友好的网站分析(无 cookie, 自托管)。
+# 数据库是集群内 CNPG pg-main 的 umami 库(属主同名角色), 本组件不建 PG 也没有 PVC——
+# 所有状态都在那个库里。连接地址由 UMAMI_DB_ENDPOINT 提供, 默认 pg-main-rw.postgresql.svc:5432。
+# ⚠️ 2026-09-22: 旧 node3 Pigsty(10.10.21.172)已随主机重装退役, 别再回填那个 IP。
+#    启用前先在 pg-main 里建库建角色, 否则首次启动的 Prisma 迁移会失败。
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: umami
+  namespace: ${NAMESPACE}
+  labels:
+    app.kubernetes.io/name: umami
+spec:
+  selector:
+    app.kubernetes.io/name: umami
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: umami
+  namespace: ${NAMESPACE}
+  labels:
+    app.kubernetes.io/name: umami
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: umami
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: umami
+    spec:
+      # docker-compose 的 init: true 在 Pod 没有一对一字段。这里用 shareProcessNamespace
+      # 让 pause 进程当 PID 1 负责回收僵尸进程。注意它**不负责 SIGTERM 转发**:
+      # 上游镜像 CMD 是 `sh scripts/start-docker.sh`, shell 不转发信号, 停机会等满
+      # terminationGracePeriodSeconds。需要秒停就得自建带 tini 入口点的镜像。
+      shareProcessNamespace: true
+      terminationGracePeriodSeconds: 15
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+        # 镜像内建 uid/gid 1001(nextjs/nodejs), 无卷挂载故不需要 fsGroup。
+        runAsUser: 1001
+        runAsGroup: 1001
+      containers:
+        - name: umami
+          image: ${UMAMI_IMAGE}
+          imagePullPolicy: IfNotPresent
+          env:
+            - { name: DATABASE_TYPE, value: postgresql }
+            - { name: DISABLE_TELEMETRY, value: "1" }
+            - { name: TRACKER_SCRIPT_NAME, value: "${UMAMI_TRACKER_SCRIPT_NAME}" }
+            # DATABASE_URL / APP_SECRET / TWO_FACTOR_ENCRYPTION_KEY 全部来自 Secret,
+            # 真相源 OpenBao secret/k8s/${CLUSTER_NAME}/umami。
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef: { name: umami-secret, key: DATABASE_URL }
+            - name: APP_SECRET
+              valueFrom:
+                secretKeyRef: { name: umami-secret, key: APP_SECRET }
+            - name: TWO_FACTOR_ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef: { name: umami-secret, key: TWO_FACTOR_ENCRYPTION_KEY }
+          ports:
+            - { name: http, containerPort: 3000 }
+          # 首次启动要跑 26 个 Prisma migration(建 27 张表), 比稳态慢得多。
+          # ⚠️ 2026-09-17 实测: failureThreshold=30(150s)**不够**——迁移没跑完就被
+          # startup probe 判失败 SIGTERM 掉(exitCode 143), 重启后因迁移已部分完成才起来。
+          # 现给 120x5s=600s; 期间 liveness 不参与判定, 迁移再慢也不会被打断。
+          startupProbe:
+            httpGet: { path: /api/heartbeat, port: http }
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 120
+          readinessProbe:
+            httpGet: { path: /api/heartbeat, port: http }
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 6
+          livenessProbe:
+            httpGet: { path: /api/heartbeat, port: http }
+            periodSeconds: 30
+            timeoutSeconds: 3
+            failureThreshold: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+          resources:
+            requests: { cpu: 50m, memory: 256Mi }
+            limits: { memory: 768Mi }
