@@ -1,10 +1,25 @@
 # 静态部分。adminPassword 与 datasources 由 install.sh 生成后追加（多一个 -f）：
 # 密码走 creds 机制不进仓库，数据源按集群实际装了哪些后端预置。
+
+# chart 默认 tag 是 `{{ .Chart.AppVersion }}-distroless`。distroless 镜像里没有 shell，
+# README 和排障手顺里的 `kubectl exec ... -- sh` 全部失效（连 `grafana-cli` 都调不起来），
+# 而这套集群的验证动线重度依赖 exec。这里只去掉 `-distroless` 变体后缀，**不写死版本号**：
+# tag 仍由 chart 的 appVersion 驱动，升级 CHART_VERSION 时镜像自动跟着走，不会两处漂移。
+image:
+  tag: "{{ .Chart.AppVersion }}"
+
 persistence:
   type: pvc
   enabled: true
   storageClassName: ${SC_NAME}
   size: ${GRAFANA_STORAGE_SIZE}
+
+# PVC 是 openebs-lvm 的 RWO **本地**卷（LVM LocalPV 绑在某一个节点上）。默认的
+# RollingUpdate 会先起新 Pod 再停旧 Pod，两个 Pod 抢同一个 RWO 本地卷 —— 新 Pod 卡在
+# Pending/Multi-Attach，滚动永远不收敛，表现是「升级卡住但旧 Pod 还在跑」，很难一眼看出。
+# Recreate 是先停后起：升级期间有几十秒不可用，但状态干净、一定收敛。
+deploymentStrategy:
+  type: Recreate
 
 service:
   enabled: true
@@ -12,12 +27,36 @@ service:
   port: 80
   targetPort: 3000
 
+# 只写 limits 不写 requests 时调度器按 0 计算余量，节点会被超卖到 OOM 边缘。
+# 2026-09-23 按 VPA(observability/grafana, updateMode=Off)建议人工回写: target cpu 11m / mem 523Mi,
+# upper 25m / 1.18Gi; 实测 top 436Mi。旧 limit 512Mi 已低于 target(会被 OOM 边缘反复擦), 抬到 upper 量级 1.2Gi。
+# 下次校准: kubectl -n observability describe vpa grafana, 只在人工确认后再改这里, 不开 updater。
 resources:
+  requests:
+    cpu: 11m
+    memory: 524Mi
   limits:
     cpu: 0.5
-    memory: 512Mi
+    memory: 1200Mi
 
 grafana.ini:
+  server:
+    # Grafana 在网关后面终结 TLS，自己看到的是明文 HTTP。不显式给 root_url，
+    # 它会用请求里的 Host 拼绝对地址 —— 告警通知、分享链接、OAuth 回调会指到内网域名。
+    # 这里固定成公网入口(Pangolin 资源域名)，与 HTTPRoute 的内部 hostname 无关。
+    root_url: "https://grafana.apikv.com"
+    serve_from_sub_path: false
+  security:
+    cookie_secure: true          # 全链路 HTTPS，会话 cookie 不允许走明文
+    cookie_samesite: lax
+    disable_gravatar: true       # 不让面板向 gravatar.com 外发用户邮箱哈希
+  analytics:
+    reporting_enabled: false     # 不向 grafana.com 上报使用数据
+    # 两个开关要一起关：check_for_updates 只管 Grafana 本体，插件更新检查是
+    # check_for_plugin_updates，漏掉后者启动日志里仍会刷 plugins.update.checker
+    # （机房出网受限，这两个检查只会拖慢首屏且注定超时）。
+    check_for_updates: false
+    check_for_plugin_updates: false
   metrics:
     enable_metrics_source_cache: true
     metrics_source_cache_ttl_seconds: 300
@@ -25,6 +64,13 @@ grafana.ini:
     concurrent_query_count: 20   # 单机后端，放太大只会让 VM/Loki 排队
 
 sidecar:
+  # 同一 VPA 对 sidecar 的建议: target 11m / 90Mi, upper 25m / 206Mi(2026-09-23)
+  resources:
+    requests:
+      cpu: 11m
+      memory: 90Mi
+    limits:
+      memory: 210Mi
   alerts:
     enabled: true                # 带 grafana_alert 标签的 ConfigMap 会被自动加载为告警规则
     label: grafana_alert
