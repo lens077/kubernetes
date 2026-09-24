@@ -85,3 +85,61 @@ groups:
             OTel collector 的 metrics pipeline 与 VictoriaMetrics 写入口认证。
           dashboard: 'https://grafana.apikv.com/explore?schemaVersion=1&orgId=1&panes=%7B%22a%22%3A%7B%22datasource%22%3A%22P4169E866C3094E38%22%2C%22queries%22%3A%5B%7B%22refId%22%3A%22A%22%2C%22datasource%22%3A%7B%22type%22%3A%22prometheus%22%2C%22uid%22%3A%22P4169E866C3094E38%22%7D%2C%22expr%22%3A%22count%20by%20%28service_name%2C%20deployment_environment_name%29%20%28rpc_server_duration_milliseconds_count%29%22%7D%5D%2C%22range%22%3A%7B%22from%22%3A%22now-3h%22%2C%22to%22%3A%22now%22%7D%7D%7D'
           logs_query: 'deployment.environment.name:!="dev" severity_text:=error'
+
+      - alert: EcommerceConfigStale
+        # 热重建失败时旧连接继续服务，readiness 仍应保持绿；这个指标才是 desired / applied
+        # 配置分叉的告警信号。排除 dev，避免开发者故意注入坏配置时通知值班人员。
+        expr: |
+          max by (service_name, deployment_environment_name, component) (
+            connectkit_config_stale{deployment_environment_name!="dev"}
+          ) == 1
+        for: 2m
+        labels: { severity: warning, category: application }
+        annotations:
+          summary: '[{{ $labels.deployment_environment_name }}] {{ $labels.service_name }} 的 {{ $labels.component }} 没有应用最新配置'
+          description: >-
+            新连接按最新配置重建失败，服务仍在使用上一份可用连接；当前请求可能正常，但下次重启会直接读取坏配置并启动失败。
+            先查 logs_query 对应的 rebuild failed 日志，修正 Config Center 后确认本告警恢复 resolved。
+          dashboard: >-
+            https://grafana.apikv.com/explore?schemaVersion=1&orgId=1&panes={{ printf `{"a":{"datasource":"P4169E866C3094E38","queries":[{"refId":"A","datasource":{"type":"prometheus","uid":"P4169E866C3094E38"},"expr":"connectkit_config_stale{service_name=\"%s\",deployment_environment_name=\"%s\"}"}],"range":{"from":"now-1h","to":"now"}}}` $labels.service_name $labels.deployment_environment_name | queryEscape }}
+          logs_query: 'service.name:="{{ $labels.service_name }}" deployment.environment.name:="{{ $labels.deployment_environment_name }}" _msg:~"rebuild .* failed, keeping the current one"'
+
+      - alert: EcommerceConfigStaleMetricsMissing
+        # 只有对应业务服务的 RPC 指标存在时才判 component 缺失，避免业务尚未部署或整条 OTLP 链断开时
+        # 与 EcommerceRPCMetricsMissing 重复告警。payment-service 不用 Redis；search-product 两者都不用。
+        expr: |
+          (
+            label_set(
+              count by (service_name, deployment_environment_name) (
+                rpc_server_duration_milliseconds_count{service_name=~"user-identity|behavior-service|product-service|cart-service|address-service|order-service|inventory-service|merchant-service|payment-service",deployment_environment_name!="dev"}
+              ) > 0,
+              "component", "pgpool"
+            )
+            unless on (service_name, deployment_environment_name, component)
+            count by (service_name, deployment_environment_name, component) (
+              connectkit_config_stale{component="pgpool",deployment_environment_name!="dev"}
+            )
+          )
+          or
+          (
+            label_set(
+              count by (service_name, deployment_environment_name) (
+                rpc_server_duration_milliseconds_count{service_name=~"user-identity|behavior-service|product-service|cart-service|address-service|order-service|inventory-service|merchant-service",deployment_environment_name!="dev"}
+              ) > 0,
+              "component", "redisclient"
+            )
+            unless on (service_name, deployment_environment_name, component)
+            count by (service_name, deployment_environment_name, component) (
+              connectkit_config_stale{component="redisclient",deployment_environment_name!="dev"}
+            )
+          )
+        for: 15m
+        labels: { severity: warning, category: application }
+        annotations:
+          summary: '[{{ $labels.deployment_environment_name }}] {{ $labels.service_name }} 有 RPC 指标，但没有配置生效状态指标'
+          description: >-
+            该服务的 OTel 指标链可用，但 {{ $labels.component }} 的 connectkit_config_stale 缺失。
+            检查镜像是否已升级到包含 go-connect-kit 修复的版本；缺指标时 EcommerceConfigStale 无法发现该连接配置未生效。
+            该规则检查服务级 component 完全缺失，不用于判断滚动发布期间的单副本覆盖率。
+          dashboard: 'https://grafana.apikv.com/explore?schemaVersion=1&orgId=1&panes=%7B%22a%22%3A%7B%22datasource%22%3A%22P4169E866C3094E38%22%2C%22queries%22%3A%5B%7B%22refId%22%3A%22A%22%2C%22datasource%22%3A%7B%22type%22%3A%22prometheus%22%2C%22uid%22%3A%22P4169E866C3094E38%22%7D%2C%22expr%22%3A%22count%20by%20%28service_name%2C%20deployment_environment_name%2C%20component%29%20%28connectkit_config_stale%29%22%7D%5D%2C%22range%22%3A%7B%22from%22%3A%22now-3h%22%2C%22to%22%3A%22now%22%7D%7D%7D'
+          logs_query: 'service.name:="{{ $labels.service_name }}" deployment.environment.name:="{{ $labels.deployment_environment_name }}" severity_text:=error'
