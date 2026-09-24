@@ -46,5 +46,15 @@ kubectl -n observability logs deploy/alert-bridge --tail=3      # 每条告警�
 ## 6. 踩坑
 
 - 凭据只在 `$STATE_DIR/creds/ntfy.env` 与 Secret 里；gatus 组件读同一个文件，两边只需配一次。
+- **凭据丢了怎么找回**（2026-09-24 集群重建后两边 Secret 全空、本机 creds 也没有，告警静默丢了一天多）：
+  ntfy 是自托管的，在 node1（容器 `ntfy-ntfy-1`，部署物在 sibling 仓 `cat/deploy/ntfy/`），`deny-all`，
+  所以 token 丢了不用问人，直接去服务端取：
+  `ssh node1 'docker exec ntfy-ntfy-1 ntfy user list'` 找有告警 topic 写权限的用户（`infra-publisher`，topic 为
+  `infra-alerts-<hex>`，手机用户 `cat-mobile` 只读订阅它），`ntfy token list infra-publisher` 取 token
+  （复用标签 `infrastructure` 那枚，不要另建）。写回 `$STATE_DIR/creds/ntfy.env` 后重跑本组件与 gatus 的 install.sh。
+  校验：带 token 读该 topic 的 `/auth` 应返回 403（只写用户），无效 token 返回 401。
+- **本机没有 creds 时不要直接跑 install.sh**：它会用空值覆盖 Secret `alert-bridge-ntfy`，并因 `get_cred` 找不到
+  `bugsink-bridge-token` 而**新生成一枚**，Bugsink webhook 路径随之失效。先按上一条补齐 `ntfy.env`，
+  再从现网 Secret 把 `BUGSINK_BRIDGE_TOKEN` 写到 `$STATE_DIR/creds/bugsink-bridge-token`（chmod 600）。
 - 桥挂了 Alertmanager 会重试到桥恢复；桥收到但 ntfy 4xx/5xx 时回 502，同样会被重试——看到重复推送先查 ntfy 是否慢。
 - Bugsink 的 webhook 白名单（`ALERTS_WEBHOOK_ALLOW_LIST`）填的是桥的 Service FQDN，改命名空间要同步改 bugsink 组件。
