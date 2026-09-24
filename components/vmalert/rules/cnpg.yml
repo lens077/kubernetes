@@ -1,5 +1,7 @@
 # CNPG(pg-main)告警 —— 对应 node3 Pigsty pgsql.yml 里 16 条 PG 告警的语义(2026-09-03 收割,
-# 见 PIGSTY-HARVEST-2026-09-03.md §5.3), 指标换成 CNPG 实例自带的 cnpg_* 系列。
+# 原件在 backup/pigsty-node3-20260921/), 指标换成 CNPG 实例自带的 cnpg_* 系列。
+# 2026-09-17 CNPG 曾被删除、本文件随之删除; 2026-09-22 重建后 CNPG 是业务主库, 本文件必须在。
+# 2026-09-23 发现 live vmalert 缺这 10 条(k1 上的副本也被删), 已恢复。
 #
 # 数据来源: opentelemetry 组件 values.yaml 的 prometheus receiver `cnpg` job 抓每个
 # 实例 Pod 的 :9187/metrics(label cnpg.io/podRole=instance), 写入 VictoriaMetrics。
