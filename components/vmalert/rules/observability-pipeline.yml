@@ -4,8 +4,9 @@
 # 数据来源: opentelemetry 组件 values.yaml 的 prometheus receiver 抓 vmalert(:8880)、
 # alertmanager(:9093) 与 collector 自身(:8888)。指标名均为两者自带的标准名;
 # counter 经 prometheus receiver → OTLP → VM(usePrometheusNaming) 后保留 _total 后缀(与 hubble_drop_total 同路径)。
-# ⚠️ OTelCollectorExportFailures 用到的三个 otelcol_exporter_send_failed_* 名字随 collector 版本演进过,
-#    上线前按团队规矩先在 VM 查 series 再启用(查不到就改名或先删这条)。
+# 2026-09-24 现场枚举 Collector 0.158.0 指标：没有 otelcol_exporter_send_failed_*，
+# 但每个 exporter 都持续暴露 queue_size / queue_capacity。用队列持续高水位检测后端拒收或不可达，
+# 不保留引用不存在指标的「静默绿」规则。
 # ⚠️ 每条规则都必须有 for:(Watchdog 除外——它就是要永远 firing)。
 groups:
   - name: observability-pipeline
@@ -56,11 +57,11 @@ groups:
           summary: 抓不到 Alertmanager 指标
           description: 连续 10 分钟没有 alertmanager_build_info。检查 otel collector 的 alertmanager 抓取 job 与 Alertmanager Pod。
 
-      - alert: OTelCollectorExportFailures
-        # collector 往后端(VM/VL/VT)写失败 = 数据在丢。三种信号分开看 exporter 标签。
-        expr: 'sum by (exporter) (increase(otelcol_exporter_send_failed_metric_points_total[10m]) or increase(otelcol_exporter_send_failed_log_records_total[10m]) or increase(otelcol_exporter_send_failed_spans_total[10m])) > 0'
+      - alert: OTelCollectorExporterQueueHigh
+        # 后端拒收或不可达时 exporter queue 会积压；当前三个后端均有 queue series，正常值为 0。
+        expr: 'max by (exporter) (otelcol_exporter_queue_size / otelcol_exporter_queue_capacity) > 0.8'
         for: 10m
         labels: { severity: warning, category: observability }
         annotations:
-          summary: 'OTel Collector 导出失败 (exporter={{ $labels.exporter }})'
-          description: '后端拒收或不可达。对照 exporter 名(victoriametrics/victorialogs/victoriatraces)分别查对应 Pod 与磁盘(VL/VT 撑满 PVC 会拒写)。'
+          summary: 'OTel Collector 导出队列超过 80% (exporter={{ $labels.exporter }})'
+          description: '数据即将被丢弃。对照 exporter 名(victoriametrics/victorialogs/victoriatraces)检查对应后端、网络和磁盘；VL/VT 撑满 PVC 会拒写。'

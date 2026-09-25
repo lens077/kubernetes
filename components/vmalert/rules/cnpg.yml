@@ -79,7 +79,8 @@ groups:
 
       - alert: PostgresWALArchiveFailing
         # Pigsty 没有等价规则(pgbackrest 走死人开关); CNPG 的 WAL 归档失败会让备份 PITR 断链。
-        expr: 'increase(cnpg_pg_stat_archiver_failed_count[15m]) > 0'
+        # 2026-09-24 现场枚举确认 exporter 使用 Prometheus counter 名 `_total`；少后缀时规则永久无 series。
+        expr: 'increase(cnpg_pg_stat_archiver_failed_count_total[15m]) > 0'
         for: 15m
         labels: { severity: critical, category: database }
         annotations:
@@ -97,8 +98,9 @@ groups:
           description: 检查 ScheduledBackup 与最近的 Backup 对象状态(kubectl -n postgresql get backup)。没有备份的数据库不算生产库。
 
       - alert: CNPGNoBackupEver
-        # 集群跑起来了但从来没成功备份过(指标不存在)。只在启用了备份的集群上才有意义, 未配备份前保持 warning。
-        expr: 'cnpg_collector_up == 1 unless on (cnpg_cluster) cnpg_collector_last_available_backup_timestamp'
+        # 集群跑起来了但从来没成功备份过。CNPG 在未配置备份时仍暴露值为 0 的 series，
+        # 不能只用 unless 判「不存在」；2026-09-24 现场正因这个 0 值让规则错误地保持 inactive。
+        expr: '(cnpg_collector_up == 1 unless on (cnpg_cluster) cnpg_collector_last_available_backup_timestamp) or on (cnpg_cluster) (cnpg_collector_last_available_backup_timestamp <= 0)'
         for: 6h
         labels: { severity: warning, category: backup }
         annotations:

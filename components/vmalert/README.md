@@ -64,4 +64,5 @@ curl -sG "https://metrics.${CLUSTER_DOMAIN}/api/v1/query" --data-urlencode 'quer
 - 改了 `rules/*.yml` 只需重跑 `install.sh`（更新 ConfigMap），不用滚动 Pod；kubelet 同步 ConfigMap 有最长 ~1 分钟延迟。
 - `cnpg.yml` 依赖 opentelemetry 组件 values 里的 `cnpg` 抓取 job；没装 CNPG 时只有 `CNPGMetricsMissing` 会 firing，
   这是预期——不想看到就在 Alertmanager 静默它，不要删规则。
-- `observability-pipeline.yml` 里 `otelcol_exporter_send_failed_*` 三个名字随 collector 版本演进过，上线前先查 series。
+- Collector 0.158.0 不再暴露 `otelcol_exporter_send_failed_*`。`observability-pipeline.yml` 使用现场存在的
+  `otelcol_exporter_queue_size / otelcol_exporter_queue_capacity` 检测持续积压；升级 Collector 时必须先在 VictoriaMetrics 枚举实际 series，再调整规则。

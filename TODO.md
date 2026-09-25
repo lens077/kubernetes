@@ -20,6 +20,7 @@
 - [x] **harvest 缺陷锁死**(09-15):决策抽成纯函数 `service_action()`(skip/token-only/write),`tests/harvest_decision_test.py` 7 例并挂进 `mapping_test.sh`(旧逻辑跑它确实红);token-only 不再 put_key(内容没变不该涨 revision,读回改比库里原文);稳态实测 cart/dev v8→v8 不涨
 - [ ] Consul ACL 全新集群重建演练（延期：恢复脚本已在现有集群幂等验证；留待维护窗口）
 - [ ] OpenBao 集群外备份（延期：Velero/外部 OpenBao 副本，留待灾备窗口）
+- [ ] 2026-09-24 告警全量审计后的部署与演练：仓库已删除无生产者的 CES 规则、修 CNPG WAL/首次备份表达式、接通 Vector 安全指标、改用 Collector exporter queue 告警，并恢复 Config Center Gatus 探针；待运行对应组件 `install.sh` 后确认新 series、规则数与正常/注入失败路径。真实故障 CNPG 无任何备份对象，需单独完成 ScheduledBackup/PITR。
 - [x] Consul ACL 恢复自动化(09-12):`components/consul/install.sh` 幂等补 policy `ecommerce-services`；应用 token 有效则保留，缺失/失效才重签并更新 `ecommerce/consul-ecommerce-token`；机房集群实测重复安装成功，token 未变化；`ACL not found` 根因是原 Secret token 已被 Consul 服务端清除，已恢复
 
 > 起因:每次集群重建都要人肉重取各组件地址/凭据写进 Config Center 十份 `bootstrap.yaml`(09-06 为此写了 `config-center-pre-seed.sh`,09-11 又补两次)。定稿:**声明优先、发现校验**——组件在 `component.env` 声明契约(`PROVIDES/SVC/PORT/SCHEME/CRED_SECRET/CA_REF/VAULT_PATH`),集群外实例在 `components/_external/*` 同形声明;凭据真相源 OpenBao(`ESO_STORE`),路径按集群分 `k8s/<CLUSTER_NAME>/…`;地址策略 pre→Svc DNS、dev→`.dev.test`+CA,放弃「优先 HTTPRoute」。全套手顺:`tools/config-center/README.md`。
