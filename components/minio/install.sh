@@ -15,7 +15,8 @@ ns_ensure "$NAMESPACE"
 
 # 凭据(L3): ESO 从 ${ESO_STORE}(定稿 OpenBao, k8s/<集群>/minio)物化 Secret minio-root{user,password};
 # store 不可用或 OFFLINE=1 时退回 get_cred 本地随机值(_lib/env.sh cred_via_eso)。两条路产出同一个 Secret, Deployment 无感。
-# 组件当前 ADDON_MINIO=false(2026-08-20 定稿迁 Silo), 本段只保证重新启用时与其它组件同构。
+# 首次部署前先执行 tools/openbao-seed.sh minio，把 root 凭据写入 OpenBao；
+# ESO 随后物化同名 Secret，重跑不会轮换凭据。
 if ! cred_via_eso "$DIR" "$NAMESPACE" minio-root; then
   pass=$(get_cred minio-root)
   kctl -n "$NAMESPACE" create secret generic minio-root \

@@ -68,6 +68,12 @@ if selected grafana; then
   jq -n --arg u admin --arg p "$(pick grafana "$(secret_val observability grafana-admin admin-password)" "$(secret_val observability grafana admin-password)" "$(cred_file grafana-admin)")" \
     '{"admin-user":$u,"admin-password":$p}' | bao_put grafana
 fi
+if selected minio; then
+  # Silo 沿用 MinIO 的 MINIO_ROOT_* 环境变量。用户名固定为 silo-admin；
+  # 密码优先保留集群现值，首次部署时生成强随机值。JSON 经 stdin 写入，不进参数或日志。
+  jq -n --arg u silo-admin --arg p "$(pick minio "$(secret_val minio minio-root password)" "$(cred_file minio-root)")" \
+    '{user:$u,password:$p}' | bao_put minio
+fi
 if selected bugsink; then
   su=$(secret_val ops bugsink-secret CREATE_SUPERUSER)   # 形如 email:password
   jq -n --arg k "$(pick bugsink "$(secret_val ops bugsink-secret SECRET_KEY)" "$(cred_file bugsink-secret-key)" "$(openssl rand -base64 60 | tr -d '\n=/+' | cut -c1-64)")" \

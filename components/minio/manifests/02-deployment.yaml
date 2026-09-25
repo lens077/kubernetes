@@ -1,9 +1,7 @@
-# 单实例对象存储。镜像用 pgsty/silo —— MinIO 官方社区版 2025 年阉割了控制台，
-# silo 是保留完整 console 的 fork（基于 MinIO 技术，AGPLv3）。
+# 单实例对象存储。镜像使用 pgsty/silo：保留完整 Web Console 的 MinIO 兼容分支。
+# 固定到已验证的发布版本；Silo 不支持进程内自更新，升级时改 tag 并重跑 install.sh。
 #
-# ⚠️ 镜像里的二进制叫 silo，不是 minio（另有 mc/mcli）。写成 `minio server` 会
-#    直接 exit 127 且只在容器日志里留一行 "minio: command not found"。
-#    环境变量仍然读 MINIO_*，所以凭据部分不用改。
+# 镜像里的二进制名是 silo，不是 minio；环境变量仍兼容 MINIO_*。
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -22,10 +20,9 @@ spec:
     spec:
       containers:
         - name: minio
-          image: docker.io/pgsty/silo
-          command: [/bin/bash, -c]
-          args:
-            - silo server /data --console-address :9090
+          image: docker.io/pgsty/silo:RELEASE.2026-09-16T00-00-00Z
+          imagePullPolicy: IfNotPresent
+          args: [server, /data, --console-address, ":9090"]
           env:
             - name: MINIO_ROOT_USER
               valueFrom:
@@ -33,6 +30,10 @@ spec:
             - name: MINIO_ROOT_PASSWORD
               valueFrom:
                 secretKeyRef: {name: minio-root, key: password}
+            # Console 登录后的跳转必须使用公网地址；否则反向代理场景会生成集群内地址。
+            - {name: MINIO_BROWSER_REDIRECT_URL, value: "https://silo.apikv.com"}
+            # S3 presigned URL 等对外地址使用独立 API 域名。
+            - {name: MINIO_SERVER_URL, value: "https://silo-api.apikv.com"}
           ports:
             - {containerPort: 9000, name: api}
             - {containerPort: 9090, name: console}

@@ -4,6 +4,15 @@
 
 - [ ] 本次审查发现旧示例仍含内嵌私钥和疑似令牌。两份独立 `tls.key` 已停止 Git 跟踪并保留本地副本；还需私下核实其余命中、轮换仍有效的凭据、清理示例，并评估历史重写。增量扫描通过不代表整个仓库可公开；完成处置前不要把完整历史推送到新的公开远端。
 
+## 2026-09-24 · Silo 对象存储恢复部署
+
+- [x] 恢复 `components/minio/` 作为 Silo 单实例部署器：镜像固定 `pgsty/silo:RELEASE.2026-09-16T00-00-00Z`，OpenEBS LVM RWO PVC，`Recreate` 更新策略。
+- [ ] 对外入口固定为 S3 API `silo-api.apikv.com` 与 Web UI `silo.apikv.com`；集群侧 HTTPRoute 已就绪，待在 Pangolin 为 `k8s-cluster` site 创建两个公网资源并完成端到端验证。
+- [x] root 凭据写入 OpenBao `secret/k8s/hosting/minio`，由 ESO 物化 `minio/minio-root`；Scorpius 本地管理凭据只写 gitignored `.silo-admin.env`，不进入仓库或日志。
+- [ ] 单实例、单盘无节点级冗余；重要对象的异地备份与恢复演练仍需另行实施。
+
+> 本次部署取代 2026-08-20「迁 SeaweedFS、保持 `ADDON_MINIO=false`」的旧决策。下方历史记录保留原文，不再代表当前运行状态。
+
 ## 2026-09-11 · Config Center 自动填充 + 凭据真相源迁 OpenBao + Reloader
 
 - [x] **service token 自动轮换 CronJob 已启用**(09-15):镜像走 TCR(`kubernetes-tools@sha256:14859b5e…`,基础镜像 alpine 3.20 amd64 经 node1 镜像进 TCR——Docker Hub/GHCR 集群和本机都不通),最小 RBAC(按名字 get/patch/watch,无 list/delete),每周日 03:17 轮换 pre 10 个 service token。**两次集群内演练**:`drill-1534` 失败并暴露真缺陷——脚本先吊销旧 token 再滚动消费者,滚动在第一个 Deployment 因缺 `list` 超时退出,9 个服务的 Pod 拿着已吊销 token 跑(watch 401);且"读回验证"用的是 operator 头没验新 token。手工滚动止血后重写为三阶段(A 签发+新 token 读回+写 Secret → B 滚动等就绪(只用 get 轮询) → C 才吊销;旧 id 落 previous 注解,失败重跑进续跑模式);`drill-1542` 全绿,独立核验旧 token revokedAt、10 服务 0 个 401。operator 自身轮换仍需管理员授权,不自动化

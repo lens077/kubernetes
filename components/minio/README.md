@@ -1,59 +1,140 @@
-# minio —— S3 兼容对象存储（pgsty/silo）
+# Silo：S3 兼容对象存储
 
-## 1. 定位
+## 1. 用途
 
-集群里的 S3 端点：商品图片等静态文件、备份落地。ecommerce 应用通过
-`minio-service.minio.svc:9000` 访问。
+本组件在 `minio` 命名空间部署 [PGSTY Silo](https://silo.pgsty.com/) 单实例对象存储。Silo 保留 MinIO 兼容的 S3 API、管理 API、`MINIO_*` 配置和完整 Web Console。
 
-## 2. 上游最佳实践
+入口：
 
-来源：[MinIO 文档](https://min.io/docs/minio/kubernetes/upstream/)、[silo](https://silo.pgsty.com/docs/)
+- 集群内 S3 API：`http://minio-service.minio.svc.cluster.local:9000`
+- 公网 S3 API：`https://silo-api.apikv.com`
+- 公网 Web UI：`https://silo.apikv.com`
 
-- 生产用 MinIO Operator + Tenant（多副本纠删码）；单节点单盘只适合开发与小规模。
-- root 凭据只用于初始化，日常给应用发独立的 access key + 最小权限策略。
-- 健康检查端点：`/minio/health/live`（存活）、`/minio/health/ready`（就绪）。
-- MinIO 官方社区版 2025 年起移除了完整控制台；`pgsty/silo` 是保留 console 的 fork。
+公网请求路径为 Pangolin → `k8s-cluster` newt → 共享 Gateway VIP → HTTPRoute → Silo Service。
 
-## 3. 本集群取舍
+## 2. 部署取舍
 
-| 上游默认/建议 | 本集群 | 原因 |
+| 项目 | 当前实现 | 说明 |
 |---|---|---|
-| Operator + Tenant 多副本 | **单实例 Deployment** | 两节点、一块本地 LVM 盘，纠删码没有意义。Operator 那套 values 保留在 `examples/helm-operator-tenant/`，将来扩节点可切。 |
-| `minio` 官方镜像 | `pgsty/silo` | 官方社区版砍了控制台。**注意二进制名是 `silo` 不是 `minio`** —— 见踩坑。 |
-| root 密码写 env | **Secret + secretKeyRef** | 原方案把密码明文写在 Deployment 的 env 里，`kubectl get deploy -o yaml` 就能看到。现在走 `get_cred` + Secret。 |
-| 无探针 | 加 readiness/liveness | 用 `/minio/health/{ready,live}`，避免"Pod Running 但服务没起来"。 |
-| `strategy` 默认 RollingUpdate | `Recreate` | 单副本 + RWO 卷，滚动更新时新 Pod 会因为卷被占用而永远 Pending。 |
+| 拓扑 | 单实例 Deployment + 单块 RWO PVC | 当前数据没有节点级冗余。承载卷或节点故障时服务不可用；重要对象必须另有备份。 |
+| 镜像 | `docker.io/pgsty/silo:RELEASE.2026-09-16T00-00-00Z` | 固定已验证版本，不使用浮动 `latest`。 |
+| 更新策略 | `Recreate` | 避免单实例滚动更新时两个 Pod 争用 RWO 卷。 |
+| 数据盘 | `${MINIO_STORAGE_SIZE}`，默认 StorageClass `${SC_NAME}` | 线上当前为 OpenEBS LVM LocalPV。 |
+| 凭据 | OpenBao `secret/k8s/${CLUSTER_NAME}/minio` → ESO → `Secret/minio-root` | 仓库、Deployment 和安装日志不保存或回显密码。 |
+| 对外入口 | API 与 Console 使用不同域名 | S3 API 路径与 Console 路由互不干扰。 |
 
-## 4. 暴露方式
+Silo 官方把多节点、多磁盘纠删码拓扑作为生产推荐。本集群暂按单节点、单盘部署，这是容量和资源约束下的明确折中，不提供节点故障容忍能力。
 
-- S3 API（集群内）：`http://minio-service.minio.svc.cluster.local:9000`
-- S3 API（对外）：`https://s3.dev.test`
-- 控制台：`https://minio-ui.dev.test`
-- 凭据：用户 `admin`，密码见 `/root/.k8s-installer-credentials`
+## 3. 首次部署
 
-## 5. 验证
+在控制平面节点执行：
 
 ```bash
-kubectl -n minio logs deploy/minio | tail -5      # 应看到 "Silo Object Storage Server" 与 API/WebUI 地址
+cd /root/kubernetes
+
+# 首次生成并写入 OpenBao；值通过 stdin 传递，不出现在命令参数或日志中。
+bash tools/openbao-seed.sh minio
+
+# ESO 物化 Secret，创建 PVC、Deployment、Service 和 HTTPRoute。
+bash components/minio/install.sh
 ```
 
-真验证（建桶 → 上传 → 下载）：
+`install.sh` 可重复执行。已有 OpenBao/Secret 值时不会自动轮换凭据。
+
+## 4. 验证
+
+### 4.1 工作负载与路由
 
 ```bash
-PASS=$(cat /var/lib/k8s-installer/creds/minio-root)
-kubectl -n minio exec deploy/minio -- sh -c "
-  mc alias set local http://127.0.0.1:9000 admin $PASS &&
-  mc mb -p local/probe && echo hello | mc pipe local/probe/probe.txt &&
-  mc cat local/probe/probe.txt && mc rb --force local/probe"
-# 期望输出 hello
+kubectl -n minio rollout status deploy/minio --timeout=10m
+kubectl -n minio get pod,svc,pvc,externalsecret,httproute
+kubectl -n minio get secret minio-root -o jsonpath='{.metadata.ownerReferences[0].kind}{"\n"}'
 ```
 
-## 6. 踩坑
+最后一条应输出 `ExternalSecret`。
 
-- **Pod 反复 Error，日志只有一行 `minio: command not found`（exit 127）**：
-  `pgsty/silo` 镜像里只有 `/usr/bin/silo`（外加 `mc`/`mcli`），没有 `minio`。
-  命令要写 `silo server /data --console-address :9090`。环境变量仍读 `MINIO_*`。
-- **首次启动日志里的 "more than 0 drives of set" 警告**：单盘部署的正常提示，
-  意思是主机故障即不可用——本集群已接受这个代价。
-- **S3 客户端连不上但控制台正常**：两个端口用途不同，9000 是 API、9090 是控制台，
-  路由别接错。
+### 4.2 S3 读写闭环
+
+不要把密码写在命令行参数中。使用临时 Pod 的 `secretKeyRef` 注入凭据，创建测试桶、写入、读回并删除：
+
+```bash
+cat <<'YAML' | kubectl apply -f -
+apiVersion: v1
+kind: Pod
+metadata: {name: silo-smoke, namespace: minio}
+spec:
+  restartPolicy: Never
+  containers:
+    - name: smoke
+      image: docker.io/pgsty/silo:RELEASE.2026-09-16T00-00-00Z
+      command: [/bin/sh, -ceu]
+      args:
+        - |
+          export MC_CONFIG_DIR=/tmp/mc
+          mc alias set local http://minio-service.minio.svc.cluster.local:9000 "$SILO_USER" "$SILO_PASSWORD" >/dev/null
+          bucket="silo-smoke-$(date +%s)"
+          mc mb "local/$bucket" >/dev/null
+          printf ok | mc pipe "local/$bucket/probe.txt" >/dev/null
+          test "$(mc cat "local/$bucket/probe.txt")" = ok
+          mc rb --force "local/$bucket" >/dev/null
+      env:
+        - name: SILO_USER
+          valueFrom: {secretKeyRef: {name: minio-root, key: user}}
+        - name: SILO_PASSWORD
+          valueFrom: {secretKeyRef: {name: minio-root, key: password}}
+YAML
+kubectl -n minio wait --for=jsonpath='{.status.phase}'=Succeeded pod/silo-smoke --timeout=2m
+kubectl -n minio delete pod silo-smoke
+```
+
+Secret 值只进入容器环境，不经过 shell 展开或 `kubectl` 命令参数。
+
+### 4.3 公网入口
+
+```bash
+curl -fsS https://silo-api.apikv.com/minio/health/ready
+curl -I https://silo.apikv.com/
+```
+
+API 健康检查应返回 HTTP 200；Web UI 应返回页面或重定向，不应跳转到集群内域名。
+
+## 5. Pangolin 配置
+
+在 Pangolin 组织 `main` 下创建两个 HTTP resource，均绑定 `k8s-cluster` site（当前 `siteId=11`）：
+
+| Resource | 公网域名 | Target | `setHostHeader` / `tlsServerName` | SSO |
+|---|---|---|---|---|
+| `silo-api` | `silo-api.apikv.com` | `https://10.10.31.240:443` | `silo-api.apikv.com` | 关闭 |
+| `silo-webui` | `silo.apikv.com` | `https://10.10.31.240:443` | `silo.apikv.com` | 关闭 |
+
+必须改写 Host 和 SNI，否则共享 Gateway 无法匹配对应 HTTPRoute。S3 API 不得开启 Pangolin SSO：S3 签名客户端不能完成浏览器登录流程。Web UI 使用 Silo 自身的 root 用户登录，也保持 Pangolin SSO 关闭，避免双重登录和 API 请求被边缘层拦截。
+
+公网验证：
+
+```bash
+# 未签名访问 S3 根路径通常返回 403，证明请求已抵达 Silo；健康端点必须返回 200。
+curl -fsS https://silo-api.apikv.com/minio/health/ready
+curl -I https://silo.apikv.com/
+```
+
+## 6. 凭据消费
+
+root 用户固定为 `silo-admin`。密码只从 OpenBao/ESO 管理；不要把 root 凭据写入 Git、ConfigMap、Deployment 或文档。
+
+Scorpius 本地管理凭据写在其项目根目录 `.silo-admin.env`。保存前必须在目标仓库显式忽略该文件，并用 `git check-ignore .silo-admin.env` 确认生效；`.env.*` 不能匹配这个文件名。本仓库通过 `.*.env` 排除此类本地文件。文件权限必须为 `0600`，内容格式为：
+
+```dotenv
+SILO_ENDPOINT=https://silo-api.apikv.com
+SILO_ROOT_USER=silo-admin
+SILO_ROOT_PASSWORD=<从 minio/minio-root Secret 读取>
+```
+
+应用日常访问不应复用 root 用户。后续应按应用创建独立 access key，并绑定最小权限策略。
+
+## 7. 常见问题
+
+- Pod 报 `minio: command not found`：Silo 二进制名是 `silo`。当前镜像使用自身 entrypoint，参数为 `server /data --console-address :9090`。
+- Console 登录后跳到内部地址：检查 Deployment 的 `MINIO_BROWSER_REDIRECT_URL=https://silo.apikv.com`。
+- 预签名 URL 使用内部地址：检查 `MINIO_SERVER_URL=https://silo-api.apikv.com`。
+- Console 正常但 S3 客户端失败：确认 API 域名转发 9000，Console 域名转发 9090。
+- PVC 导致升级卡住：Deployment 必须保持 `strategy.type=Recreate`。
