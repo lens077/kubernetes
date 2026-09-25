@@ -51,7 +51,7 @@ groups:
           summary: 'Connect task {{ $labels.connector }}/{{ $labels.task }} 状态 {{ $labels.status }}'
           description: >-
             kubectl -n kafka get kafkaconnector {{ $labels.connector }} -o jsonpath='{.status.connectorStatus.tasks[0].trace}';
-            source 已是 snapshot.mode=when_needed, 位点不可用会自愈; 其它原因看 Connect 日志。
+            source 使用 snapshot.mode=initial + offset.mismatch.strategy=trust_greater_lsn；位点不匹配不会自动全量重快照。先查 Connect 日志与 PG slot/offset，再判断是否需要人工恢复。
       - alert: CDCDebeziumDisconnected
         # Debezium streaming 上下文与 PG 复制流断开(Connected=0)。task 可能仍 RUNNING(在重试), 但事件在积压。
         expr: 'debezium_metrics_connected{context="streaming"} == 0'
