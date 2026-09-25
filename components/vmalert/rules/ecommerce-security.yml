@@ -24,6 +24,19 @@ groups:
           summary: ecommerce 工作负载启动了 shell 或网络调试工具
           description: 最近 5 分钟出现 bash、sh、curl、wget、nc、ncat 或 socat。先确认是否为授权运维，再按 Pod、binary、UID 和 parent chain 调查。
 
+      - alert: EcommerceSecurityMetricsMissing
+        # 2026-09-24 审计曾发现 Vector :9598 exporter 存在但 Collector 没有 scrape job，
+        # 上面两条规则永久无 series 且不报错。scrape_samples_scraped 会带目标 service_name=vector-security，
+        # 即使还没有安全事件 counter，也能证明 exporter 正在被抓取。
+        expr: 'absent(scrape_samples_scraped{service_name="vector-security"}) == 1'
+        for: 10m
+        labels:
+          severity: warning
+          category: observability
+        annotations:
+          summary: Vector 运行时安全指标停止采集
+          description: 连续 10 分钟没有 vector-security scrape 样本。检查 logging/vector Service 的 9598 端口、NetworkPolicy 与 OTel Collector 的 vector-security job；此时两条 Tetragon 事件告警均已失效。
+
       - alert: EcommerceNetworkPolicyDeniedBurst
         expr: sum(increase(hubble_drop_total{reason="POLICY_DENIED"}[5m])) > 20
         for: 1m   # 2026-09-03 迁入集群时补: 规则必须有 for:(increase 窗口 5m > 1m, 单次事件仍触发)

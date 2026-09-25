@@ -120,6 +120,13 @@ config:
                 target_label: pod
               - source_labels: [__meta_kubernetes_pod_node_name]
                 target_label: node
+          # Vector 的安全事件 exporter。2026-09-24 审计发现 Service/NetworkPolicy/9598 都在，
+          # 但 Collector 从未抓它，导致两条 Tetragon 规则永久无 series、静默失明。
+          - job_name: vector-security
+            scrape_interval: 30s
+            scrape_timeout: 10s
+            static_configs:
+              - targets: [vector.logging.svc.cluster.local:9598]
           # ---- 2026-09-03 新增: 数据库与告警链路自身的指标(vmalert 的 cnpg.yml / observability-pipeline.yml 靠它们) ----
           # CNPG 实例 Pod 自带 exporter(:9187, 端口名 metrics): cnpg_collector_* / cnpg_pg_* / cnpg_backends_*
           - job_name: cnpg
