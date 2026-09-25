@@ -2,9 +2,10 @@
 
 ## 1. 定位
 
-从集群内部周期性探测三类目标：公网入口（经 Pangolin/newt 的 `*.apikv.com`）、集群内各后端的健康端点、
-以及**观测链路本身**——不看进程活着，而是查 VictoriaMetrics/VictoriaLogs 里最近几分钟有没有新数据、
-Alertmanager 里有没有 vmalert 的 `Watchdog`。失败直推 ntfy（不经 Alertmanager：告警链路坏了它还得能报信）。
+从集群内部周期性探测三类目标：公网入口（经 Pangolin/newt 的 `*.apikv.com`）、集群内各后端的健康端点，
+以及**观测链路本身**。当前数据面探针只验证 Kubernetes 状态指标持续进入 VictoriaMetrics；
+VictoriaLogs/VictoriaTraces 新鲜度和 Alertmanager `Watchdog` API 探针仍是待补缺口。失败直推 ntfy，
+不经过 Alertmanager，避免告警链路本身故障时无人通知。
 配置沿用 node3 Pigsty 时代的 `/data/gatus/config.yaml`（2026-09-03 收割），探测目标改为集群内 Service。
 
 ## 2. 上游最佳实践
@@ -24,7 +25,7 @@ Alertmanager 里有没有 vmalert 的 `Watchdog`。失败直推 ntfy（不经 Al
 | 单文件配置 | `config.yaml`（全局）+ `endpoints.yaml`（端点） | 端点清单会频繁改，和全局配置分开 diff |
 | 告警渠道必配 | ntfy 未配置时 install.sh 删掉 `alerting` 段和端点的 `alerts` 行 | 空 url 过不了 gatus 校验；先能看面板，凭据后补 |
 | 探测公网只看 200 | 保留 node3 清单里的特例（`config-center-api` 401、`vault` 307） | 这些状态码就是「健康」的定义 |
-| 只探 HTTP | 加 `observability-pipeline` 组：查 VM/VL API、查 AM `Watchdog` | Pod Ready ≠ 数据在流；这是 Pigsty 时代最有效的一组探针 |
+| 只探进程存活 | 加 `observability-pipeline` 组，当前先查 VictoriaMetrics 的集群状态指标新鲜度 | Pod Ready 不等于数据正在流动；VictoriaLogs、VictoriaTraces 和 Alertmanager `Watchdog` API 仍待补齐 |
 | root 运行 | 非 root、只读根、`tmpfs /tmp`、内存 192Mi | 与 node3 的 compose 加固一致 |
 
 ## 4. 暴露方式

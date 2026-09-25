@@ -1,7 +1,7 @@
-# gatus 端点清单。条件三件套沿用 node3: 状态码 + 证书剩余 > 30 天 + 响应 < 5s。
-# 分组:
-#   cluster-origin          集群内各后端的健康端点(Service 名, 不经网关)
-#   observability-pipeline  不看"进程活着", 看"数据真的到了": 查 node3 Pigsty VM 有没有集群来的新 series
+# Gatus 端点清单。公网条件通常检查状态码、证书剩余时间和响应时间。
+# 分组：
+#   cluster-origin          集群内各后端的健康端点（Service 名，不经网关）
+#   observability-pipeline  不只看进程存活，还检查数据是否进入集群内 VictoriaMetrics
 #   cdc                     集群内 CDC 链 (Connect task 状态 / ES 存活)
 #   public-edge             经 Pangolin/newt 暴露的公网入口(与 node3 时代同一批域名)
 #   node1-public            node1 VPS 上的站点
@@ -12,8 +12,8 @@ endpoints:
     group: cluster-origin
     url: http://alert-bridge.observability.svc.cluster.local:9099/healthz
     interval: 1m
-    # ntfy 未配置时 /healthz 仍 200 但 body.ntfy=false; 这里只看进程, ntfy 配没配由 README 的手工验证覆盖
-    conditions: ["[STATUS] == 200", "[BODY].ok == true"]
+    # ntfy 未配置时 /healthz 仍返回 200，但 body.ntfy=false；必须同时检查两个字段，避免通知链断开时仍显示正常。
+    conditions: ["[STATUS] == 200", "[BODY].ok == true", "[BODY].ntfy == true"]
     alerts: [{type: ntfy}]
   - name: otel-collector
     group: cluster-origin
@@ -25,6 +25,20 @@ endpoints:
   - name: healthchecks
     group: cluster-origin
     url: http://healthchecks.ops.svc.cluster.local:8000/api/v3/status/
+    interval: 1m
+    conditions: ["[STATUS] == 200"]
+    alerts: [{type: ntfy}]
+  # Config Center 已于 2026-09-23 迁回 K8s。API 健康端点要求鉴权，匿名 401 能证明后端已响应；
+  # Web 匿名首页应为 200。两条都从集群内探，和公网入口探针区分「进程死」与「隧道断」。
+  - name: config-center-api
+    group: cluster-origin
+    url: http://config-center.config-center.svc.cluster.local:30010/health
+    interval: 1m
+    conditions: ["[STATUS] == 401"]
+    alerts: [{type: ntfy}]
+  - name: config-center-web
+    group: cluster-origin
+    url: http://config-center-web.config-center.svc.cluster.local/
     interval: 1m
     conditions: ["[STATUS] == 200"]
     alerts: [{type: ntfy}]
@@ -96,9 +110,8 @@ endpoints:
   #   → HTTPRoute → 后端 Service
   # 所以它是**唯一**能证明「公网真的能访问到集群」的一组; cluster-origin 那组只证明后端进程活着。
   #
-  # 删掉了 gateway / mall / config-center-web / config-center-api / bugsink-edge 五条:
-  # 对应组件在新集群里没有部署, Pangolin 里的资源已于本次迁移一并删除, 留着必然长红刷 ntfy。
-  # 业务重新上线时连同 Pangolin 资源一起加回来(域名与 target 约定见 HANDOFF 的迁移对照表)。
+  # gateway / mall / bugsink-edge 仍未部署，不恢复探针。Config Center 已于 2026-09-23 迁回 K8s，
+  # 对应公网资源也已恢复，因此下面重新纳管 Web/API。业务入口重新上线时再连同 Pangolin 资源加回来。
   #
   # ⚠️ 只放**匿名可达**的入口。traces / vmalert / alerts / hc 这四个资源在 Pangolin 侧
   # 开了 SSO(policy sso=1), 匿名请求恒为 401 —— 拿 401 当"活着"只能证明 Pangolin 边缘在,
@@ -110,6 +123,20 @@ endpoints:
     interval: 1m
     client: {timeout: 10s, ignore-redirect: true}
     conditions: ["[STATUS] == 200", "[CERTIFICATE_EXPIRATION] > 720h", "[RESPONSE_TIME] < 5000"]
+    alerts: [{type: ntfy}]
+  - name: config-center-web-edge
+    group: public-edge
+    url: https://config.apikv.com/
+    interval: 2m
+    client: {timeout: 10s, ignore-redirect: true}
+    conditions: ["[STATUS] == 200", "[CERTIFICATE_EXPIRATION] > 720h", "[RESPONSE_TIME] < 5000"]
+    alerts: [{type: ntfy}]
+  - name: config-center-api-edge
+    group: public-edge
+    url: https://config-api.apikv.com/health
+    interval: 2m
+    client: {timeout: 10s, ignore-redirect: true}
+    conditions: ["[STATUS] == 401", "[CERTIFICATE_EXPIRATION] > 720h", "[RESPONSE_TIME] < 5000"]
     alerts: [{type: ntfy}]
   - name: grafana-edge
     group: public-edge
