@@ -7,3 +7,28 @@ archive/pigsty-node3-2026-09-03/raw/
 # Python 字节码缓存(tools/config-center/harvest.py 运行时生成; 2026-09-23 前曾被误跟踪)
 __pycache__/
 *.pyc
+
+# Local credentials: .env.* does not match .silo-admin.env.
+.env
+.env.*
+.*.env
+*.local.env
+!.env.example
+!.env.sample
+!.env.template
+.k8s-installer-credentials
+/creds/
+
+# Private keys and local cluster access credentials must never enter Git.
+*.key
+*.pem
+*.p12
+*.pfx
+id_rsa
+id_dsa
+id_ecdsa
+id_ed25519
+.kube/
+kubeconfig
+kubeconfig.*
+*.kubeconfig

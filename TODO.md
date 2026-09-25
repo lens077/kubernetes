@@ -1,5 +1,9 @@
 # TODO
 
+## 安全：历史凭据清理
+
+- [ ] 本次审查发现旧示例仍含内嵌私钥和疑似令牌。两份独立 `tls.key` 已停止 Git 跟踪并保留本地副本；还需私下核实其余命中、轮换仍有效的凭据、清理示例，并评估历史重写。增量扫描通过不代表整个仓库可公开；完成处置前不要把完整历史推送到新的公开远端。
+
 ## 2026-09-11 · Config Center 自动填充 + 凭据真相源迁 OpenBao + Reloader
 
 - [x] **service token 自动轮换 CronJob 已启用**(09-15):镜像走 TCR(`kubernetes-tools@sha256:14859b5e…`,基础镜像 alpine 3.20 amd64 经 node1 镜像进 TCR——Docker Hub/GHCR 集群和本机都不通),最小 RBAC(按名字 get/patch/watch,无 list/delete),每周日 03:17 轮换 pre 10 个 service token。**两次集群内演练**:`drill-1534` 失败并暴露真缺陷——脚本先吊销旧 token 再滚动消费者,滚动在第一个 Deployment 因缺 `list` 超时退出,9 个服务的 Pod 拿着已吊销 token 跑(watch 401);且"读回验证"用的是 operator 头没验新 token。手工滚动止血后重写为三阶段(A 签发+新 token 读回+写 Secret → B 滚动等就绪(只用 get 轮询) → C 才吊销;旧 id 落 previous 注解,失败重跑进续跑模式);`drill-1542` 全绿,独立核验旧 token revokedAt、10 服务 0 个 401。operator 自身轮换仍需管理员授权,不自动化
