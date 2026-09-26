@@ -213,6 +213,28 @@ config:
                 replacement: $1:9093
               - source_labels: [__meta_kubernetes_pod_name]
                 target_label: pod
+          # alert-bridge(:9099/metrics): ntfy 实际发送、退避抑制和失败计数。
+          # Alertmanager 的 webhook 刷新量不等于手机通知量，降噪面板必须以桥的决策指标为准。
+          - job_name: alert-bridge
+            scrape_interval: 30s
+            scrape_timeout: 10s
+            metrics_path: /metrics
+            kubernetes_sd_configs:
+              - role: pod
+                namespaces:
+                  names: [observability]
+            relabel_configs:
+              - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_name]
+                action: keep
+                regex: alert-bridge
+              - source_labels: [__meta_kubernetes_pod_phase]
+                action: keep
+                regex: Running
+              - source_labels: [__meta_kubernetes_pod_ip]
+                target_label: __address__
+                replacement: $1:9099
+              - source_labels: [__meta_kubernetes_pod_name]
+                target_label: pod
           # gatus(:8080/metrics): 合成探测结果(gatus_results_*)也进 VM, 面板与规则都能用
           - job_name: gatus
             scrape_interval: 60s
