@@ -36,7 +36,7 @@ if [[ -n $ntfy_url ]]; then
   cp "$DIR/endpoints.yaml" "$tmp/endpoints.yaml"
 else
   sed '/^alerting:/,$d' "$DIR/config.yaml" > "$tmp/config.yaml"
-  sed '/alerts: \[{type: ntfy}\]/d' "$DIR/endpoints.yaml" > "$tmp/endpoints.yaml"
+  sed '/alerts: \[{type: custom,/d' "$DIR/endpoints.yaml" > "$tmp/endpoints.yaml"
 fi
 kctl -n "$NAMESPACE" create configmap gatus-config \
   --from-file=config.yaml="$tmp/config.yaml" \

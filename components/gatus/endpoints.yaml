@@ -5,7 +5,7 @@
 #   cdc                     集群内 CDC 链 (Connect task 状态 / ES 存活)
 #   public-edge             经 Pangolin/newt 暴露的公网入口(与 node3 时代同一批域名)
 #   node1-public            node1 VPS 上的站点
-# 端点里的 `alerts: [{type: ntfy}]` 行在未配置 ntfy 时会被 install.sh 删掉。
+# 端点里的 `alerts: [{type: custom, failure-threshold: 11, success-threshold: 6}]` 行在未配置 ntfy 时会被 install.sh 删掉。
 endpoints:
   # ---------- cluster-origin ----------
   - name: alert-bridge
@@ -14,20 +14,20 @@ endpoints:
     interval: 1m
     # ntfy 未配置时 /healthz 仍返回 200，但 body.ntfy=false；必须同时检查两个字段，避免通知链断开时仍显示正常。
     conditions: ["[STATUS] == 200", "[BODY].ok == true", "[BODY].ntfy == true"]
-    alerts: [{type: ntfy}]
+    alerts: [{type: custom, failure-threshold: 11, success-threshold: 6}]
   - name: otel-collector
     group: cluster-origin
     # Service 不暴露 health_check 扩展的 13133; 打 OTLP/HTTP 接收端, GET 得 405 就是 receiver 活着
     url: http://otel-opentelemetry-collector.opentelemetry.svc.cluster.local:4318/v1/traces
     interval: 1m
     conditions: ["[STATUS] == 405"]
-    alerts: [{type: ntfy}]
+    alerts: [{type: custom, failure-threshold: 11, success-threshold: 6}]
   - name: healthchecks
     group: cluster-origin
     url: http://healthchecks.ops.svc.cluster.local:8000/api/v3/status/
     interval: 1m
     conditions: ["[STATUS] == 200"]
-    alerts: [{type: ntfy}]
+    alerts: [{type: custom, failure-threshold: 11, success-threshold: 6}]
   # Config Center 已于 2026-09-23 迁回 K8s。API 健康端点要求鉴权，匿名 401 能证明后端已响应；
   # Web 匿名首页应为 200。两条都从集群内探，和公网入口探针区分「进程死」与「隧道断」。
   - name: config-center-api
@@ -35,13 +35,13 @@ endpoints:
     url: http://config-center.config-center.svc.cluster.local:30010/health
     interval: 1m
     conditions: ["[STATUS] == 401"]
-    alerts: [{type: ntfy}]
+    alerts: [{type: custom, failure-threshold: 11, success-threshold: 6}]
   - name: config-center-web
     group: cluster-origin
     url: http://config-center-web.config-center.svc.cluster.local/
     interval: 1m
     conditions: ["[STATUS] == 200"]
-    alerts: [{type: ntfy}]
+    alerts: [{type: custom, failure-threshold: 11, success-threshold: 6}]
   # 2026-09-22: bugsink 在本轮重建里没有部署(ops 命名空间下无该 Service), 探针恒红并刷 ntfy,
   # 与 public-edge 里删掉的那批同因。启用 ADDON_BUGSINK 重新部署后, 把下面五行取消注释即可。
   # - name: bugsink
@@ -49,7 +49,7 @@ endpoints:
   #   url: http://bugsink.ops.svc.cluster.local:8000/health/ready
   #   interval: 1m
   #   conditions: ["[STATUS] == 200"]
-  #   alerts: [{type: ntfy}]
+  #   alerts: [{type: custom, failure-threshold: 11, success-threshold: 6}]
   - name: openbao-unsealed
     group: cluster-origin
     # 2026-09-22: OpenBao 是 shamir + file 存储的 standalone, Pod 一重启就回到 sealed, ESO 立刻 SecretSyncedError,
@@ -59,7 +59,7 @@ endpoints:
     interval: 1m
     client: {timeout: 10s}
     conditions: ["[STATUS] == 200", "[BODY].sealed == false", "[BODY].initialized == true"]
-    alerts: [{type: ntfy}]
+    alerts: [{type: custom, failure-threshold: 11, success-threshold: 6}]
   - name: postgres-cnpg
     group: cluster-origin
     # 2026-09-22: 旧 node3 Pigsty (10.10.21.172) 已随主机重装退役, 业务 PG 改为集群内 CNPG pg-main。
@@ -67,7 +67,15 @@ endpoints:
     url: tcp://pg-main-rw.postgresql.svc.cluster.local:5432
     interval: 1m
     conditions: ["[CONNECTED] == true"]
-    alerts: [{type: ntfy}]
+    alerts: [{type: custom, failure-threshold: 11, success-threshold: 6}]
+
+  # Watchdog 必须在 AM 中持续可见；不经 bridge 投递，避免桥故障时自检失声。
+  - name: alert-pipeline-watchdog
+    group: observability-pipeline
+    url: 'http://alertmanager.observability.svc.cluster.local:9093/api/v2/alerts?filter=alertname%3DWatchdog'
+    interval: 1m
+    conditions: ["[STATUS] == 200", "len([BODY]) > 0"]
+    alerts: [{type: custom, failure-threshold: 11, success-threshold: 6}]
 
   # ---------- observability-pipeline (数据真的进了集群内 VictoriaMetrics 吗) ----------
   # 2026-09-22: 旧 node3 Pigsty 栈随主机重装退役, VM/VL/VT/Alertmanager 全部回到集群内,
@@ -80,7 +88,7 @@ endpoints:
     interval: 2m
     client: {timeout: 10s}
     conditions: ["[STATUS] == 200", "[BODY].status == success", "len([BODY].data.result) > 0"]
-    alerts: [{type: ntfy}]
+    alerts: [{type: custom, failure-threshold: 6, success-threshold: 4}]
   # ---------- cdc (PG → Debezium → Kafka → ES, 全在集群内; 替代原 node3 cdc-connect-exporter 的 task 级告警) ----------
   # connector 级 RUNNING 而 task 级 FAILED 是这条链三次事故的共同形态, 所以两级都看。
   # Connect REST 默认被 Strimzi NetworkPolicy 封住, 由 components/kafka/cdc/connect-rest-netpol.yaml 放行 ops。
@@ -89,20 +97,20 @@ endpoints:
     url: http://my-connect-cluster-connect-api.kafka.svc.cluster.local:8083/connectors/ecommerce-postgres-source/status
     interval: 1m
     conditions: ["[STATUS] == 200", "[BODY].connector.state == RUNNING", "[BODY].tasks[0].state == RUNNING"]
-    alerts: [{type: ntfy}]
+    alerts: [{type: custom, failure-threshold: 11, success-threshold: 6}]
   - name: cdc-sink-task
     group: cdc
     url: http://my-connect-cluster-connect-api.kafka.svc.cluster.local:8083/connectors/ecommerce-elasticsearch-sink/status
     interval: 1m
     conditions: ["[STATUS] == 200", "[BODY].connector.state == RUNNING", "[BODY].tasks[0].state == RUNNING"]
-    alerts: [{type: ntfy}]
+    alerts: [{type: custom, failure-threshold: 11, success-threshold: 6}]
   - name: elasticsearch
     group: cdc
     # 安全开启后匿名请求 401; 401 恰恰证明进程活着 (与 node3 时代 watchdog 同一判据), 不在探针里放凭据
     url: http://elasticsearch.elasticsearch.svc.cluster.local:9200/
     interval: 1m
     conditions: ["[STATUS] == 401", "[RESPONSE_TIME] < 3000"]
-    alerts: [{type: ntfy}]
+    alerts: [{type: custom, failure-threshold: 11, success-threshold: 6}]
 
   # ---------- public-edge (经 Pangolin/newt 的公网入口) ----------
   # 2026-09-22 重写。这一组走的是完整链路:
@@ -123,28 +131,28 @@ endpoints:
     interval: 1m
     client: {timeout: 10s, ignore-redirect: true}
     conditions: ["[STATUS] == 200", "[CERTIFICATE_EXPIRATION] > 720h", "[RESPONSE_TIME] < 5000"]
-    alerts: [{type: ntfy}]
+    alerts: [{type: custom, failure-threshold: 11, success-threshold: 6}]
   - name: config-center-web-edge
     group: public-edge
     url: https://config.apikv.com/
     interval: 2m
     client: {timeout: 10s, ignore-redirect: true}
     conditions: ["[STATUS] == 200", "[CERTIFICATE_EXPIRATION] > 720h", "[RESPONSE_TIME] < 5000"]
-    alerts: [{type: ntfy}]
+    alerts: [{type: custom, failure-threshold: 6, success-threshold: 4}]
   - name: config-center-api-edge
     group: public-edge
     url: https://config-api.apikv.com/health
     interval: 2m
     client: {timeout: 10s, ignore-redirect: true}
     conditions: ["[STATUS] == 401", "[CERTIFICATE_EXPIRATION] > 720h", "[RESPONSE_TIME] < 5000"]
-    alerts: [{type: ntfy}]
+    alerts: [{type: custom, failure-threshold: 6, success-threshold: 4}]
   - name: grafana-edge
     group: public-edge
     url: https://grafana.apikv.com/api/health
     interval: 2m
     client: {timeout: 10s, ignore-redirect: true}
     conditions: ["[STATUS] == 200", "[CERTIFICATE_EXPIRATION] > 720h"]
-    alerts: [{type: ntfy}]
+    alerts: [{type: custom, failure-threshold: 6, success-threshold: 4}]
   - name: metrics-edge
     group: public-edge
     # VictoriaMetrics 经公网; 与 grafana-edge 一起构成「公网 → 集群」的端到端判据
@@ -152,7 +160,7 @@ endpoints:
     interval: 2m
     client: {timeout: 10s, ignore-redirect: true}
     conditions: ["[STATUS] == 200", "[BODY].status == success", "[CERTIFICATE_EXPIRATION] > 720h"]
-    alerts: [{type: ntfy}]
+    alerts: [{type: custom, failure-threshold: 6, success-threshold: 4}]
   - name: redis-edge
     group: public-edge
     # 原始 TCP 资源 redis-dev(Pangolin resourceId 59, proxyPort 30005) → newt → dragonfly-gateway 10.10.31.242:6379。
@@ -161,7 +169,7 @@ endpoints:
     interval: 5m
     client: {timeout: 10s}
     conditions: ["[CONNECTED] == true"]
-    alerts: [{type: ntfy}]
+    alerts: [{type: custom, failure-threshold: 3, success-threshold: 2}]
   - name: pg-edge
     group: public-edge
     # 原始 TCP 资源(Pangolin proxyPort 30001) → newt → pg-main-rw ClusterIP:5432。
@@ -171,7 +179,7 @@ endpoints:
     interval: 5m
     client: {timeout: 10s}
     conditions: ["[CONNECTED] == true"]
-    alerts: [{type: ntfy}]
+    alerts: [{type: custom, failure-threshold: 3, success-threshold: 2}]
 
   # ---------- node1-public ----------
   - name: homepage
@@ -180,18 +188,18 @@ endpoints:
     interval: 5m
     client: {timeout: 10s, ignore-redirect: true}
     conditions: ["[STATUS] == 200", "[CERTIFICATE_EXPIRATION] > 720h"]
-    alerts: [{type: ntfy}]
+    alerts: [{type: custom, failure-threshold: 3, success-threshold: 2}]
   - name: pangolin
     group: node1-public
     url: https://pangolin.apikv.com/
     interval: 5m
     client: {timeout: 10s, ignore-redirect: true}
     conditions: ["[STATUS] == 200", "[CERTIFICATE_EXPIRATION] > 720h"]
-    alerts: [{type: ntfy}]
+    alerts: [{type: custom, failure-threshold: 3, success-threshold: 2}]
   - name: ntfy
     group: node1-public
     url: https://ntfy.apikv.com/v1/health
     interval: 5m
     client: {timeout: 10s, ignore-redirect: true}
     conditions: ["[STATUS] == 200", "[CERTIFICATE_EXPIRATION] > 720h"]
-    alerts: [{type: ntfy}]
+    alerts: [{type: custom, failure-threshold: 3, success-threshold: 2}]

@@ -20,12 +20,21 @@ metrics: true                     # /metrics: otel collector 抓, 探测结果�
 # ntfy 直推(不经 Alertmanager: 合成监控要在告警链路坏了的时候还能报信)。
 # 凭据来自 Secret gatus-ntfy; install.sh 在没配 ntfy 时会删掉这一段和端点里的 alerts 行。
 alerting:
-  ntfy:
+  custom:
     url: ${NTFY_URL}
-    topic: ${NTFY_TOPIC}
-    token: ${NTFY_TOKEN}
-    priority: 4
+    method: POST
+    headers:
+      Authorization: Bearer ${NTFY_TOKEN}
+      Content-Type: application/json
+    # v5.36.0 最后替换状态占位符；插入片段只含受控常量，不含 URL/错误正文。
+    body: |
+      {"topic":"${NTFY_TOPIC}",[ALERT_TRIGGERED_OR_RESOLVED][ENDPOINT_NAME] · [ENDPOINT_GROUP]"}
+    placeholders:
+      ALERT_TRIGGERED_OR_RESOLVED:
+        TRIGGERED: '"priority":4,"tags":["warning"],"message":"现象：健康探针持续失败，已超过观察窗口。\n范围：Gatus / 外部与集群健康检查\n先查：对应探针的失败条件；检查后端与入口，不以进程存活代替业务健康。","title":"[故障][关注] '
+        RESOLVED: '"priority":2,"tags":["white_check_mark"],"message":"恢复：探针已连续成功达到恢复窗口。\n范围：Gatus / 外部与集群健康检查","title":"[恢复][关注] '
     default-alert:
-      failure-threshold: 2
-      success-threshold: 2
+      failure-threshold: 11
+      success-threshold: 6
       send-on-resolved: true
+      minimum-reminder-interval: 0s # v5.36.0：不发重复提醒；AM/宿主重复由持久退避控制
