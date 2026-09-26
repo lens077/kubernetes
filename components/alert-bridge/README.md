@@ -1,60 +1,77 @@
-# alert-bridge —— 告警桥（Alertmanager / Bugsink webhook → ntfy 推送 + 结构化日志）
+# alert-bridge：持久降噪与 ntfy 分流
 
-## 1. 定位
+Alertmanager webhook → 单副本 bridge → ntfy JSON UTF-8 发布。只使用 Python 标准库，镜像保持 `python:3.13-alpine`。Bugsink Slack webhook 路由保留，仍直发 core；本轮不扩展它的去重语义。
 
-Alertmanager 的唯一 receiver，Bugsink 的 issue webhook 目标。收到 webhook 后做两件事：
-推 [ntfy](https://ntfy.sh)（手机通知，severity 映射优先级，resolved 用 ✅），并把**每条**告警以
-JSON 行写 stdout——Vector 采进 VictoriaLogs（`kubernetes.container_name:alert-bridge`），告警历史可查。
-脚本是 node3 Pigsty 时代自写的 `pigsty-alert-ntfy.py`（2026-09-03 收割），容器化改动见 `bridge.py` 头部。
+## 契约
 
-## 2. 上游最佳实践
+- Alertmanager 负责首次触发的 `for` 与 `group_wait`，bridge **不再延迟首发**。短时重启在 10 分钟内恢复是否不通知，必须由源规则 `for >=10m` 与相应条件保证。
+- AM 的 `repeat_interval=5m` 用来重新投递；实际 ntfy 重复间隔由 bridge 管理：page 为 **1、2、4、8、24 小时**，ticket/test 为 **4、8、16、24 小时**，之后封顶 24 小时。实际触发受 AM 轮询粒度影响；bridge 无后台队列。
+- 每条 member 的 severity `crit/critical` → page，其他（包括未知值）→ ticket。未知 severity 在正文可见。显式 `labels.notification_class=test` 或 `labels.notification_route=test` → test；测试 topic 未配置绝不回退 core。
+- 状态 key 为 `receiver + groupKey + notification class + topic` 的 SHA-256；混合 severity 按 class 分别发送。身份为 fingerprint（缺失时完整 labels hash）加规范化 UTC startsAt，避免相同标签的新 episode 被吞；只变 annotation/value 不重置退避。
+- firing 成员集合改变立即更新并重置退避。混合 payload 分别计数 firing/resolved，最多显示 3 个对象；只有已通知的 active episode 被完全覆盖恢复且上游未截断时才发完整恢复，每个 episode 一次。每个 fingerprint 的最新 startsAt 随发送成功持久化；晚到的旧 firing/resolved class 快照整体忽略，避免旧成员过滤后误删新 episode，下一轮 AM 当前快照仍可处理。已恢复 episode 的重复 firing 不重开。
+- 上游 `truncatedAlerts` 会显示；截断的 resolved 载荷不能证明全组恢复，因此不清除 active 状态。建议 AM `max_alerts=0`（不截断），并用 grouping 限制组规模；bridge 仍限制请求 1 MiB / 1000 alerts。
 
-- ntfy 发布 API：`POST {url}/{topic}`，`Authorization: Bearer <token>`，`Priority`/`Tags`/`Title` 头。
-- Alertmanager webhook 载荷：`status`、`commonLabels`、`commonAnnotations`、`alerts[]`；桥必须回 2xx，
-  非 2xx 触发 Alertmanager 重试（这正是我们要的：ntfy 抖动不丢告警）。
-- Bugsink 的 webhook 是 Slack 格式（`text` + `blocks`），桥解析 header/section/fields 拼成一条消息。
+## Topic 与环境变量
 
-## 3. 本集群取舍
+| 环境变量 | 用途 |
+|---|---|
+| `NTFY_URL` | HTTPS 服务根 URL；不允许 URL userinfo |
+| `NTFY_TOPIC` | 已有 core topic |
+| `NTFY_TICKET_TOPIC` | 显式 ticket topic |
+| `NTFY_TEST_TOPIC` | 显式 test topic |
+| `NTFY_TOKEN` | publisher token；匿名发布服务可为空 |
+| `BRIDGE_STATE_FILE` | 默认 `/state/notifications.json`，必须放持久卷 |
+| `ALERTMANAGER_LISTEN` | 默认 `0.0.0.0:9099` |
+| `BUGSINK_BRIDGE_LISTEN` | 默认 `0.0.0.0:9199` |
+| `BUGSINK_BRIDGE_TOKEN` | 现有 Bugsink 路径凭据；不要轮换或写进仓库 |
 
-| 上游默认/建议 | 本集群 | 原因 |
-|---|---|---|
-| Alertmanager 直连通知渠道 | 经桥 | Alertmanager 没有 ntfy receiver；桥还负责落日志 |
-| 构建镜像 | `python:3.13-alpine` + 脚本进 ConfigMap | 171 行标准库脚本，不值得建 registry 与流水线；脚本 sha256 进 Pod 注解，改了自动滚动 |
-| ntfy 凭据必填 | 可空：只记日志不推送，`/healthz` 返回 `{"ok":true,"ntfy":false}` | 让 vmalert→AM→桥 这段先跑通，凭据后补；补上重跑 install.sh |
-| Bugsink 路径无鉴权 | 路径里带 `BUGSINK_BRIDGE_TOKEN`（creds 机制生成，重装不变） | 集群内任何 Pod 都能访问这个 Service，token 至少挡住误打 |
+安装器先从 `$STATE_DIR/creds/ntfy.env` 读取默认值，再保留显式环境值（包括显式空值）。core/ticket/test 必须非空且彼此不同，否则 readiness=503、发送拒绝，安装器在修改 Secret 前退出。凭据文件保留原有内容，追加 shell 安全转义后的当前五个字段，权限 0600；与 Gatus 共用时不能删掉未知字段。现有 bridge Secret 存在而本地 Bugsink 路径 token 缺失时也退出，避免意外改坏已有 webhook。不得在日志/对话里输出 token/topic。
 
-## 4. 暴露方式
+部署入口仍是 `components/alert-bridge/install.sh`，但生产执行属于单独授权动作。本地测试不调用安装器。
 
-- 集群内：`alert-bridge.observability.svc.cluster.local:9099/alerts`（Alertmanager）、`:9199/bugsink/<token>`（Bugsink）
-- 不暴露到宿主网。
+## 持久性、故障与恢复
 
-## 5. 验证
+Manifest 新增 `${SC_NAME}` 的 1 GiB ReadWriteOnce PVC `alert-bridge-state`，挂到 `/state`，UID/GID/fsGroup=1000，Deployment `replicas=1`、`strategy=Recreate`。旧新进程不得同时使用该文件；不是多副本协议。脚本 SHA 注解继续驱动滚动。
+
+状态使用单进程线程锁 + 临时文件 fsync + 原子 replace + 目录 fsync。**只有 ntfy 成功后才提交**；失败返回 502，AM 下次重试。多个 class 之一失败时已成功 class 的状态保留，重试不会重发成功的 class。关闭的状态保留 30 天，在下一次成功提交时清理；active 组保留以支持迟到恢复。
+
+- **首次部署空 PVC、丢失 PVC、修改 groupKey/receiver/topic 会立即重新通知当前 firing 组。** 切换前应安排维护窗口或短期明确 silence，不能假设新状态自动继承 AM 的历史。
+- 发送成功后进程在持久提交前崩溃仍可能重发一次：网络发布与本地文件不能形成分布式原子事务，语义为 at-least-once，不保证 exactly-once。
+- 损坏、无法读取/写入的状态使进程启动失败，不丢弃后空状态启动。出现此类故障先保留 PVC/证据，由运维决定恢复或重置；重置可能重发。
+- `/healthz`：缺 URL/core/ticket/test 配置或没有初始化 engine 时 **503**，成功时 200；不实际向 ntfy 发布，因此不是端到端送达证明。
+- `/livez`：进程 200，仅供 liveness，避免凭据故障引起无意义重启。readiness 使用 `/healthz`。
+- 请求 JSON/schema/Content-Length 非法返回 400；过大返回 413；发送或持久化失败返回 502。异常日志仅记录 exception 类型，不打印 URL、token 或异常内容。
+
+正文最多 6 行、UTF-8 不超过 3000 bytes，标题示例 `[故障][关注] 服务或规则 · cluster` / `[故障][待办] ...`。恢复使用 `[恢复]` 和明确恢复说明，不照抄故障 summary/description。HTTPS dashboard 可作为 Click，拒绝 userinfo/control characters/非 HTTPS。page 首发 priority=4，ticket=2、test=1、恢复=2；page 是「关注」而非要求实时操作。发布不跟随 HTTP 重定向，避免带凭据跳到另一地址；2xx 还必须解析出 JSON `event=message` 才提交成功状态。
+
+## 指标契约
+
+`GET /metrics` 在 9099 端口暴露 Prometheus 文本格式，由 OTel Collector 抓取后写入 VictoriaMetrics。
+
+| 指标 | 类型与含义 |
+|---|---|
+| `alert_bridge_notifications_total{notification_class,result,reason}` | counter。`page/ticket/test` 与固定结果/原因组合在启动时导出零值，共 18 条 series；避免首个事件之前没有基线。`sent` 为 ntfy 已接受发布，`failed` 为发布异常，`suppressed` 为状态机抑制。 |
+| `alert_bridge_state_entries{active}` | gauge。当前持久状态中的 active / closed 组数量，不是待发送队列长度。 |
+
+指标只覆盖 Alertmanager webhook 路径，不覆盖 Gatus、宿主 watchdog、证书任务或 Bugsink 直推。`sent` **不证明手机送达**。计数器随进程重启归零，`rate` / `increase` 能处理已观察到的重置，但首次抓取前的事件、重启间隙和接入前历史仍可能漏计；不能作为消息审计账本。退避状态独立保存在 PVC，不因计数器归零而重置。
+
+Grafana 的 `ntfy-alerting-overview` 面板显示发布、失败与抑制，规则仍由 vmalert 管理。三条 bridge 规则的排查入口随通知链接到该面板；同一发布链路故障时，它们也可能无法送达，不能代替独立外部 dead-man。
+
+## 本地验证（无真实通知）
 
 ```bash
-NTFY_URL=https://ntfy.apikv.com NTFY_TOPIC=<topic> NTFY_TOKEN=<token> bash components/alert-bridge/install.sh
-kubectl -n observability rollout status deploy/alert-bridge
-kubectl -n observability exec deploy/alert-bridge -- python3 -c \
-  "import urllib.request;print(urllib.request.urlopen('http://127.0.0.1:9099/healthz').read())"   # {"ok": true, "ntfy": true}
-# 直接给桥打一条(不经 Alertmanager), 手机应收到 [FIRING] BridgeTest
-kubectl -n observability exec deploy/alert-bridge -- python3 -c "
-import json,urllib.request
-b=json.dumps({'status':'firing','commonLabels':{'alertname':'BridgeTest','severity':'warning'},'commonAnnotations':{'summary':'桥直连测试'},'alerts':[{'status':'firing','labels':{'alertname':'BridgeTest'},'annotations':{'summary':'桥直连测试'}}]}).encode()
-print(urllib.request.urlopen(urllib.request.Request('http://127.0.0.1:9099/alerts',data=b,headers={'Content-Type':'application/json'})).status)"
-kubectl -n observability logs deploy/alert-bridge --tail=3      # 每条告警一行 JSON
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s components/alert-bridge/tests -v
+bash -n components/alert-bridge/install.sh
+git diff --check -- components/alert-bridge
 ```
 
-## 6. 踩坑
+测试使用假 sender/clock、临时 JSON 状态和 loopback HTTP server，覆盖：持久退避与封顶、进程重建、发送失败重试、partial-class 重试、混合恢复、新 startsAt、旧 webhook、损坏状态、Unicode 上限、显式 topic、unknown severity、JSON 发布、非法 Content-Length、缺配置 fail closed、import 不启动服务器。真实 ntfy 发布只能在授权的隔离 test topic 做；不能复用 core 做测试。
 
-- 凭据只在 `$STATE_DIR/creds/ntfy.env` 与 Secret 里；gatus 组件读同一个文件，两边只需配一次。
-- **凭据丢了怎么找回**（2026-09-24 集群重建后两边 Secret 全空、本机 creds 也没有，告警静默丢了一天多）：
-  ntfy 是自托管的，在 node1（容器 `ntfy-ntfy-1`，部署物在 sibling 仓 `cat/deploy/ntfy/`），`deny-all`，
-  所以 token 丢了不用问人，直接去服务端取：
-  `ssh node1 'docker exec ntfy-ntfy-1 ntfy user list'` 找有告警 topic 写权限的用户（`infra-publisher`，topic 为
-  `infra-alerts-<hex>`，手机用户 `cat-mobile` 只读订阅它），`ntfy token list infra-publisher` 取 token
-  （复用标签 `infrastructure` 那枚，不要另建）。写回 `$STATE_DIR/creds/ntfy.env` 后重跑本组件与 gatus 的 install.sh。
-  校验：带 token 读该 topic 的 `/auth` 应返回 403（只写用户），无效 token 返回 401。
-- **本机没有 creds 时不要直接跑 install.sh**：它会用空值覆盖 Secret `alert-bridge-ntfy`，并因 `get_cred` 找不到
-  `bugsink-bridge-token` 而**新生成一枚**，Bugsink webhook 路径随之失效。先按上一条补齐 `ntfy.env`，
-  再从现网 Secret 把 `BUGSINK_BRIDGE_TOKEN` 写到 `$STATE_DIR/creds/bugsink-bridge-token`（chmod 600）。
-- 桥挂了 Alertmanager 会重试到桥恢复；桥收到但 ntfy 4xx/5xx 时回 502，同样会被重试——看到重复推送先查 ntfy 是否慢。
-- Bugsink 的 webhook 白名单（`ALERTS_WEBHOOK_ALLOW_LIST`）填的是桥的 Service FQDN，改命名空间要同步改 bugsink 组件。
+### 上线/回滚核对
+
+1. 先确认三个 topic 的写权限与手机订阅策略，Secret 包含三 topic；不能以 Secret 存在替代配置有效性。
+2. 在隔离环境应用 PVC/Deployment/脚本，再验证 Ready、持久卷写权限与离线 fixture；部署过程会短暂没有 bridge，AM 应保留重试。
+3. 再由维护者更新 AM grouping 与 5m repeat，并分阶段恢复业务通知。验证只读 AM status、bridge health 与持续的 ntfy 结果，不仅看 CM 内容。
+4. 回滚脚本/Deployment 前保留 PVC。旧脚本不会理解新状态，也不会遵守退避；回滚前评估重复量。不要删除状态卷来「修复」通知。
+
+本目录不包含真实凭据。Healthchecks/Gatus 的独立旁路不能因为 bridge 分流统一而移除。

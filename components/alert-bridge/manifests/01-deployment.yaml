@@ -20,6 +20,20 @@ spec:
       port: 9199
       targetPort: 9199
 ---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: alert-bridge-state
+  namespace: ${NAMESPACE}
+  labels:
+    app.kubernetes.io/name: alert-bridge
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: ${SC_NAME}
+  resources:
+    requests:
+      storage: 1Gi
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -29,6 +43,9 @@ metadata:
     app.kubernetes.io/name: alert-bridge
 spec:
   replicas: 1
+  # Atomic JSON state is owned by one process; never overlap old/new publishers.
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app.kubernetes.io/name: alert-bridge
@@ -44,6 +61,8 @@ spec:
         runAsNonRoot: true
         runAsUser: 1000
         runAsGroup: 1000
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
         seccompProfile:
           type: RuntimeDefault
       containers:
@@ -55,6 +74,8 @@ spec:
           env:
             - name: PYTHONDONTWRITEBYTECODE
               value: "1"
+            - name: BRIDGE_STATE_FILE
+              value: /state/notifications.json
             - name: ALERTMANAGER_LISTEN
               value: "0.0.0.0:9099"
             - name: BUGSINK_BRIDGE_LISTEN
@@ -69,7 +90,7 @@ spec:
             httpGet: { path: /healthz, port: 9099 }
             periodSeconds: 10
           livenessProbe:
-            httpGet: { path: /healthz, port: 9099 }
+            httpGet: { path: /livez, port: 9099 }
             periodSeconds: 30
           securityContext:
             allowPrivilegeEscalation: false
@@ -77,6 +98,8 @@ spec:
             capabilities:
               drop: ["ALL"]
           volumeMounts:
+            - name: state
+              mountPath: /state
             - name: script
               mountPath: /app
               readOnly: true
@@ -84,6 +107,9 @@ spec:
             requests: { cpu: 10m, memory: 24Mi }
             limits: { memory: 64Mi }
       volumes:
+        - name: state
+          persistentVolumeClaim:
+            claimName: alert-bridge-state
         - name: script
           configMap:
             name: alert-bridge-script
