@@ -57,6 +57,39 @@ groups:
           summary: 抓不到 Alertmanager 指标
           description: 连续 10 分钟没有 alertmanager_build_info。检查 otel collector 的 alertmanager 抓取 job 与 Alertmanager Pod。
 
+      - alert: AlertBridgeMetricsMissing
+        # 计数器从启动起导出零值；状态或决策指标缺失都不能当成零失败。
+        expr: 'absent(alert_bridge_state_entries) == 1 or absent(alert_bridge_notifications_total) == 1'
+        for: 10m
+        labels: { severity: warning, category: observability, notification_class: ticket }
+        annotations:
+          summary: 抓不到 alert-bridge 降噪与投递指标
+          description: 连续 10 分钟缺少状态或决策指标。检查 bridge /metrics 与 OTel Collector 的 alert-bridge scrape job；同链路故障时本告警也可能无法送达。
+          dashboard: https://grafana.apikv.com/d/ntfy-alerting-overview
+          runbook_url: https://grafana.apikv.com/d/ntfy-alerting-overview?viewPanel=13
+
+      - alert: AlertBridgePublishFailures
+        expr: 'sum(increase(alert_bridge_notifications_total{result="failed"}[10m])) > 0'
+        for: 5m
+        labels: { severity: critical, category: observability, notification_class: page }
+        annotations:
+          summary: alert-bridge 向 ntfy 发布失败
+          description: 10 分钟窗口内存在发布失败且条件持续 5 分钟，不等于连续失败 5 分钟。检查 bridge 日志、ntfy 健康和 publisher 配置；失败不推进退避，AM 会重试。不要输出 token 或删除状态 PVC。
+          dashboard: https://grafana.apikv.com/d/ntfy-alerting-overview
+          runbook_url: https://grafana.apikv.com/d/ntfy-alerting-overview?viewPanel=13
+
+      - alert: AlertBridgeNotificationFlood
+        # 20/h 是试运行噪声预算，须观察 24–48h 后校准；超限也可能来自真实事件变化。
+        # AM 的 5m webhook 刷新不是手机通知量，sent 只证明 ntfy 已接受发布。
+        expr: 'sum(increase(alert_bridge_notifications_total{result="sent",notification_class!="test"}[1h])) > 20'
+        for: 15m
+        labels: { severity: warning, category: observability, notification_class: ticket }
+        annotations:
+          summary: alert-bridge 发布量超过试运行噪声预算
+          description: 非测试主题一小时发布超过 20 条并持续 15 分钟。先区分真实事件变化与重复，再检查 groupKey 和退避状态 PVC；超限不等于去重失效，不以静音掩盖故障。
+          dashboard: https://grafana.apikv.com/d/ntfy-alerting-overview
+          runbook_url: https://grafana.apikv.com/d/ntfy-alerting-overview?viewPanel=13
+
       - alert: OTelCollectorExporterQueueHigh
         # 后端拒收或不可达时 exporter queue 会积压；当前三个后端均有 queue series，正常值为 0。
         expr: 'max by (exporter) (otelcol_exporter_queue_size / otelcol_exporter_queue_capacity) > 0.8'

@@ -34,10 +34,11 @@ groups:
           ) > 0.05
           and
           sum by (service_name, deployment_environment_name) (rate(rpc_server_duration_milliseconds_count{service_name!~"config-service|payment-service",deployment_environment_name!="dev"}[5m])) > 0.02
-        for: 5m
+        for: 10m
+        keep_firing_for: 5m
         labels: { severity: critical, category: application }
         annotations:
-          summary: '[{{ $labels.deployment_environment_name }}] {{ $labels.service_name }} 服务侧错误率 {{ $value | humanizePercentage }}（> 5%，持续 5 分钟）'
+          summary: '[{{ $labels.deployment_environment_name }}] {{ $labels.service_name }} 服务侧错误率 {{ $value | humanizePercentage }}（> 5%，持续 10 分钟）'
           description: >-
             先看 APM 盘「错误分析」区：错误码分布定位是哪类故障，「错误 by 业务 reason」看是否集中在某条业务规则；
             再按 logs_query 查日志，用 error.origin 找到抛错的数据层那一行，用 trace_id 跳 VictoriaTraces 看调用链。
@@ -93,7 +94,8 @@ groups:
           max by (service_name, deployment_environment_name, component) (
             connectkit_config_stale{deployment_environment_name!="dev"}
           ) == 1
-        for: 2m
+        for: 10m
+        keep_firing_for: 5m
         labels: { severity: warning, category: application }
         annotations:
           summary: '[{{ $labels.deployment_environment_name }}] {{ $labels.service_name }} 的 {{ $labels.component }} 没有应用最新配置'

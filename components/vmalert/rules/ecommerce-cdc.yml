@@ -41,11 +41,12 @@ groups:
 
       # ---- 2026-09-23 起来自 Connect JMX exporter(kafka/cdc/connect-metrics-configmap.yaml) 的直接信号 ----
       # 背景: 同日 broker 滚动后 Debezium task FAILED 而 connector 仍 RUNNING, 上面 CDCSlotInactive 要等槽失活 10 分钟
-      # 才响。这两条直接看 task 状态和 Debezium 与源库的连接, 2 分钟内就响; 也覆盖「task 活着但没连上源」。
+      # 才响。这两条直接看 task 状态和 Debezium 与源库的连接, 持续 10 分钟才通知，允许短时自愈；也覆盖「task 活着但没连上源」。
       - alert: CDCConnectTaskNotRunning
         # 每个 (connector,task) 的 status 标签只有一个取值为 1; 不是 running 就告警。
         expr: 'kafka_connect_connector_task_status{connector=~"ecommerce-.*", status!="running"} == 1'
-        for: 2m
+        for: 10m
+        keep_firing_for: 5m
         labels: { severity: critical, category: cdc }
         annotations:
           summary: 'Connect task {{ $labels.connector }}/{{ $labels.task }} 状态 {{ $labels.status }}'
@@ -55,7 +56,8 @@ groups:
       - alert: CDCDebeziumDisconnected
         # Debezium streaming 上下文与 PG 复制流断开(Connected=0)。task 可能仍 RUNNING(在重试), 但事件在积压。
         expr: 'debezium_metrics_connected{context="streaming"} == 0'
-        for: 3m
+        for: 10m
+        keep_firing_for: 5m
         labels: { severity: critical, category: cdc }
         annotations:
           summary: 'Debezium {{ $labels.server }} 与 PG 复制流断开'
@@ -63,7 +65,8 @@ groups:
       - alert: CDCDebeziumLagHigh
         # 位点落后源库超过 5 分钟。-1 表示空闲无事件(不告警), 所以要 > 0 过滤。
         expr: 'debezium_metrics_millisecondsbehindsource{context="streaming"} > 300000'
-        for: 5m
+        for: 10m
+        keep_firing_for: 5m
         labels: { severity: warning, category: cdc }
         annotations:
           summary: 'Debezium {{ $labels.server }} 落后源库 {{ $value | humanizeDuration }}'
@@ -96,7 +99,8 @@ groups:
       - alert: CDCReconcileStale
         # CronJob 没跑/推不进 VM, 上面那条会静默变绿。
         expr: 'absent_over_time(cdc_es_reconcile_run_ok[20m]) == 1 or max_over_time(cdc_es_reconcile_run_ok[20m]) == 0'
-        for: 5m
+        for: 10m
+        keep_firing_for: 5m
         labels: { severity: warning, category: cdc }
         annotations:
           summary: 'CDC 对账 CronJob 20 分钟无成功运行'

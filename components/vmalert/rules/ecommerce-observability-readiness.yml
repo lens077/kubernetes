@@ -3,21 +3,24 @@ groups:
     interval: 15s
     rules:
       - alert: VectorDaemonSetReadyBelowExpected
-        expr: '(max(k8s_daemonset_ready_nodes{k8s_namespace_name="logging",k8s_daemonset_name="vector"}) or vector(0)) < 3'
-        for: 2m
+        # 对照对象自身 desired；数据整体缺失由 K8sClusterMetricsMissing 处理。
+        expr: 'k8s_daemonset_ready_nodes{k8s_namespace_name="logging",k8s_daemonset_name="vector"} < on(k8s_daemonset_uid) k8s_daemonset_desired_scheduled_nodes{k8s_namespace_name="logging",k8s_daemonset_name="vector"}'
+        for: 10m
+        keep_firing_for: 5m
         labels:
           severity: critical
           category: observability
         annotations:
-          summary: Vector DaemonSet Ready 节点数低于 3
-          description: Vector 连续 2 分钟少于 3 个 Ready 节点，或 k8s_cluster 指标已缺失。检查 logging/vector Pod、节点状态与日志写入链路。
+          summary: Vector DaemonSet Ready 节点数低于期望值
+          description: Vector Ready 节点数连续 10 分钟少于该 DaemonSet 的 desired。检查 logging/vector Pod、节点状态与日志写入链路；不将整组指标缺失视作零副本。
 
       - alert: OTelClusterCollectorReadyBelowExpected
-        expr: '(max(k8s_deployment_available{k8s_namespace_name="opentelemetry",k8s_deployment_name="otel-opentelemetry-collector"}) or vector(0)) < 1'
-        for: 2m
+        expr: 'k8s_deployment_available{k8s_namespace_name="opentelemetry",k8s_deployment_name="otel-opentelemetry-collector"} < 1'
+        for: 10m
+        keep_firing_for: 5m
         labels:
           severity: critical
           category: observability
         annotations:
           summary: 集群内 OTel Collector Ready 副本数低于 1
-          description: OTel Collector 连续 2 分钟没有可用副本，或 k8s_cluster 指标已缺失。Kubernetes 对象指标与 Event 采集链路已经中断。
+          description: OTel Collector 连续 10 分钟没有可用副本。若对象指标也消失，则由 K8sClusterMetricsMissing 与独立 Gatus 探针负责发现，避免无数据生成多条零副本告警。

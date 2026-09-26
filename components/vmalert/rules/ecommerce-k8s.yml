@@ -18,10 +18,10 @@ groups:
     interval: 15s
     rules:
       - alert: K8sPodRestartStorm
-        # 稳态 CrashLoopBackOff 退避上限 5 分钟 = 15 分钟内约 3 次，故阈值取 >2；
-        # 正常发布的单次重启为 1，不触发。
-        expr: 'sum by (k8s_namespace_name,k8s_pod_name) (increase(k8s_container_restarts[15m])) > 2'
-        for: 5m
+        # 只在重启增长且当前仍未就绪时计时；窗口内已自愈的重启不通知。
+        expr: '(sum by (k8s_namespace_name,k8s_pod_name) (increase(k8s_container_restarts[15m])) > 2) and on(k8s_namespace_name,k8s_pod_name) (min by (k8s_namespace_name,k8s_pod_name) (k8s_container_ready) == 0) and on(k8s_namespace_name,k8s_pod_name) (k8s_pod_phase == 2)'
+        for: 10m
+        keep_firing_for: 5m
         labels: { severity: critical, category: kubernetes }
         annotations:
           summary: 'Pod 重启风暴 {{ $labels.k8s_namespace_name }}/{{ $labels.k8s_pod_name }}（15 分钟 {{ $value | printf "%.0f" }} 次）'
@@ -37,13 +37,24 @@ groups:
           summary: '容器持续未就绪 {{ $labels.k8s_namespace_name }}/{{ $labels.k8s_pod_name }}'
           description: 容器已运行但就绪探针连续 15 分钟未通过。进程活着不等于在干活——重点查它依赖的下游是否可达。
 
-      - alert: K8sDeploymentDegraded
-        expr: 'k8s_deployment_available < on(k8s_deployment_uid) k8s_deployment_desired'
+      - alert: K8sDeploymentUnavailable
+        # desired=0 是明确停用，不报警；完全没有可用副本与部分冗余下降分级。
+        expr: '(k8s_deployment_available == 0) and on(k8s_deployment_uid) (k8s_deployment_desired > 0)'
         for: 10m
+        keep_firing_for: 5m
+        labels: { severity: critical, category: kubernetes }
+        annotations:
+          summary: 'Deployment 持续无可用副本 {{ $labels.k8s_namespace_name }}/{{ $labels.k8s_deployment_name }}'
+          description: 期望运行的服务连续 10 分钟没有可用副本。先查看 Deployment 的 rollout 状态及 Pod describe，区分发布失败与依赖故障。
+
+      - alert: K8sDeploymentDegraded
+        expr: '(k8s_deployment_available > 0) and on(k8s_deployment_uid) (k8s_deployment_available < on(k8s_deployment_uid) k8s_deployment_desired)'
+        for: 10m
+        keep_firing_for: 5m
         labels: { severity: warning, category: kubernetes }
         annotations:
           summary: 'Deployment 副本不足 {{ $labels.k8s_namespace_name }}/{{ $labels.k8s_deployment_name }}'
-          description: 可用副本少于期望副本超过 10 分钟。本集群多数服务单副本且无 PDB，出现此告警通常意味着该服务已完全不可用。
+          description: 仍有可用副本，但持续 10 分钟少于期望值。作为容量或冗余待办检查 rollout、调度与资源；完全不可用由 K8sDeploymentUnavailable 通知。
 
       - alert: K8sFailedPodsAccumulating
         # k8s_pod_phase 是枚举 gauge；现场故障注入确认 Failed=4，而不是 phase label。
@@ -56,7 +67,8 @@ groups:
 
       - alert: K8sNodeNotReady
         expr: 'k8s_node_condition_ready == 0'
-        for: 5m
+        for: 10m
+        keep_firing_for: 5m
         labels: { severity: critical, category: kubernetes }
         annotations:
           summary: '节点 NotReady {{ $labels.k8s_node_name }}'

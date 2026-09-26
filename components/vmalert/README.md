@@ -14,7 +14,7 @@
 chart `victoria-metrics-alert` 0.47.0（app v1.150.0）
 
 - `-datasource.url` 读、`-remoteWrite.url` 写回、`-remoteRead.url` 重启后恢复 `for` 状态，三者都指向 VM。
-- `-rule` 支持通配符与目录；规则文件改动后自动热加载（默认 `-rule.reloadInterval`，chart 用 ConfigMap 挂载）。
+- `-rule` 支持通配符与目录；当前安装器等 ConfigMap 投影后显式 POST `/-/reload`。仅修改 ConfigMap 不证明进程已加载，必须检查 `/api/v1/rules`。
 - `-external.url` 让通知里的链接指向可访问的地址；`-external.label` 给所有告警加集群标签。
 
 ## 3. 本集群取舍
@@ -40,6 +40,27 @@ chart `victoria-metrics-alert` 0.47.0（app v1.150.0）
 （可直接粘进 VictoriaLogs 的 LogsQL）。只有 summary 的告警，值班者得自己去找服务、对时间窗，定位慢在这一步。
 主机名用 Grafana 的 `root_url`（`components/grafana/values.yaml`，公网 `grafana.apikv.com`），**不要**用 `{{ $externalLabels.cluster }}` 拼——那是内网域 `dev.test`，手机点开解析不了（2026-09-24 第一版就这么错过）。改规则后先在 vmalert Pod 里跑
 `/vmalert-prod -dryRun -rule=<文件>`：它会同时解析 MetricsQL 和模板，坏一处就 rc≠0。
+
+## 2026-09-26 非实时通知策略
+
+- 可自愈的主机/服务不可用、CDC 连接/任务与错误率至少持续 10m 才 firing；对应规则 `keep_firing_for: 5m` 延迟恢复，减少闪断。
+- Pod 重启必须同时未就绪且 phase=Running；已恢复或 Completed 的 Job 不因为重启窗口残留发通知。
+- Deployment 全部不可用（desired>0、available=0）是 critical，部分可用副本不足是 warning。
+- Vector DaemonSet 与自身 desired 比较，不写死 3；采集缺失另报，不用无数据生成多条零副本告警。
+- 备份/安全规则保留，慢性 `AlertFiringTooLong` 进入低优先级待办并退避，不再高优先级重复打扰。
+- 手机优先级与分主题在 bridge 中处理，规则数量和评估频率不是推送频率。
+
+## bridge 指标规则与阈值
+
+`rules/observability-pipeline.yml` 包含三条 bridge 规则，继续走现有 Alertmanager → bridge 分流，不另建 Grafana-managed 副本。
+
+| 规则 | 条件 | 首先检查 |
+|---|---|---|
+| `AlertBridgeMetricsMissing` | 状态或决策指标缺失持续 10m；容忍短时重启及采集延迟 | bridge Ready、`/metrics`、OTel 的 `alert-bridge` 抓取。 |
+| `AlertBridgePublishFailures` | 10m 窗口有失败且条件持续 5m | bridge 发布失败与 AM 失败计数、ntfy 健康和 publisher 配置。滑动窗口保留失败，不等于连续失败 5m；恢复后可能仍需等待窗口清空。 |
+| `AlertBridgeNotificationFlood` | 非测试发布超过 20/h 且持续 15m | 先区分真实事件变化与重复，再核对 groupKey、退避状态和 PVC。20/h 是试运行噪声预算，不是故障定论，需观察 24–48h 后校准。 |
+
+三条规则均带 `dashboard` 和 `runbook_url`，指向公网 Grafana 的 `ntfy-alerting-overview` 及其排查说明面板。同链路故障可能阻断这些通知，外部独立 dead-man 仍须另行建设。发布失败不要通过删除状态 PVC 处理，也不要把 token 输出到日志。
 
 ## 4. 暴露方式
 

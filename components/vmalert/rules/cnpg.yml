@@ -26,16 +26,19 @@ groups:
       - alert: PostgresDown
         # Pigsty: PostgresDown / PgExporterDown。cnpg_collector_up 由实例 Pod 自带的 exporter 上报。
         expr: 'cnpg_collector_up == 0'
-        for: 1m
+        for: 10m
+        keep_firing_for: 5m
         labels: { severity: critical, category: database }
         annotations:
           summary: 'PostgreSQL 实例不可用 {{ $labels.pod }}'
-          description: 实例进程未就绪超过 1 分钟。先看 kubectl -n postgresql get cluster pg-main 与 describe pod；单实例集群此时业务写入已中断。
+          description: 实例持续不可用超过 10 分钟。先看 kubectl -n postgresql get cluster pg-main 与 describe pod；核对数据库连接及业务影响。
 
       - alert: PostgresRestarted
         # Pigsty: PostgresRestart。postmaster 启动时间在 10 分钟内变化 = 发生过重启。
-        expr: 'changes(cnpg_pg_postmaster_start_time[10m]) > 0'
-        for: 1m
+        # 已恢复可用的正常重启不通知；持续不可用由 PostgresDown 核心告警覆盖。
+        expr: '(changes(cnpg_pg_postmaster_start_time[10m]) > 0) and on(pod) (cnpg_collector_up == 0)'
+        for: 10m
+        keep_firing_for: 5m
         labels: { severity: warning, category: database }
         annotations:
           summary: 'PostgreSQL 实例最近重启 {{ $labels.pod }}'
@@ -44,7 +47,8 @@ groups:
       - alert: PostgresReplicationLag
         # Pigsty: PostgresReplicationLag(阈值 30s)。单实例时该指标不存在, 规则自然不触发。
         expr: 'cnpg_pg_replication_lag > 30'
-        for: 5m
+        for: 10m
+        keep_firing_for: 5m
         labels: { severity: warning, category: database }
         annotations:
           summary: '从库复制延迟 {{ $value | printf "%.0f" }}s {{ $labels.pod }}'
@@ -62,7 +66,8 @@ groups:
       - alert: PostgresConnUsageHigh
         # Pigsty: PostgresConnUsageHigh(80%)。max_connections 来自 cnpg_pg_settings_setting{name="max_connections"}。
         expr: 'sum by (pod) (cnpg_backends_total) / on (pod) cnpg_pg_settings_setting{name="max_connections"} > 0.8'
-        for: 5m
+        for: 10m
+        keep_firing_for: 5m
         labels: { severity: warning, category: database }
         annotations:
           summary: '连接数占用超过 80% {{ $labels.pod }}'
@@ -71,7 +76,8 @@ groups:
       - alert: PostgresIdleInTransaction
         # Pigsty: PostgresIdleInXact。cnpg_backends_max_tx_duration_seconds 按 state 分组, 取 idle in transaction。
         expr: 'max by (pod) (cnpg_backends_max_tx_duration_seconds{state="idle in transaction"}) > 300'
-        for: 5m
+        for: 10m
+        keep_firing_for: 5m
         labels: { severity: warning, category: database }
         annotations:
           summary: '存在超过 5 分钟的 idle-in-transaction 会话 {{ $labels.pod }}'
