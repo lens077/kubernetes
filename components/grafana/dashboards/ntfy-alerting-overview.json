@@ -1,0 +1,1253 @@
+{
+  "uid": "ntfy-alerting-overview",
+  "title": "ntfy 告警链路与降噪",
+  "id": null,
+  "version": 3,
+  "schemaVersion": 42,
+  "editable": true,
+  "description": "实时问题工作台：直接显示规则说明、对象、条件持续时间和证据入口；历史图只表示指标，不保存历史告警正文。",
+  "tags": [
+    "infrastructure",
+    "alerting",
+    "evidence"
+  ],
+  "timezone": "browser",
+  "refresh": "30s",
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "annotations": {
+    "list": []
+  },
+  "panels": [
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "排除不推送的 Watchdog。仅在 Watchdog 状态存在时把空结果显示为零；评估链缺失时显示无数据。",
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "无数据",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 4,
+        "h": 3
+      },
+      "id": 1,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "(sum(ALERTS{alertstate=\"firing\",alertname!=\"Watchdog\"}) or (0 * max(ALERTS{alertname=\"Watchdog\",alertstate=\"firing\"}))) and on() max(ALERTS{alertname=\"Watchdog\",alertstate=\"firing\"})",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "title": "触发实例（含提醒）",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "等待 for 持续时间的告警。评估链缺失时不以绿色零替代无数据。",
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "无数据",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "x": 4,
+        "y": 0,
+        "w": 4,
+        "h": 3
+      },
+      "id": 2,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "(sum(ALERTS{alertstate=\"pending\"}) or (0 * max(ALERTS{alertname=\"Watchdog\",alertstate=\"firing\"}))) and on() max(ALERTS{alertname=\"Watchdog\",alertstate=\"firing\"})",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "title": "当前 pending 告警",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "同时检查 VM 中的 Watchdog 和 Gatus 对 Alertmanager 中 Watchdog 的探测。只证明评估及 vmalert → Alertmanager 链路；不证明 bridge 或手机送达。缺失任一信号按异常显示。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [
+            {
+              "options": {
+                "0": {
+                  "color": "red",
+                  "text": "缺失或失败"
+                },
+                "1": {
+                  "color": "green",
+                  "text": "正常"
+                }
+              },
+              "type": "value"
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 0,
+        "w": 4,
+        "h": 3
+      },
+      "id": 3,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "(max(ALERTS{alertname=\"Watchdog\",alertstate=\"firing\"}) or vector(0)) * (min(gatus_results_endpoint_success{key=\"observability-pipeline_alert-pipeline-watchdog\"}) or vector(0))",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "title": "评估 → AM Watchdog",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "所选范围内 ntfy 已接受的 bridge page/ticket 发布，不包含 test 或其他直推来源，不代表手机收到。计数从指标接入后开始，重启边界可能漏计；无当前 bridge 指标时显示无数据。",
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "无数据",
+          "decimals": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 4,
+        "h": 3
+      },
+      "id": 4,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "sum(increase(alert_bridge_notifications_total{result=\"sent\",notification_class!=\"test\"}[$__range])) and on() sum(alert_bridge_state_entries)",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "title": "bridge 已发布（范围）",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "各端点最近一次探测结果的平均值，不是累计成功计数之比。短时失败是否通知由 Gatus 阈值决定；端点总数见下方覆盖卡片。",
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "无数据",
+          "color": {
+            "mode": "thresholds"
+          },
+          "max": 1,
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 0.95
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          },
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 0,
+        "w": 4,
+        "h": 3
+      },
+      "id": 5,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "avg(min by (key) (gatus_results_endpoint_success))",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Gatus 当前成功率",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "最近 10 分钟 bridge 发布失败；失败不推进持久退避状态。仅在 bridge 指标存在时展示统计，无数据不代表零失败。",
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "无数据",
+          "decimals": 0,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "x": 20,
+        "y": 0,
+        "w": 4,
+        "h": 3
+      },
+      "id": 6,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "sum(increase(alert_bridge_notifications_total{result=\"failed\"}[10m])) and on() sum(alert_bridge_state_entries)",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "title": "bridge 发布失败（10m）",
+      "type": "stat"
+    },
+    {
+      "id": 9,
+      "title": "当前问题 · 点击摘要看详情，点击证据直达对象",
+      "type": "table",
+      "gridPos": {
+        "x": 0,
+        "y": 3,
+        "w": 24,
+        "h": 12
+      },
+      "description": "实时读取 vmalert annotations 与对象标签。条件持续时间从 activeAt 起算，包含 pending 等待；持续提醒不是独立故障。",
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "ds-alert-evidence"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "ds-alert-evidence"
+          },
+          "type": "json",
+          "source": "url",
+          "format": "table",
+          "parser": "jq-backend",
+          "url": "http://vmalert.observability.svc.cluster.local:8880/api/v1/alerts",
+          "url_options": {
+            "method": "GET"
+          },
+          "root_selector": "# Read-only presentation of vmalert /api/v1/alerts. Do not infer a root cause.\ndef fallback($value; $other): if $value == null or $value == \"\" then $other else $value end;\ndef row:\n  . as $a | (.labels // {}) as $l |\n  fallback($l.exported_alertname; $a.name) as $origin |\n  fallback($l.exported_alertgroup; $l.alertgroup) as $group |\n  fallback($l.k8s_namespace_name; fallback($l.namespace; \"\")) as $ns |\n  fallback($l.k8s_pod_name; fallback($l.pod; \"\")) as $alert_pod |\n  fallback($l.k8s_node_name; fallback($l.node; \"\")) as $alert_node |\n  (if $group == \"cnpg\" then \"infra-cnpg\"\n   elif $group == \"ecommerce-cdc\" then \"infra-cdc\"\n   elif $group == \"ecommerce-k8s\" and $a.name != \"AlertFiringTooLong\" then \"infra-kubernetes\"\n   elif $group == \"ecommerce-security\" or $group == \"observability-pipeline\" or $group == \"ecommerce-observability-readiness\" then \"infra-observability\"\n   elif $ns != \"\" then \"infra-kubernetes\" else \"infra-overview\" end) as $target |\n  (if $target == \"infra-cnpg\" then \"数据库 / 备份\"\n   elif $target == \"infra-cdc\" then \"CDC / 位点\"\n   elif $target == \"infra-kubernetes\" then \"工作负载\"\n   elif $target == \"infra-observability\" then \"采集 / 网络\" else \"基础设施\" end) as $destination |\n  (try ($a.activeAt | sub(\"\\\\.[0-9]+Z$\"; \"Z\") | fromdateiso8601) catch null) as $started |\n  ([$l.cnpg_cluster, $ns, $alert_pod, $l.k8s_container_name, $l.k8s_deployment_name,\n    $alert_node, $l.connector, $l.slot_name, $l.service_name, $l.cdc_table, $l.exporter]\n    | map(select(. != null and . != \"\")) | unique | join(\" · \")) as $objects |\n  (if $ns != \"\" then \"kubernetes.pod_namespace:=\" + ($ns | tojson) +\n     (if $alert_pod != \"\" then \" AND kubernetes.pod_name:=\" + ($alert_pod | tojson) else \"\" end)\n   else \"\" end) as $logs |\n  {\n    key: ($a.group_id + \":\" + $a.id),\n    kind: (if $a.name == \"AlertFiringTooLong\" then \"reminder\" else \"problem\" end),\n    kind_label: (if $a.name == \"AlertFiringTooLong\" then \"持续提醒\" else \"原始告警\" end),\n    state: $a.state,\n    severity: fallback($l.severity; \"unknown\"),\n    summary: fallback($a.annotations.summary; $a.name),\n    description: fallback($a.annotations.description; \"规则未提供排查说明；查看表达式与实际标签。\"),\n    rule: $a.name,\n    original_rule: $origin,\n    resource: fallback($objects; fallback($l.cluster; \"标签未提供具体对象\")),\n    cluster: fallback($l.cluster; \"\"),\n    namespace: $ns, pod: $alert_pod, node: $alert_node,\n    cnpg_cluster: fallback($l.cnpg_cluster; \"\"),\n    connector: fallback($l.connector; \"\"),\n    active_at: $a.activeAt,\n    condition_seconds: (if $started == null then null else ([0, now - $started] | max) end),\n    value: $a.value,\n    expression: $a.expression,\n    restoring: ($a.restored // false),\n    stabilizing: ($a.stabilizing // false),\n    labels: $l,\n    detail_url: (\"/d/alert-instance-detail?var-instance=\" + (($a.group_id + \":\" + $a.id) | @uri)),\n    evidence: $destination,\n    evidence_url: (\"/d/\" + $target +\n      \"?var-cnpg_cluster=\" + (fallback($l.cnpg_cluster; \".*\") | @uri) +\n      \"&var-namespace=\" + (fallback($ns; \".*\") | @uri) +\n      \"&var-pod=\" + (fallback($alert_pod; \".*\") | @uri) +\n      \"&var-node=\" + (fallback($alert_node; \".*\") | @uri) +\n      \"&var-connector=\" + (fallback($l.connector; \".*\") | @uri) +\n      \"&var-rule=\" + ($origin | @uri)),\n    logs: (if $logs == \"\" then \"先在证据页选择对象\" else \"查看对象日志\" end),\n    logs_url: (if $logs == \"\" then null else\n      \"/explore?schemaVersion=1&panes=\" + ({\n        logs: {datasource:\"ds-vlogs\", queries:[{refId:\"A\", datasource:{type:\"victoriametrics-logs-datasource\",uid:\"ds-vlogs\"},expr:$logs,queryType:\"instant\"}],\n          range:{from:(if $started == null then \"now-6h\" else (($started-300)*1000|floor|tostring) end),to:\"now\"}}\n      } | tojson | @uri) end)\n  } | .logs_url = (.logs_url // .evidence_url);\nif .status != \"success\" or (.data.alerts | type) != \"array\" then\n  error(\"vmalert alert API did not return a successful alerts array\")\nelse\n  [.data.alerts[] | select(.name != \"Watchdog\") | row]\n  | sort_by([if .severity == \"critical\" then 0 else 1 end, .kind, .active_at, .key])\nend\n",
+          "columns": [
+            {
+              "selector": "state",
+              "text": "state",
+              "type": "string"
+            },
+            {
+              "selector": "kind_label",
+              "text": "kind_label",
+              "type": "string"
+            },
+            {
+              "selector": "severity",
+              "text": "severity",
+              "type": "string"
+            },
+            {
+              "selector": "summary",
+              "text": "summary",
+              "type": "string"
+            },
+            {
+              "selector": "resource",
+              "text": "resource",
+              "type": "string"
+            },
+            {
+              "selector": "condition_seconds",
+              "text": "condition_seconds",
+              "type": "number"
+            },
+            {
+              "selector": "description",
+              "text": "description",
+              "type": "string"
+            },
+            {
+              "selector": "evidence",
+              "text": "evidence",
+              "type": "string"
+            },
+            {
+              "selector": "logs",
+              "text": "logs",
+              "type": "string"
+            },
+            {
+              "selector": "key",
+              "text": "key",
+              "type": "string"
+            },
+            {
+              "selector": "original_rule",
+              "text": "original_rule",
+              "type": "string"
+            },
+            {
+              "selector": "detail_url",
+              "text": "detail_url",
+              "type": "string"
+            },
+            {
+              "selector": "evidence_url",
+              "text": "evidence_url",
+              "type": "string"
+            },
+            {
+              "selector": "logs_url",
+              "text": "logs_url",
+              "type": "string"
+            }
+          ],
+          "filters": []
+        }
+      ],
+      "options": {
+        "showHeader": true,
+        "cellHeight": "auto",
+        "enablePagination": true,
+        "pageSize": 5
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "filterable": true,
+            "wrapText": true,
+            "wrapHeaderText": true,
+            "cellOptions": {
+              "type": "auto"
+            }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "state"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "状态"
+              },
+              {
+                "id": "custom.width",
+                "value": 75
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "firing": {
+                        "text": "触发中",
+                        "color": "red"
+                      },
+                      "pending": {
+                        "text": "等待确认",
+                        "color": "orange"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "kind_label"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "类型"
+              },
+              {
+                "id": "custom.width",
+                "value": 85
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "severity"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "级别"
+              },
+              {
+                "id": "custom.width",
+                "value": 65
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "critical": {
+                        "text": "严重",
+                        "color": "red"
+                      },
+                      "warning": {
+                        "text": "警告",
+                        "color": "orange"
+                      },
+                      "none": {
+                        "text": "信息",
+                        "color": "blue"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "summary"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "问题 / 点击详情"
+              },
+              {
+                "id": "custom.width",
+                "value": 260
+              },
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "${__value.raw}",
+                    "url": "${__data.fields[\"detail_url\"]:raw}&${__url_time_range}",
+                    "targetBlank": false
+                  }
+                ]
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "auto"
+                }
+              },
+              {
+                "id": "custom.wrapText",
+                "value": true
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "resource"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "影响对象"
+              },
+              {
+                "id": "custom.width",
+                "value": 180
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "condition_seconds"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "条件持续"
+              },
+              {
+                "id": "custom.width",
+                "value": 95
+              },
+              {
+                "id": "unit",
+                "value": "s"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "description"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "规则说明 / 下一步"
+              },
+              {
+                "id": "custom.width",
+                "value": 320
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "evidence"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "查看证据"
+              },
+              {
+                "id": "custom.width",
+                "value": 125
+              },
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "${__value.raw}",
+                    "url": "${__data.fields[\"evidence_url\"]:raw}&${__url_time_range}",
+                    "targetBlank": false
+                  }
+                ]
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "data-links"
+                }
+              },
+              {
+                "id": "custom.wrapText",
+                "value": true
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "logs"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "对象日志"
+              },
+              {
+                "id": "custom.width",
+                "value": 115
+              },
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "${__value.raw}",
+                    "url": "${__data.fields[\"logs_url\"]:raw}",
+                    "targetBlank": false
+                  }
+                ]
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "data-links"
+                }
+              },
+              {
+                "id": "custom.wrapText",
+                "value": true
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "key"
+            },
+            "properties": [
+              {
+                "id": "custom.hidden",
+                "value": true
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "original_rule"
+            },
+            "properties": [
+              {
+                "id": "custom.hidden",
+                "value": true
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "detail_url"
+            },
+            "properties": [
+              {
+                "id": "custom.hidden",
+                "value": true
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "evidence_url"
+            },
+            "properties": [
+              {
+                "id": "custom.hidden",
+                "value": true
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "logs_url"
+            },
+            "properties": [
+              {
+                "id": "custom.hidden",
+                "value": true
+              }
+            ]
+          }
+        ]
+      },
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "indexByName": {
+              "state": 0,
+              "kind_label": 1,
+              "severity": 2,
+              "summary": 3,
+              "resource": 4,
+              "condition_seconds": 5,
+              "description": 6,
+              "evidence": 7,
+              "logs": 8,
+              "key": 9,
+              "original_rule": 10,
+              "detail_url": 11,
+              "evidence_url": 12,
+              "logs_url": 13
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": 15,
+      "title": "怎样读这张表",
+      "type": "text",
+      "gridPos": {
+        "x": 0,
+        "y": 15,
+        "w": 24,
+        "h": 3
+      },
+      "description": "",
+      "options": {
+        "mode": "markdown",
+        "content": "**原始告警**来自实际规则，**持续提醒**关联原始告警，不表示新增独立故障。中文说明取自规则原文，是排查建议，不是自动确认的根因。\n\n用列标题筛选状态、级别和对象；**问题摘要 → 实例详情**，**查看证据 → 按对象过滤的基础设施面板**。空表表示当前无非 Watchdog 实例；若左上角有错误标记则是数据请求失败。"
+      }
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "Alertmanager 每 5 分钟刷新是预期行为；bridge 根据状态和退避决定发布。两类请求分组口径不同，不能直接计算端到端送达率；bridge 曲线排除 test。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            }
+          },
+          "unit": "ops",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 18,
+        "w": 12,
+        "h": 7
+      },
+      "id": 7,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "sum(rate(alertmanager_notifications_total{integration=\"webhook\"}[$__rate_interval]))",
+          "legendFormat": "AM webhook 尝试",
+          "refId": "A"
+        },
+        {
+          "editorMode": "code",
+          "expr": "sum(rate(alert_bridge_notifications_total{result=\"sent\",notification_class!=\"test\"}[$__rate_interval]))",
+          "legendFormat": "bridge 已发布",
+          "refId": "B"
+        },
+        {
+          "editorMode": "code",
+          "expr": "sum(rate(alert_bridge_notifications_total{result=\"suppressed\",notification_class!=\"test\"}[$__rate_interval]))",
+          "legendFormat": "bridge 已抑制",
+          "refId": "C"
+        }
+      ],
+      "title": "上游刷新与桥发布速率",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "按 page / ticket / test、处理结果和固定原因标签观察状态机。统计仅覆盖 Alertmanager webhook 路径。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            }
+          },
+          "unit": "ops",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 18,
+        "w": 12,
+        "h": 7
+      },
+      "id": 8,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "sum by (notification_class,result,reason) (rate(alert_bridge_notifications_total[$__rate_interval]))",
+          "legendFormat": "{{notification_class}} / {{result}} / {{reason}}",
+          "refId": "A"
+        }
+      ],
+      "title": "bridge 决策明细",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "当前能查询到 bridge 状态指标；不代表 ntfy 可达或手机送达。缺失时显示红色。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "color": "red",
+                  "text": "指标缺失"
+                },
+                "1": {
+                  "color": "green",
+                  "text": "指标存在"
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 25,
+        "w": 6,
+        "h": 5
+      },
+      "id": 11,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "expr": "(count(alert_bridge_state_entries) > bool 0) or vector(0)",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "title": "bridge 指标可用性",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "当前有结果的端点数量，来自实际 series 而非静态审计计数。部分端点消失仍需与 Gatus 配置核对，不能用成功率替代覆盖检查。",
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 0,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "blue",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "x": 6,
+        "y": 25,
+        "w": 6,
+        "h": 5
+      },
+      "id": 12,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "expr": "count(count by (key) (gatus_results_endpoint_success)) or vector(0)",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Gatus 有数据端点",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "仅列出最近一次探测失败的端点。恢复后移出，不以历史失败累计值判定当前故障。空表须结合当前成功率和端点数判断。",
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 25,
+        "w": 12,
+        "h": 5
+      },
+      "id": 10,
+      "options": {
+        "cellHeight": "sm",
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "min by (group,name,key) (gatus_results_endpoint_success) == 0",
+          "format": "table",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Gatus 当前失败端点",
+      "transformations": [
+        {
+          "id": "labelsToFields",
+          "options": {
+            "mode": "columns"
+          }
+        }
+      ],
+      "type": "table"
+    },
+    {
+      "gridPos": {
+        "x": 0,
+        "y": 30,
+        "w": 24,
+        "h": 9
+      },
+      "id": 13,
+      "options": {
+        "mode": "markdown",
+        "content": "### 指标边界\n- `sent` 仅表示 ntfy 已接受 bridge 的 Alertmanager 发布，不证明手机收到；宿主 watchdog、证书任务、Gatus 和 Bugsink 直推未纳入该计数。\n- 计数器在进程重启时归零，`increase` 处理可见的重置；首次抓取前、重启间隙和历史未采集事件仍可能漏计，不能作为审计账本。\n- 当前指标缺失显示无数据；短时残留受采样与查询回看窗口影响。外部独立 dead-man 尚未由本看板提供。\n\n### 三条规则的排查入口\n- **AlertBridgeMetricsMissing**：10m 无状态指标。先查 bridge Ready 与 `/metrics`，再查 OTel 的 `alert-bridge` 抓取。\n- **AlertBridgePublishFailures**：10m 窗口内出现失败且条件持续 5m。先看发布失败计数与 AM 失败计数，再查 ntfy 健康和 publisher 配置；单次失败恢复后仍可能在窗口内保留。不要打印 token，不要删除状态 PVC。\n- **AlertBridgeNotificationFlood**：非测试发布超过 20/h 且持续 15m。此值是试运行噪声预算，不证明去重失效。先区分真实事件变化与重复，再核对 groupKey、退避与 PVC；观察 24–48h 后校准。\n\n规则由 **vmalert** 管理，经现有 AM → bridge 分流。链路本身故障时，这三条规则也可能无法通过同一链路送达；排查未恢复时转交维护者，不以静音代替修复。"
+      },
+      "title": "计数边界与告警排查",
+      "type": "text"
+    }
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "label": "指标数据源",
+        "type": "datasource",
+        "query": "prometheus",
+        "regex": "/VictoriaMetrics/",
+        "refresh": 1,
+        "options": [],
+        "current": {
+          "text": "VictoriaMetrics",
+          "value": "VictoriaMetrics"
+        }
+      }
+    ]
+  },
+  "links": [
+    {
+      "title": "基础设施",
+      "url": "/d/infra-overview",
+      "type": "link",
+      "includeVars": false,
+      "keepTime": true,
+      "targetBlank": false
+    },
+    {
+      "title": "数据库 / 备份",
+      "url": "/d/infra-cnpg",
+      "type": "link",
+      "includeVars": false,
+      "keepTime": true,
+      "targetBlank": false
+    },
+    {
+      "title": "Kubernetes",
+      "url": "/d/infra-kubernetes",
+      "type": "link",
+      "includeVars": false,
+      "keepTime": true,
+      "targetBlank": false
+    },
+    {
+      "title": "Kafka / CDC",
+      "url": "/d/infra-cdc",
+      "type": "link",
+      "includeVars": false,
+      "keepTime": true,
+      "targetBlank": false
+    },
+    {
+      "title": "采集 / 网络",
+      "url": "/d/infra-observability",
+      "type": "link",
+      "includeVars": false,
+      "keepTime": true,
+      "targetBlank": false
+    }
+  ]
+}

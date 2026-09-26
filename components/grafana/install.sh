@@ -84,6 +84,8 @@ if comp_installed observability alertmanager; then
 "
   sources+=(Alertmanager)
 fi
+# Signed Grafana Labs plugin; the read-only alert API keeps annotations out of metric labels.
+plugins+=(yesoreyeram-infinity-datasource@4.0.0)
 
 log_step "安装 $ID → 命名空间 $NAMESPACE (数据源: ${sources[*]:-无})"
 
@@ -103,8 +105,27 @@ dyn=$(mktemp)
   fi
 } > "$dyn"
 
-helm_install_component "$DIR" --version "$CHART_VERSION" -f "$dyn"
+helm_install_component "$DIR" --version "$CHART_VERSION" -f "$dyn" -f "$DIR/triage-values.yaml"
 rm -f "$dyn"
+
+# One ConfigMap per generated dashboard; preserve the existing overview identity.
+for dashboard in "$DIR"/dashboards/*.json; do
+  [[ -f $dashboard ]] || continue
+  uid=$(basename "$dashboard" .json)
+  folder=Infrastructure
+  name="grafana-dashboard-$uid"
+  if [[ $uid == ntfy-alerting-overview ]]; then
+    folder=Alerting
+    name=grafana-dashboard-ntfy-alerting
+  elif [[ $uid == alert-instance-detail ]]; then
+    folder=Alerting
+  fi
+  kctl -n "$NAMESPACE" create configmap "$name" \
+    --from-file="$(basename "$dashboard")=$dashboard" --dry-run=client -o yaml \
+    | kctl label --local -f - grafana_dashboard=1 -o yaml \
+    | kctl annotate --local -f - grafana_folder="$folder" -o yaml \
+    | kctl apply -f -
+done
 
 routes_apply "$DIR"
 log_ok "$ID 安装完成(https://$HOSTNAME, 用户 admin, 密码见 /root/.k8s-installer-credentials)"

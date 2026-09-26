@@ -49,6 +49,10 @@ grafana.ini:
   security:
     cookie_secure: true          # 全链路 HTTPS，会话 cookie 不允许走明文
     cookie_samesite: lax
+    # 2026-09-26: Pangolin 将 Host 改为 grafana.dev.test；浏览器仍发公网 Origin，
+    # 导致带会话的 /api/ds/query 与 Live 请求 403。root_url 不参与该 CSRF 比较。
+    # Grafana 13.2.2 此项匹配 hostname（不带 scheme），仅信任实际公网入口。
+    csrf_trusted_origins: grafana.apikv.com
     disable_gravatar: true       # 不让面板向 gravatar.com 外发用户邮箱哈希
   analytics:
     reporting_enabled: false     # 不向 grafana.com 上报使用数据
@@ -71,6 +75,12 @@ sidecar:
       memory: 90Mi
     limits:
       memory: 210Mi
+  dashboards:
+    enabled: true                # 带 grafana_dashboard 标签的 ConfigMap 自动加载为面板
+    label: grafana_dashboard
+    folderAnnotation: grafana_folder
+    provider:
+      foldersFromFilesStructure: true
   alerts:
     enabled: true                # 带 grafana_alert 标签的 ConfigMap 会被自动加载为告警规则
     label: grafana_alert

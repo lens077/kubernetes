@@ -1,0 +1,249 @@
+{
+  "uid": "infra-overview",
+  "title": "基础设施 · 观测覆盖与定位入口",
+  "id": null,
+  "version": 3,
+  "schemaVersion": 42,
+  "editable": true,
+  "description": "",
+  "tags": [
+    "infrastructure",
+    "alerting",
+    "evidence"
+  ],
+  "timezone": "browser",
+  "refresh": "30s",
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "annotations": {
+    "list": []
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "观测覆盖 · 有指标不等于服务健康",
+      "type": "table",
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 10
+      },
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "label_replace(label_replace((count(k8s_container_ready) > bool 0) or vector(0), \"capability\", \"Kubernetes 对象状态\", \"\", \"\"), \"dashboard_uid\", \"infra-kubernetes\", \"\", \"\") or label_replace(label_replace((count(cnpg_collector_up) > bool 0) or vector(0), \"capability\", \"CNPG / 备份时间\", \"\", \"\"), \"dashboard_uid\", \"infra-cnpg\", \"\", \"\") or label_replace(label_replace((count(kafka_connect_connector_task_status) > bool 0) or vector(0), \"capability\", \"Kafka / Connect\", \"\", \"\"), \"dashboard_uid\", \"infra-cdc\", \"\", \"\") or label_replace(label_replace((count(otelcol_exporter_queue_size) > bool 0) or vector(0), \"capability\", \"OTel 导出队列\", \"\", \"\"), \"dashboard_uid\", \"infra-observability\", \"\", \"\") or label_replace(label_replace((count(hubble_flows_processed_total) > bool 0) or vector(0), \"capability\", \"Hubble 网络事件\", \"\", \"\"), \"dashboard_uid\", \"infra-observability\", \"\", \"\") or label_replace(label_replace((count(gatus_results_endpoint_success) > bool 0) or vector(0), \"capability\", \"Gatus 合成探测\", \"\", \"\"), \"dashboard_uid\", \"infra-observability\", \"\", \"\") or label_replace(label_replace((count(alert_bridge_notifications_total) > bool 0) or vector(0), \"capability\", \"通知 bridge\", \"\", \"\"), \"dashboard_uid\", \"ntfy-alerting-overview\", \"\", \"\") or label_replace(label_replace((count(node_cpu_seconds_total) > bool 0) or vector(0), \"capability\", \"宿主 CPU exporter\", \"\", \"\"), \"dashboard_uid\", \"infra-kubernetes\", \"\", \"\")",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "instant": true,
+          "range": false,
+          "legendFormat": "",
+          "format": "table"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "filterable": true,
+            "wrapText": true,
+            "wrapHeaderText": true,
+            "cellOptions": {
+              "type": "auto"
+            }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "当前数据"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "0": {
+                        "text": "未接入 / 无数据",
+                        "color": "red"
+                      },
+                      "1": {
+                        "text": "有指标",
+                        "color": "green"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "观测能力"
+            },
+            "properties": [
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "打开证据面板",
+                    "url": "/d/${__data.fields[\"入口\"]}?${__url_time_range}",
+                    "targetBlank": false
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "入口"
+            },
+            "properties": [
+              {
+                "id": "custom.hidden",
+                "value": true
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "md",
+        "enablePagination": true
+      },
+      "transformations": [
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "organize",
+          "options": {
+            "includeByName": {
+              "capability": true,
+              "Value": true,
+              "dashboard_uid": true
+            },
+            "renameByName": {
+              "capability": "观测能力",
+              "Value": "当前数据",
+              "dashboard_uid": "入口"
+            },
+            "indexByName": {
+              "capability": 0,
+              "Value": 1,
+              "dashboard_uid": 2
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "基础设施定位路径",
+      "type": "text",
+      "gridPos": {
+        "x": 0,
+        "y": 10,
+        "w": 24,
+        "h": 7
+      },
+      "description": "",
+      "options": {
+        "mode": "markdown",
+        "content": "**数据库 / 备份**：可用备份时间、恢复点、WAL、连接与复制。\n\n**Kubernetes**：节点 Ready、Deployment/StatefulSet、运行容器与重启。\n\n**Kafka / CDC**：task、源库连接、复制槽、lag 和对账。\n\n**采集 / 网络**：OTel 队列、Hubble 丢弃、Gatus 与通知链。\n\n当前告警的「查看证据」会携带对象筛选；每页顶部可返回问题工作台。"
+      }
+    },
+    {
+      "id": 3,
+      "title": "仍需补齐的观测，不以空白冒充健康",
+      "type": "text",
+      "gridPos": {
+        "x": 0,
+        "y": 17,
+        "w": 24,
+        "h": 8
+      },
+      "description": "",
+      "options": {
+        "mode": "markdown",
+        "content": "- node0/node1/node2 宿主资源与 watchdog 状态尚无本套 Prometheus 证据；不能把 Kubernetes 节点状态当成全部宿主。\n- 容器实际 CPU/内存、磁盘容量需要对应采集器，requests/limits 不等于实际用量。\n- CNPG Backup / ScheduledBackup 对象状态和恢复演练尚未在本面板自动取证；备份时间为 0 能证明缺少可用备份记录，不能单独区分配置缺失与任务失败。\n- Silo、Redis、Elasticsearch 等应用专属指标未逐一接入；目前只能查其 Kubernetes 对象和已配置的 Gatus 探测。\n- 外部独立 dead-man 与手机送达仍需独立验证。"
+      }
+    }
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "label": "指标数据源",
+        "type": "datasource",
+        "query": "prometheus",
+        "regex": "/VictoriaMetrics/",
+        "refresh": 1,
+        "options": [],
+        "current": {
+          "text": "VictoriaMetrics",
+          "value": "VictoriaMetrics"
+        }
+      }
+    ]
+  },
+  "links": [
+    {
+      "title": "问题工作台",
+      "url": "/d/ntfy-alerting-overview",
+      "type": "link",
+      "includeVars": false,
+      "keepTime": true,
+      "targetBlank": false
+    },
+    {
+      "title": "数据库 / 备份",
+      "url": "/d/infra-cnpg",
+      "type": "link",
+      "includeVars": false,
+      "keepTime": true,
+      "targetBlank": false
+    },
+    {
+      "title": "Kubernetes",
+      "url": "/d/infra-kubernetes",
+      "type": "link",
+      "includeVars": false,
+      "keepTime": true,
+      "targetBlank": false
+    },
+    {
+      "title": "Kafka / CDC",
+      "url": "/d/infra-cdc",
+      "type": "link",
+      "includeVars": false,
+      "keepTime": true,
+      "targetBlank": false
+    },
+    {
+      "title": "采集 / 网络",
+      "url": "/d/infra-observability",
+      "type": "link",
+      "includeVars": false,
+      "keepTime": true,
+      "targetBlank": false
+    }
+  ]
+}

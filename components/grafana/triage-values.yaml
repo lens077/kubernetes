@@ -1,0 +1,17 @@
+# Only read existing vmalert alert data. Requests originate in Grafana, not the browser.
+# Keep separate from installation-time discovery of metric/log/trace datasources.
+datasources:
+  alert-evidence.yaml:
+    apiVersion: 1
+    datasources:
+      - name: Alert Evidence
+        uid: ds-alert-evidence
+        type: yesoreyeram-infinity-datasource
+        access: proxy
+        isDefault: false
+        editable: false
+        jsonData:
+          auth_method: none
+          allowedHosts:
+            - http://vmalert.observability.svc.cluster.local:8880/api/v1/alerts
+          allowDangerousHTTPMethods: false

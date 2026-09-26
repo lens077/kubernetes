@@ -1,0 +1,1543 @@
+{
+  "uid": "infra-cnpg",
+  "title": "PostgreSQL · 备份与实例证据",
+  "id": null,
+  "version": 3,
+  "schemaVersion": 42,
+  "editable": true,
+  "description": "",
+  "tags": [
+    "infrastructure",
+    "alerting",
+    "evidence"
+  ],
+  "timezone": "browser",
+  "refresh": "30s",
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "annotations": {
+    "list": []
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "数据库采集可用",
+      "type": "stat",
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 4,
+        "h": 3
+      },
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "min(cnpg_collector_up{cnpg_cluster=~\"$cnpg_cluster\",pod=~\"$pod\"})",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "instant": true,
+          "range": false,
+          "legendFormat": ""
+        }
+      ],
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "指标缺失",
+          "decimals": 0,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "不可用",
+                  "color": "red"
+                },
+                "1": {
+                  "text": "可用",
+                  "color": "green"
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "指标缺失",
+                  "color": "gray"
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 2,
+      "title": "可用备份",
+      "type": "stat",
+      "gridPos": {
+        "x": 4,
+        "y": 0,
+        "w": 4,
+        "h": 3
+      },
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max(cnpg_collector_last_available_backup_timestamp{cnpg_cluster=~\"$cnpg_cluster\",pod=~\"$pod\"}) > bool 0",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "instant": true,
+          "range": false,
+          "legendFormat": ""
+        }
+      ],
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "指标缺失",
+          "decimals": 0,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "无可用备份",
+                  "color": "red"
+                },
+                "1": {
+                  "text": "有备份记录",
+                  "color": "green"
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "指标缺失",
+                  "color": "gray"
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 3,
+      "title": "最近可用备份",
+      "type": "stat",
+      "gridPos": {
+        "x": 8,
+        "y": 0,
+        "w": 4,
+        "h": 3
+      },
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max(cnpg_collector_last_available_backup_timestamp{cnpg_cluster=~\"$cnpg_cluster\",pod=~\"$pod\"}) * 1000",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "instant": true,
+          "range": false,
+          "legendFormat": ""
+        }
+      ],
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "dateTimeAsIso",
+          "noValue": "指标缺失",
+          "decimals": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "尚无备份",
+                  "color": "red"
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "指标缺失",
+                  "color": "gray"
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 4,
+      "title": "距可用备份",
+      "type": "stat",
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 4,
+        "h": 3
+      },
+      "description": "有备份才计算年龄，0 明确标为无备份；缺失指标单独显示，正值仅提供时长而非故障判定。",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "(time() - (max(cnpg_collector_last_available_backup_timestamp{cnpg_cluster=~\"$cnpg_cluster\",pod=~\"$pod\"}) > 0)) or (0 * (max(cnpg_collector_last_available_backup_timestamp{cnpg_cluster=~\"$cnpg_cluster\",pod=~\"$pod\"}) == 0))",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "instant": true,
+          "range": false,
+          "legendFormat": ""
+        }
+      ],
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "noValue": "指标缺失",
+          "decimals": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "无备份 / 不计算",
+                  "color": "orange"
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "指标缺失",
+                  "color": "gray"
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 5,
+      "title": "WAL 归档失败 / 15m",
+      "type": "stat",
+      "gridPos": {
+        "x": 16,
+        "y": 0,
+        "w": 4,
+        "h": 3
+      },
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(increase(cnpg_pg_stat_archiver_failed_count_total{cnpg_cluster=~\"$cnpg_cluster\",pod=~\"$pod\"}[15m]))",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "instant": true,
+          "range": false,
+          "legendFormat": ""
+        }
+      ],
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "指标缺失",
+          "decimals": 0,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          },
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "指标缺失",
+                  "color": "gray"
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 6,
+      "title": "最早可恢复点",
+      "type": "stat",
+      "gridPos": {
+        "x": 20,
+        "y": 0,
+        "w": 4,
+        "h": 3
+      },
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max(cnpg_collector_first_recoverability_point{cnpg_cluster=~\"$cnpg_cluster\",pod=~\"$pod\"}) * 1000",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "instant": true,
+          "range": false,
+          "legendFormat": ""
+        }
+      ],
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "dateTimeAsIso",
+          "noValue": "指标缺失",
+          "decimals": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "未建立",
+                  "color": "red"
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "指标缺失",
+                  "color": "gray"
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 7,
+      "title": "备份问题怎样核实",
+      "type": "text",
+      "gridPos": {
+        "x": 0,
+        "y": 3,
+        "w": 24,
+        "h": 3
+      },
+      "description": "",
+      "options": {
+        "mode": "markdown",
+        "content": "**零值 ≠ 采集缺失。** `last_available_backup_timestamp=0` 表示没有可用备份时间；`first_recoverability_point=0` 表示未提供恢复点。先看下表的真实告警原文与原始值，再核对 ScheduledBackup / Backup 对象和归档日志。\n\n此面板不自动配置备份，也不宣称已经验证恢复。Backup CR 状态尚未作为时序数据接入；相关采集缺口见「基础设施」。"
+      }
+    },
+    {
+      "id": 8,
+      "title": "该类当前告警与排查",
+      "type": "table",
+      "gridPos": {
+        "x": 0,
+        "y": 6,
+        "w": 24,
+        "h": 9
+      },
+      "description": "实时读取 vmalert annotations 与对象标签。条件持续时间从 activeAt 起算，包含 pending 等待；持续提醒不是独立故障。",
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "ds-alert-evidence"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "ds-alert-evidence"
+          },
+          "type": "json",
+          "source": "url",
+          "format": "table",
+          "parser": "jq-backend",
+          "url": "http://vmalert.observability.svc.cluster.local:8880/api/v1/alerts",
+          "url_options": {
+            "method": "GET"
+          },
+          "root_selector": "# Read-only presentation of vmalert /api/v1/alerts. Do not infer a root cause.\ndef fallback($value; $other): if $value == null or $value == \"\" then $other else $value end;\ndef row:\n  . as $a | (.labels // {}) as $l |\n  fallback($l.exported_alertname; $a.name) as $origin |\n  fallback($l.exported_alertgroup; $l.alertgroup) as $group |\n  fallback($l.k8s_namespace_name; fallback($l.namespace; \"\")) as $ns |\n  fallback($l.k8s_pod_name; fallback($l.pod; \"\")) as $alert_pod |\n  fallback($l.k8s_node_name; fallback($l.node; \"\")) as $alert_node |\n  (if $group == \"cnpg\" then \"infra-cnpg\"\n   elif $group == \"ecommerce-cdc\" then \"infra-cdc\"\n   elif $group == \"ecommerce-k8s\" and $a.name != \"AlertFiringTooLong\" then \"infra-kubernetes\"\n   elif $group == \"ecommerce-security\" or $group == \"observability-pipeline\" or $group == \"ecommerce-observability-readiness\" then \"infra-observability\"\n   elif $ns != \"\" then \"infra-kubernetes\" else \"infra-overview\" end) as $target |\n  (if $target == \"infra-cnpg\" then \"数据库 / 备份\"\n   elif $target == \"infra-cdc\" then \"CDC / 位点\"\n   elif $target == \"infra-kubernetes\" then \"工作负载\"\n   elif $target == \"infra-observability\" then \"采集 / 网络\" else \"基础设施\" end) as $destination |\n  (try ($a.activeAt | sub(\"\\\\.[0-9]+Z$\"; \"Z\") | fromdateiso8601) catch null) as $started |\n  ([$l.cnpg_cluster, $ns, $alert_pod, $l.k8s_container_name, $l.k8s_deployment_name,\n    $alert_node, $l.connector, $l.slot_name, $l.service_name, $l.cdc_table, $l.exporter]\n    | map(select(. != null and . != \"\")) | unique | join(\" · \")) as $objects |\n  (if $ns != \"\" then \"kubernetes.pod_namespace:=\" + ($ns | tojson) +\n     (if $alert_pod != \"\" then \" AND kubernetes.pod_name:=\" + ($alert_pod | tojson) else \"\" end)\n   else \"\" end) as $logs |\n  {\n    key: ($a.group_id + \":\" + $a.id),\n    kind: (if $a.name == \"AlertFiringTooLong\" then \"reminder\" else \"problem\" end),\n    kind_label: (if $a.name == \"AlertFiringTooLong\" then \"持续提醒\" else \"原始告警\" end),\n    state: $a.state,\n    severity: fallback($l.severity; \"unknown\"),\n    summary: fallback($a.annotations.summary; $a.name),\n    description: fallback($a.annotations.description; \"规则未提供排查说明；查看表达式与实际标签。\"),\n    rule: $a.name,\n    original_rule: $origin,\n    resource: fallback($objects; fallback($l.cluster; \"标签未提供具体对象\")),\n    cluster: fallback($l.cluster; \"\"),\n    namespace: $ns, pod: $alert_pod, node: $alert_node,\n    cnpg_cluster: fallback($l.cnpg_cluster; \"\"),\n    connector: fallback($l.connector; \"\"),\n    active_at: $a.activeAt,\n    condition_seconds: (if $started == null then null else ([0, now - $started] | max) end),\n    value: $a.value,\n    expression: $a.expression,\n    restoring: ($a.restored // false),\n    stabilizing: ($a.stabilizing // false),\n    labels: $l,\n    detail_url: (\"/d/alert-instance-detail?var-instance=\" + (($a.group_id + \":\" + $a.id) | @uri)),\n    evidence: $destination,\n    evidence_url: (\"/d/\" + $target +\n      \"?var-cnpg_cluster=\" + (fallback($l.cnpg_cluster; \".*\") | @uri) +\n      \"&var-namespace=\" + (fallback($ns; \".*\") | @uri) +\n      \"&var-pod=\" + (fallback($alert_pod; \".*\") | @uri) +\n      \"&var-node=\" + (fallback($alert_node; \".*\") | @uri) +\n      \"&var-connector=\" + (fallback($l.connector; \".*\") | @uri) +\n      \"&var-rule=\" + ($origin | @uri)),\n    logs: (if $logs == \"\" then \"先在证据页选择对象\" else \"查看对象日志\" end),\n    logs_url: (if $logs == \"\" then null else\n      \"/explore?schemaVersion=1&panes=\" + ({\n        logs: {datasource:\"ds-vlogs\", queries:[{refId:\"A\", datasource:{type:\"victoriametrics-logs-datasource\",uid:\"ds-vlogs\"},expr:$logs,queryType:\"instant\"}],\n          range:{from:(if $started == null then \"now-6h\" else (($started-300)*1000|floor|tostring) end),to:\"now\"}}\n      } | tojson | @uri) end)\n  } | .logs_url = (.logs_url // .evidence_url);\nif .status != \"success\" or (.data.alerts | type) != \"array\" then\n  error(\"vmalert alert API did not return a successful alerts array\")\nelse\n  [.data.alerts[] | select(.name != \"Watchdog\") | row]\n  | sort_by([if .severity == \"critical\" then 0 else 1 end, .kind, .active_at, .key])\nend\n\n| map(select(.labels.alertgroup == \"cnpg\" or .labels.exported_alertgroup == \"cnpg\"))",
+          "columns": [
+            {
+              "selector": "state",
+              "text": "state",
+              "type": "string"
+            },
+            {
+              "selector": "kind_label",
+              "text": "kind_label",
+              "type": "string"
+            },
+            {
+              "selector": "severity",
+              "text": "severity",
+              "type": "string"
+            },
+            {
+              "selector": "summary",
+              "text": "summary",
+              "type": "string"
+            },
+            {
+              "selector": "resource",
+              "text": "resource",
+              "type": "string"
+            },
+            {
+              "selector": "condition_seconds",
+              "text": "condition_seconds",
+              "type": "number"
+            },
+            {
+              "selector": "description",
+              "text": "description",
+              "type": "string"
+            },
+            {
+              "selector": "evidence",
+              "text": "evidence",
+              "type": "string"
+            },
+            {
+              "selector": "logs",
+              "text": "logs",
+              "type": "string"
+            },
+            {
+              "selector": "key",
+              "text": "key",
+              "type": "string"
+            },
+            {
+              "selector": "original_rule",
+              "text": "original_rule",
+              "type": "string"
+            },
+            {
+              "selector": "detail_url",
+              "text": "detail_url",
+              "type": "string"
+            },
+            {
+              "selector": "evidence_url",
+              "text": "evidence_url",
+              "type": "string"
+            },
+            {
+              "selector": "logs_url",
+              "text": "logs_url",
+              "type": "string"
+            }
+          ],
+          "filters": []
+        }
+      ],
+      "options": {
+        "showHeader": true,
+        "cellHeight": "auto",
+        "enablePagination": true,
+        "pageSize": 5
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "filterable": true,
+            "wrapText": true,
+            "wrapHeaderText": true,
+            "cellOptions": {
+              "type": "auto"
+            }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "state"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "状态"
+              },
+              {
+                "id": "custom.width",
+                "value": 75
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "firing": {
+                        "text": "触发中",
+                        "color": "red"
+                      },
+                      "pending": {
+                        "text": "等待确认",
+                        "color": "orange"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "kind_label"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "类型"
+              },
+              {
+                "id": "custom.width",
+                "value": 85
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "severity"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "级别"
+              },
+              {
+                "id": "custom.width",
+                "value": 65
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "critical": {
+                        "text": "严重",
+                        "color": "red"
+                      },
+                      "warning": {
+                        "text": "警告",
+                        "color": "orange"
+                      },
+                      "none": {
+                        "text": "信息",
+                        "color": "blue"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "summary"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "问题 / 点击详情"
+              },
+              {
+                "id": "custom.width",
+                "value": 260
+              },
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "${__value.raw}",
+                    "url": "${__data.fields[\"detail_url\"]:raw}&${__url_time_range}",
+                    "targetBlank": false
+                  }
+                ]
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "auto"
+                }
+              },
+              {
+                "id": "custom.wrapText",
+                "value": true
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "resource"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "影响对象"
+              },
+              {
+                "id": "custom.width",
+                "value": 180
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "condition_seconds"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "条件持续"
+              },
+              {
+                "id": "custom.width",
+                "value": 95
+              },
+              {
+                "id": "unit",
+                "value": "s"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "description"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "规则说明 / 下一步"
+              },
+              {
+                "id": "custom.width",
+                "value": 320
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "evidence"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "查看证据"
+              },
+              {
+                "id": "custom.width",
+                "value": 125
+              },
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "${__value.raw}",
+                    "url": "${__data.fields[\"evidence_url\"]:raw}&${__url_time_range}",
+                    "targetBlank": false
+                  }
+                ]
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "data-links"
+                }
+              },
+              {
+                "id": "custom.wrapText",
+                "value": true
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "logs"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "对象日志"
+              },
+              {
+                "id": "custom.width",
+                "value": 115
+              },
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "${__value.raw}",
+                    "url": "${__data.fields[\"logs_url\"]:raw}",
+                    "targetBlank": false
+                  }
+                ]
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "data-links"
+                }
+              },
+              {
+                "id": "custom.wrapText",
+                "value": true
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "key"
+            },
+            "properties": [
+              {
+                "id": "custom.hidden",
+                "value": true
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "original_rule"
+            },
+            "properties": [
+              {
+                "id": "custom.hidden",
+                "value": true
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "detail_url"
+            },
+            "properties": [
+              {
+                "id": "custom.hidden",
+                "value": true
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "evidence_url"
+            },
+            "properties": [
+              {
+                "id": "custom.hidden",
+                "value": true
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "logs_url"
+            },
+            "properties": [
+              {
+                "id": "custom.hidden",
+                "value": true
+              }
+            ]
+          }
+        ]
+      },
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "indexByName": {
+              "state": 0,
+              "kind_label": 1,
+              "severity": 2,
+              "summary": 3,
+              "resource": 4,
+              "condition_seconds": 5,
+              "description": 6,
+              "evidence": 7,
+              "logs": 8,
+              "key": 9,
+              "original_rule": 10,
+              "detail_url": 11,
+              "evidence_url": 12,
+              "logs_url": 13
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "title": "数据库连接 / max_connections",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 0,
+        "y": 15,
+        "w": 12,
+        "h": 7
+      },
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by(pod) (cnpg_backends_total{cnpg_cluster=~\"$cnpg_cluster\",pod=~\"$pod\"}) / on(pod) cnpg_pg_settings_setting{cnpg_cluster=~\"$cnpg_cluster\",pod=~\"$pod\",name=\"max_connections\"}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "instant": false,
+          "range": true,
+          "legendFormat": "{{pod}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "noValue": "指标缺失",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 6,
+            "showPoints": "never",
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 10,
+      "title": "复制延迟",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 12,
+        "y": 15,
+        "w": 12,
+        "h": 7
+      },
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "cnpg_pg_replication_lag{cnpg_cluster=~\"$cnpg_cluster\",pod=~\"$pod\"}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "instant": false,
+          "range": true,
+          "legendFormat": "{{pod}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "noValue": "指标缺失",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 6,
+            "showPoints": "never",
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 11,
+      "title": "复制槽保留 WAL",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 0,
+        "y": 22,
+        "w": 12,
+        "h": 7
+      },
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "cnpg_pg_replication_slots_pg_wal_lsn_diff{cnpg_cluster=~\"$cnpg_cluster\",pod=~\"$pod\"}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "instant": false,
+          "range": true,
+          "legendFormat": "{{pod}} / {{slot_name}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "noValue": "指标缺失",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 6,
+            "showPoints": "never",
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 12,
+      "title": "WAL 归档成功 / 失败速率",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 12,
+        "y": 22,
+        "w": 12,
+        "h": 7
+      },
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by(pod)(rate(cnpg_pg_stat_archiver_archived_count_total{cnpg_cluster=~\"$cnpg_cluster\",pod=~\"$pod\"}[$__rate_interval]))",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "instant": false,
+          "range": true,
+          "legendFormat": "{{pod}} 已归档"
+        },
+        {
+          "refId": "B",
+          "expr": "sum by(pod)(rate(cnpg_pg_stat_archiver_failed_count_total{cnpg_cluster=~\"$cnpg_cluster\",pod=~\"$pod\"}[$__rate_interval]))",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "instant": false,
+          "range": true,
+          "legendFormat": "{{pod}} 失败"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "noValue": "指标缺失",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 6,
+            "showPoints": "never",
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 13,
+      "title": "备份原始时间戳（秒；0 = 无记录）",
+      "type": "table",
+      "gridPos": {
+        "x": 0,
+        "y": 29,
+        "w": 12,
+        "h": 6
+      },
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max by(cnpg_cluster,pod)(cnpg_collector_last_available_backup_timestamp{cnpg_cluster=~\"$cnpg_cluster\",pod=~\"$pod\"})",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "instant": true,
+          "range": false,
+          "legendFormat": "",
+          "format": "table"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "filterable": true,
+            "wrapText": true,
+            "wrapHeaderText": true,
+            "cellOptions": {
+              "type": "auto"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "md",
+        "enablePagination": true
+      },
+      "transformations": [
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "organize",
+          "options": {
+            "includeByName": {
+              "cnpg_cluster": true,
+              "pod": true,
+              "Value": true
+            },
+            "renameByName": {
+              "cnpg_cluster": "集群",
+              "pod": "实例",
+              "Value": "原始时间戳"
+            },
+            "indexByName": {
+              "cnpg_cluster": 0,
+              "pod": 1,
+              "Value": 2
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": 14,
+      "title": "实例与采集状态",
+      "type": "table",
+      "gridPos": {
+        "x": 12,
+        "y": 29,
+        "w": 12,
+        "h": 6
+      },
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "cnpg_collector_up{cnpg_cluster=~\"$cnpg_cluster\",pod=~\"$pod\"}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "instant": true,
+          "range": false,
+          "legendFormat": "",
+          "format": "table"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "filterable": true,
+            "wrapText": true,
+            "wrapHeaderText": true,
+            "cellOptions": {
+              "type": "auto"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "md",
+        "enablePagination": true
+      },
+      "transformations": [
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "organize",
+          "options": {
+            "includeByName": {
+              "cnpg_cluster": true,
+              "pod": true,
+              "k8s_node_name": true,
+              "Value": true
+            },
+            "renameByName": {
+              "cnpg_cluster": "集群",
+              "pod": "实例",
+              "k8s_node_name": "节点",
+              "Value": "采集可用"
+            },
+            "indexByName": {
+              "cnpg_cluster": 0,
+              "pod": 1,
+              "k8s_node_name": 2,
+              "Value": 3
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "label": "指标数据源",
+        "type": "datasource",
+        "query": "prometheus",
+        "regex": "/VictoriaMetrics/",
+        "refresh": 1,
+        "options": [],
+        "current": {
+          "text": "VictoriaMetrics",
+          "value": "VictoriaMetrics"
+        }
+      },
+      {
+        "name": "cnpg_cluster",
+        "label": "数据库集群",
+        "hide": 0,
+        "type": "query",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "options": [],
+        "skipUrlSync": false,
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${datasource}"
+        },
+        "query": "label_values(cnpg_collector_up, cnpg_cluster)",
+        "definition": "label_values(cnpg_collector_up, cnpg_cluster)",
+        "refresh": 1,
+        "includeAll": true,
+        "allValue": ".*",
+        "multi": false,
+        "sort": 1
+      },
+      {
+        "name": "pod",
+        "label": "实例",
+        "hide": 0,
+        "type": "query",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "options": [],
+        "skipUrlSync": false,
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${datasource}"
+        },
+        "query": "label_values(cnpg_collector_up{cnpg_cluster=~\"$cnpg_cluster\"}, pod)",
+        "definition": "label_values(cnpg_collector_up{cnpg_cluster=~\"$cnpg_cluster\"}, pod)",
+        "refresh": 1,
+        "includeAll": true,
+        "allValue": ".*",
+        "multi": false,
+        "sort": 1
+      }
+    ]
+  },
+  "links": [
+    {
+      "title": "问题工作台",
+      "url": "/d/ntfy-alerting-overview",
+      "type": "link",
+      "includeVars": false,
+      "keepTime": true,
+      "targetBlank": false
+    },
+    {
+      "title": "基础设施",
+      "url": "/d/infra-overview",
+      "type": "link",
+      "includeVars": false,
+      "keepTime": true,
+      "targetBlank": false
+    },
+    {
+      "title": "Kubernetes",
+      "url": "/d/infra-kubernetes",
+      "type": "link",
+      "includeVars": false,
+      "keepTime": true,
+      "targetBlank": false
+    },
+    {
+      "title": "Kafka / CDC",
+      "url": "/d/infra-cdc",
+      "type": "link",
+      "includeVars": false,
+      "keepTime": true,
+      "targetBlank": false
+    },
+    {
+      "title": "采集 / 网络",
+      "url": "/d/infra-observability",
+      "type": "link",
+      "includeVars": false,
+      "keepTime": true,
+      "targetBlank": false
+    }
+  ]
+}
