@@ -1,5 +1,4 @@
 """Offline bridge regressions: no server import side effects or notification network."""
-import copy
 import importlib.util
 import http.client
 import threading
@@ -257,7 +256,6 @@ class BridgeTest(unittest.TestCase):
                 with self.assertRaises(RuntimeError): bridge.send_raw('test', 'test', 1, 'test')
 
     def test_redirect_does_not_forward_authorization(self):
-        import urllib.error
         handler = bridge.NoRedirect()
         request = bridge.Request('https://ntfy.example', headers={'Authorization': 'Bearer test'})
         self.assertIsNone(handler.redirect_request(request, None, 302, 'redirect', {}, 'https://other.example'))

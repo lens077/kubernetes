@@ -22,6 +22,7 @@ creds_file="$STATE_DIR/creds/ntfy.env"
 # Preserve unrelated entries because Gatus shares this credential file.
 for key in NTFY_URL NTFY_TOPIC NTFY_TICKET_TOPIC NTFY_TEST_TOPIC NTFY_TOKEN; do
   if [[ -z ${!key+x} && -f $creds_file ]]; then
+    # shellcheck disable=SC1090 # 本地凭据文件路径由 STATE_DIR 决定，运行时才确定
     value=$(source "$creds_file"; printf '%s' "${!key-}")
     printf -v "$key" '%s' "$value"
   fi
