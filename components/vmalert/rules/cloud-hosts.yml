@@ -1,97 +1,132 @@
-# 云主机（node0–node4）资源与失联告警 —— 2026-09-29 新增。
-#
-# 数据来源：observability 仓 roles/host_otel（2026-09-29 起 otelcol-contrib：主机/容器指标 + journald/容器日志）
-# → otlp-dev.apikv.com（bearer token）→ 集群 collector otlp/public → VictoriaMetrics / VictoriaLogs。资源标签：
-#   host_name（node0…）  host_group="cloud"  cloud_provider  host_watchdog="true|false"
-# K8s 节点（k1–k3）走 k8s_node_name，不在本组；它们的 Ready 状态由 ecommerce-k8s 组负责。
-#
-# 与 host-watchdog（ecommerce/infrastructure/host-watchdog，主机内每 5 分钟巡检直推 ntfy）的分工，
-# 目的是同一件事只提醒一次：
-#   host-watchdog 负责：容器、systemd 单元、本机 HTTP、Pangolin 站点、磁盘水位（85% 待办 / 95% 关注）
-#   本组负责：主机指标失联、内存、CPU（host-watchdog 不查这三项），
-#            以及**没有 host-watchdog 的主机**（host_watchdog="false"）的磁盘水位，阈值与它一致。
-# 给 node3/node4 装上 host-watchdog 后，把 inventory.host-otel.yml 的 host_watchdog 改成 true 并重跑，
-# 这里的磁盘规则会自动不再覆盖它们，不用改本文件。
-#
-# 失联规则只做待办（warning）：主机整机宕掉时，对外服务由 Gatus 直推关注级；这里再发关注级只会重复。
-# ⚠️ 每条规则都必须有 for:。
+# Shared host resource alerts. Inventory: hosts/observability/hosts.json.
+# Raw signals remain available; all resource formulas live only in host-recording.yml.
+# This group replaces the six CloudHost* resource alerts, not a parallel notification path.
+# K8s Ready stays in ecommerce-k8s. Disk alerts are owned by watchdog OR vmalert, never both.
+# Existing CPU/memory/disk thresholds and hold periods are preserved; missing telemetry is ticket-only.
 groups:
-  - name: cloud-hosts
+  - name: host-resources
     interval: 30s
     rules:
-      - alert: CloudHostMetricsMissing
-        # 过去 1 天出现过、最近 5 分钟没有数据的主机。不写死主机清单：新主机接入即受保护，
-        # 下线的主机最多提醒 1 天（或手动静默）。其余云主机也全部没有数据时由下一条统一报，这里不逐台重复。
+      - alert: HostMetricsMissing
+        expr: >-
+          (host:expected_info unless on(host,host_kind) (time() - host:last_seen_timestamp_seconds < 300))
+          and on(host_kind) group by(host_kind) (time() - host:last_seen_timestamp_seconds < 300)
+          and on() (time() - host:rules_evaluation_timestamp_seconds < 180)
+        for: 10m
+        labels: {severity: warning, category: host}
+        annotations:
+          summary: '主机 {{ $labels.host }} 指标中断或尚未接入'
+          description: '预期主机超过 5 分钟没有原始样本，且持续 10 分钟。云主机查 otelcol；K8s 节点查 otel-node DaemonSet。不要把记录规则的评估时间当成主机心跳。'
+          dashboard: &host_dashboard https://grafana.apikv.com/d/ops-portal
+          runbook_url: &host_runbook https://github.com/lens077/kubernetes/blob/main/components/vmalert/README-host-metrics.md
+      - alert: HostMetricsPipelineMissing
+        expr: >-
+          (group by(host_kind) (host:expected_info)
+          unless on(host_kind) group by(host_kind) (time() - host:last_seen_timestamp_seconds < 300))
+          and on() (time() - host:rules_evaluation_timestamp_seconds < 180)
+        for: 10m
+        labels: {severity: warning, category: observability}
+        annotations:
+          summary: '{{ $labels.host_kind }} 主机指标整组中断'
+          description: '连续 10 分钟没有该组任何主机的近期样本。cloud 检查 OTLP 公网入口和 token；kubernetes 检查 otel-node 到集群内 VM。逐台失联告警被这一条合并。'
+          dashboard: *host_dashboard
+          runbook_url: *host_runbook
+      - alert: HostMetricRulesStale
+        expr: '(time() - host:rules_evaluation_timestamp_seconds > 180) or absent(host:rules_evaluation_timestamp_seconds)'
+        for: 5m
+        labels: {severity: warning, category: observability}
+        annotations:
+          summary: '共享主机指标规则停止更新'
+          description: '规则评估时间超过 180 秒未推进或记录不存在，持续 5 分钟。检查 vmalert host-recording 组的 health、lastError 和 remoteWrite；不要逐台重启采集器。'
+          dashboard: *host_dashboard
+          runbook_url: *host_runbook
+      - alert: HostMetricSignalMissing
         expr: >-
           (
-            group by (host_name) (max_over_time(system_memory_utilization_ratio{host_group="cloud"}[1d]))
-            unless
-            group by (host_name) (max_over_time(system_memory_utilization_ratio{host_group="cloud"}[5m]))
+            (label_replace(host:expected_info, "signal", "cpu", "", "")
+             or label_replace(host:expected_info, "signal", "memory", "", "")
+             or label_replace(host:expected_info, "signal", "filesystem", "", "")
+             or label_replace(host:expected_info, "signal", "network", "", ""))
+            unless on(host,host_kind,signal)
+            (host:signal_present == 1 and (time() - timestamp(host:signal_present) < 180))
           )
-          and on() (count(group by (host_name) (max_over_time(system_memory_utilization_ratio{host_group="cloud"}[5m]))) > 0)
+          and on(host,host_kind) (time() - host:last_seen_timestamp_seconds < 180)
+          and on(host,host_kind) host:expected_info
+          and on() (time() - host:rules_evaluation_timestamp_seconds < 180)
         for: 10m
-        labels: { severity: warning, category: host }
+        labels: {severity: warning, category: observability}
         annotations:
-          summary: '云主机 {{ $labels.host_name }} 指标中断'
-          description: 超过 15 分钟收不到该主机的 hostmetrics，其它云主机正常。先 ssh 看 systemctl status otelcol 与 journalctl -u otelcol；ssh 也不通则是主机或网络故障，对外影响看 Gatus。
-
-      - alert: CloudHostsAllMetricsMissing
-        # 所有云主机同时中断，通常是公共通道坏了：otlp-dev.apikv.com（Pangolin / node1）、集群网关、
-        # collector otlp/public 或 token 被轮换，而不是 5 台同时宕机。
-        expr: >-
-          (count(max_over_time(system_memory_utilization_ratio{host_group="cloud"}[1d])) > 0)
-          unless on() count(max_over_time(system_memory_utilization_ratio{host_group="cloud"}[5m]))
-        for: 10m
-        labels: { severity: warning, category: observability }
-        annotations:
-          summary: 所有云主机的主机指标同时中断
-          description: 按公共通道排查：curl https://otlp-dev.apikv.com/v1/metrics 应返回 401（入口通）；再看 opentelemetry/otel-opentelemetry-collector 日志与 Secret otlp-public-auth 是否被轮换（轮换后需重跑 make host-otel）。
-
-      - alert: CloudHostMemoryHigh
-        # used 不含 page cache / buffer；持续 90% 以上说明真的缺内存，node2/node4 只有 1.6–2G。
-        expr: 'sum by (host_name) (system_memory_utilization_ratio{host_group="cloud",state="used"}) > 0.9'
-        for: 15m
-        labels: { severity: warning, category: host }
-        annotations:
-          summary: '云主机 {{ $labels.host_name }} 内存使用 {{ $value | humanizePercentage }}'
-          description: 持续 15 分钟以上。ssh 后 ps aux --sort=-rss | head 或 docker stats --no-stream 找占用大户；再涨可能触发 OOM kill 业务容器。
-
-      - alert: CloudHostCPUSaturated
-        # iowait 算空闲：它不是 CPU 在干活，且 io_uring 程序（如 Dragonfly）等待网络事件也会被记成 iowait。
-        expr: '1 - sum by (host_name) (system_cpu_utilization_ratio{host_group="cloud",state=~"idle|wait"}) > 0.9'
-        for: 30m
-        labels: { severity: warning, category: host }
-        annotations:
-          summary: '云主机 {{ $labels.host_name }} CPU 使用 {{ $value | humanizePercentage }}'
-          description: 持续 30 分钟以上（短时尖峰不报）。用 top / docker stats 找进程；突发且无业务原因时留意挖矿或被攻击。
-
-      - alert: CloudHostDiskFilling
-        # 只覆盖没有 host-watchdog 的主机；有 host-watchdog 的主机磁盘由它报（同为 85%），避免重复。
-        # used / (used + free) 与 df 的 Use% 同口径，和 host-watchdog 的阈值可直接对照。
-        expr: >-
-          sum by (host_name, mountpoint) (system_filesystem_usage_bytes{host_group="cloud",host_watchdog="false",state="used"})
-          / sum by (host_name, mountpoint) (system_filesystem_usage_bytes{host_group="cloud",host_watchdog="false",state=~"used|free"})
-          > 0.85
-        for: 15m
-        labels: { severity: warning, category: host }
-        annotations:
-          summary: '云主机 {{ $labels.host_name }} 磁盘 {{ $labels.mountpoint }} 已用 {{ $value | humanizePercentage }}'
-          description: df -h {{ $labels.mountpoint }}；用 du -xh --max-depth=1 找增长来源，常见是容器日志与镜像（docker system df）。
-
-      - alert: CloudHostDiskAlmostFull
-        expr: >-
-          sum by (host_name, mountpoint) (system_filesystem_usage_bytes{host_group="cloud",host_watchdog="false",state="used"})
-          / sum by (host_name, mountpoint) (system_filesystem_usage_bytes{host_group="cloud",host_watchdog="false",state=~"used|free"})
-          > 0.95
+          summary: '主机 {{ $labels.host }} 缺少 {{ $labels.signal }} 指标'
+          description: '主机仍上报但某类必要指标缺失；检查对应 scraper、标签和 host-recording 的 health。缺失不是零使用率。'
+          dashboard: *host_dashboard
+          runbook_url: *host_runbook
+      - alert: HostRecordingEvaluationErrors
+        expr: 'sum by(recording) (increase(vmalert_recording_rules_errors_total{group="host-recording"}[5m])) > 0'
         for: 5m
-        labels: { severity: critical, category: host }
+        labels: {severity: warning, category: observability}
         annotations:
-          summary: '云主机 {{ $labels.host_name }} 磁盘 {{ $labels.mountpoint }} 即将写满（{{ $value | humanizePercentage }}）'
-          description: 写满后数据库、容器和日志都会失败。先腾出空间（清理旧日志 / 未用镜像），再查增长来源。
+          summary: '共享主机记录 {{ $labels.recording }} 持续求值失败'
+          description: '全局规则时钟正常不代表每条记录都成功。检查 vmalert 对应 recording 的 lastError；消费端会拒绝超过 180 秒的旧记录。'
+          dashboard: *host_dashboard
+          runbook_url: *host_runbook
+      - alert: HostMemoryHigh
+        expr: >-
+          (host:memory_used_ratio > 0.9) and (time() - timestamp(host:memory_used_ratio) < 180)
+          and on(host,host_kind) (host:signal_present{signal="memory"} == 1 and (time() - timestamp(host:signal_present{signal="memory"}) < 180))
+          and on(host,host_kind) host:expected_info
+          and on() (time() - host:rules_evaluation_timestamp_seconds < 180)
+        for: 15m
+        labels: {severity: warning, category: host}
+        annotations:
+          summary: '主机 {{ $labels.host }} 内存使用 {{ $value | humanizePercentage }}'
+          description: 'OTel used 状态持续 15 分钟超过 90%，不是 MemAvailable 口径。检查进程 RSS、容器用量和 OOM 日志。'
+          dashboard: *host_dashboard
+          runbook_url: *host_runbook
+      - alert: HostCPUSaturated
+        expr: >-
+          (host:cpu_busy_ratio > 0.9) and (time() - timestamp(host:cpu_busy_ratio) < 180)
+          and on(host,host_kind) (host:signal_present{signal="cpu"} == 1 and (time() - timestamp(host:signal_present{signal="cpu"}) < 180))
+          and on(host,host_kind) host:expected_info
+          and on() (time() - host:rules_evaluation_timestamp_seconds < 180)
+        for: 30m
+        labels: {severity: warning, category: host}
+        annotations:
+          summary: '主机 {{ $labels.host }} CPU 忙碌率 {{ $value | humanizePercentage }}'
+          description: '持续 30 分钟超过 90%，不含 idle/wait。先查 top；I/O 等待另看 host:cpu_iowait_ratio，不把等待当成 CPU 执行。'
+          dashboard: *host_dashboard
+          runbook_url: *host_runbook
+      - alert: HostDiskFilling
+        expr: >-
+          (host:filesystem_used_ratio > 0.85)
+          and on(host,host_kind) host:expected_info{disk_alert_owner="vmalert"}
+          and (time() - timestamp(host:filesystem_used_ratio) < 180)
+          and on(host,host_kind) (host:signal_present{signal="filesystem"} == 1 and (time() - timestamp(host:signal_present{signal="filesystem"}) < 180))
+          and on() (time() - host:rules_evaluation_timestamp_seconds < 180)
+        for: 15m
+        labels: {severity: warning, category: host}
+        annotations:
+          summary: '主机 {{ $labels.host }} 磁盘 {{ $labels.mountpoint }} 已用 {{ $value | humanizePercentage }}'
+          description: 'used/(used+free) 持续 15 分钟超过 85%。仅覆盖未交给 host-watchdog 的主机；检查 df 与目录增长来源。'
+          dashboard: *host_dashboard
+          runbook_url: *host_runbook
+      - alert: HostDiskAlmostFull
+        expr: >-
+          (host:filesystem_used_ratio > 0.95)
+          and on(host,host_kind) host:expected_info{disk_alert_owner="vmalert"}
+          and (time() - timestamp(host:filesystem_used_ratio) < 180)
+          and on(host,host_kind) (host:signal_present{signal="filesystem"} == 1 and (time() - timestamp(host:signal_present{signal="filesystem"}) < 180))
+          and on() (time() - host:rules_evaluation_timestamp_seconds < 180)
+        for: 5m
+        labels: {severity: critical, category: host}
+        annotations:
+          summary: '主机 {{ $labels.host }} 磁盘 {{ $labels.mountpoint }} 即将写满'
+          description: '持续 5 分钟超过 95%。先确认可用写入空间，再清理已确认可删除的日志或镜像；不自动删除业务数据。'
+          dashboard: *host_dashboard
+          runbook_url: *host_runbook
 
   # ---- 采集代理自身（2026-09-29 contrib 升级时新增）----
   # 数据来自代理自己的 otelcol_* 指标（127.0.0.1:18888 → prometheus/self → 与主机指标同一出口）。
-  # 出口整体断掉时这些指标也发不出来，那种情况由上面的 CloudHostMetricsMissing / AllMetricsMissing 报；
+  # 出口整体断掉时这些指标也发不出来，那种情况由上面的 HostMetricsMissing / HostMetricsPipelineMissing 报；
   # 这一组只抓「指标还在、日志出了问题」的半故障。
   - name: cloud-hosts-telemetry
     interval: 1m

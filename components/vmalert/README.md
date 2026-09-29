@@ -64,7 +64,7 @@ chart `victoria-metrics-alert` 0.47.0（app v1.150.0）
 
 ## 云主机规则
 
-`rules/cloud-hosts.yml` 覆盖 node0–node4（observability 仓 `make host-otel` 推送的 otelcol-contrib 指标，标签 `host_name` / `host_group="cloud"`）：失联、全部失联、内存、CPU，以及 `host_watchdog="false"` 主机的磁盘；`cloud-hosts-telemetry` 组用代理自身指标报日志链路的半故障（日志被丢弃、落盘队列积压、journald 停滞）。容器、systemd 单元和有 host-watchdog 主机的磁盘由 host-watchdog 直推，这里不重复。分工与验证记录见 observability 仓 `audit/host-otel-2026-09-29/REPORT.md`。
+`rules/host-recording.yml` 是全部主机资源口径的共享来源，清单在 `hosts/observability/hosts.json`。`rules/cloud-hosts.yml` 的 `host-resources` 组已覆盖云主机和 K8s 节点：失联、整组中断、CPU、内存、信号缺失及归属 vmalert 的磁盘；旧 CloudHost 资源规则不再并行评估。`cloud-hosts-telemetry` 保留云主机日志链路半故障检测。磁盘按清单 `disk_alert_owner` 与 host-watchdog 分工，不重复通知。指标、缺失语义、测试和迁移顺序见 [共享主机指标契约](README-host-metrics.md)。
 
 ## 4. 暴露方式
 

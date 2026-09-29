@@ -1,0 +1,125 @@
+rule_files:
+  - ../rules/cloud-hosts.yml
+evaluation_interval: 1m
+tests:
+  - name: never-reported expected host remains missing, not silently healthy
+    interval: 1m
+    input_series:
+      - series: 'host:expected_info{host="node0",host_kind="cloud",disk_alert_owner="watchdog"}'
+        values: '1x35'
+      - series: 'host:expected_info{host="node1",host_kind="cloud",disk_alert_owner="watchdog"}'
+        values: '1x35'
+      - series: 'host:last_seen_timestamp_seconds{host="node0",host_kind="cloud"}'
+        values: '946684800+60x35'
+      - series: 'host:rules_evaluation_timestamp_seconds'
+        values: '946684800+60x35'
+    alert_rule_test:
+      - eval_time: 16m
+        groupname: host-resources
+        alertname: HostMetricsMissing
+        exp_alerts:
+          - exp_labels: {host: node1, host_kind: cloud, disk_alert_owner: watchdog, severity: warning, category: host}
+            exp_annotations:
+              summary: '主机 node1 指标中断或尚未接入'
+              description: '预期主机超过 5 分钟没有原始样本，且持续 10 分钟。云主机查 otelcol；K8s 节点查 otel-node DaemonSet。不要把记录规则的评估时间当成主机心跳。'
+              dashboard: 'https://grafana.apikv.com/d/ops-portal'
+              runbook_url: 'https://github.com/lens077/kubernetes/blob/main/components/vmalert/README-host-metrics.md'
+      - eval_time: 16m
+        groupname: host-resources
+        alertname: HostMetricsPipelineMissing
+        exp_alerts: []
+  - name: group outage produces one alert, no per-host or false resource warnings
+    interval: 1m
+    input_series:
+      - series: 'host:expected_info{host="node0",host_kind="cloud",disk_alert_owner="watchdog"}'
+        values: '1x35'
+      - series: 'host:expected_info{host="node1",host_kind="cloud",disk_alert_owner="watchdog"}'
+        values: '1x35'
+      - series: 'host:rules_evaluation_timestamp_seconds'
+        values: '946684800+60x35'
+    alert_rule_test:
+      - eval_time: 16m
+        groupname: host-resources
+        alertname: HostMetricsMissing
+        exp_alerts: []
+      - eval_time: 16m
+        groupname: host-resources
+        alertname: HostMetricsPipelineMissing
+        exp_alerts:
+          - exp_labels: {host_kind: cloud, severity: warning, category: observability}
+            exp_annotations:
+              summary: 'cloud 主机指标整组中断'
+              description: '连续 10 分钟没有该组任何主机的近期样本。cloud 检查 OTLP 公网入口和 token；kubernetes 检查 otel-node 到集群内 VM。逐台失联告警被这一条合并。'
+              dashboard: 'https://grafana.apikv.com/d/ops-portal'
+              runbook_url: 'https://github.com/lens077/kubernetes/blob/main/components/vmalert/README-host-metrics.md'
+  - name: disk watchdog ownership prevents duplicate disk alert
+    interval: 1m
+    input_series:
+      - series: 'host:expected_info{host="k1",host_kind="kubernetes",disk_alert_owner="watchdog"}'
+        values: '1x35'
+      - series: 'host:expected_info{host="node3",host_kind="cloud",disk_alert_owner="vmalert"}'
+        values: '1x35'
+      - series: 'host:filesystem_used_ratio{host="k1",host_kind="kubernetes",mountpoint="/"}'
+        values: '0.97x35'
+      - series: 'host:filesystem_used_ratio{host="node3",host_kind="cloud",mountpoint="/"}'
+        values: '0.97x35'
+      - series: 'host:signal_present{host="node3",host_kind="cloud",signal="filesystem"}'
+        values: '1x35'
+      - series: 'host:signal_present{host="k1",host_kind="kubernetes",signal="filesystem"}'
+        values: '1x35'
+      - series: 'host:rules_evaluation_timestamp_seconds'
+        values: '946684800+60x35'
+    metricsql_expr_test:
+      - expr: 'ALERTS{alertname="HostDiskAlmostFull",alertstate="firing"}'
+        eval_time: 20m
+        exp_samples:
+          - labels: 'ALERTS{alertgroup="host-resources",alertname="HostDiskAlmostFull",alertstate="firing",category="host",host="node3",host_kind="cloud",mountpoint="/",severity="critical"}'
+            value: 1
+  - name: absent coverage record still raises a partial-signal alert
+    interval: 1m
+    input_series:
+      - series: 'host:expected_info{host="node0",host_kind="cloud",disk_alert_owner="watchdog"}'
+        values: '1x25'
+      - series: 'host:last_seen_timestamp_seconds{host="node0",host_kind="cloud"}'
+        values: '946684800+60x25'
+      - series: 'host:rules_evaluation_timestamp_seconds'
+        values: '946684800+60x25'
+      - series: 'host:signal_present{host="node0",host_kind="cloud",signal="cpu"}'
+        values: '1x25'
+      - series: 'host:signal_present{host="node0",host_kind="cloud",signal="filesystem"}'
+        values: '1x25'
+      - series: 'host:signal_present{host="node0",host_kind="cloud",signal="network"}'
+        values: '1x25'
+    alert_rule_test:
+      - eval_time: 16m
+        groupname: host-resources
+        alertname: HostMetricSignalMissing
+        exp_alerts:
+          - exp_labels: {host: node0, host_kind: cloud, signal: memory, disk_alert_owner: watchdog, severity: warning, category: observability}
+            exp_annotations:
+              summary: '主机 node0 缺少 memory 指标'
+              description: '主机仍上报但某类必要指标缺失；检查对应 scraper、标签和 host-recording 的 health。缺失不是零使用率。'
+              dashboard: 'https://grafana.apikv.com/d/ops-portal'
+              runbook_url: 'https://github.com/lens077/kubernetes/blob/main/components/vmalert/README-host-metrics.md'
+  - name: stale rule evaluator never invents per-host failures
+    interval: 1m
+    input_series:
+      - series: 'host:expected_info{host="node0",host_kind="cloud",disk_alert_owner="watchdog"}'
+        values: '1x20'
+      - series: 'host:rules_evaluation_timestamp_seconds'
+        values: '946684800x20'
+    alert_rule_test:
+      - eval_time: 16m
+        groupname: host-resources
+        alertname: HostMetricsMissing
+        exp_alerts: []
+      - eval_time: 16m
+        groupname: host-resources
+        alertname: HostMetricRulesStale
+        exp_alerts:
+          - exp_labels: {severity: warning, category: observability}
+            exp_annotations:
+              summary: '共享主机指标规则停止更新'
+              description: '规则评估时间超过 180 秒未推进或记录不存在，持续 5 分钟。检查 vmalert host-recording 组的 health、lastError 和 remoteWrite；不要逐台重启采集器。'
+              dashboard: 'https://grafana.apikv.com/d/ops-portal'
+              runbook_url: 'https://github.com/lens077/kubernetes/blob/main/components/vmalert/README-host-metrics.md'
