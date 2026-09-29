@@ -273,7 +273,7 @@ def build_overview():
 # cat / getcat / dsh 在个人 mac 上，常离线，不属于运维入口。
 PORTAL_LINKS = [
     ("观测 / 告警", [
-        ("VMUI 指标查询", "https://metrics.apikv.com/vmui/", "VictoriaMetrics"),
+        ("VMUI 指标查询", "https://metrics.apikv.com/vmui/", "只读 · 用户 ops"),
         ("vmalert 规则", "https://vmalert.apikv.com/", "规则与评估状态"),
         ("Alertmanager", "https://alerts.apikv.com/", "静默 / 分组"),
         ("链路追踪", "https://traces.apikv.com/select/vmui/", "VictoriaTraces"),

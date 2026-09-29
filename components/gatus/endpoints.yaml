@@ -156,9 +156,12 @@ endpoints:
   - name: metrics-edge
     group: public-edge
     # VictoriaMetrics 经公网; 与 grafana-edge 一起构成「公网 → 集群」的端到端判据
+    # 2026-09-29 起经 vmauth 只读: 带只读 token(Secret ops/gatus-vmauth), 同时验证鉴权链路本身
     url: https://metrics.apikv.com/api/v1/query?query=vm_app_version
     interval: 2m
     client: {timeout: 10s, ignore-redirect: true}
+    headers:
+      Authorization: "Bearer ${VMAUTH_READ_TOKEN}"
     conditions: ["[STATUS] == 200", "[BODY].status == success", "[CERTIFICATE_EXPIRATION] > 720h"]
     alerts: [{type: custom, failure-threshold: 6, success-threshold: 4}]
   - name: redis-edge

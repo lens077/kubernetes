@@ -29,6 +29,12 @@ kctl -n "$NAMESPACE" create secret generic gatus-ntfy \
   --from-literal=NTFY_TOKEN="$ntfy_token" \
   --dry-run=client -o yaml | kctl apply -f -
 
+# metrics.apikv.com 经 vmauth 只读(2026-09-29): metrics-edge 探针带只读 token, 与 components/vmauth 同一份 creds。
+# 端到端探针要走真实鉴权路径, 不给它开免鉴权例外。
+kctl -n "$NAMESPACE" create secret generic gatus-vmauth \
+  --from-literal=VMAUTH_READ_TOKEN="$(get_cred vmauth-read-token)" \
+  --dry-run=client -o yaml | kctl apply -f -
+
 # 渲染配置: 未配置 ntfy 时删掉 alerting 段(gatus 对空 url 会校验失败)与端点里的 alerts 行
 tmp=$(mktemp -d)
 if [[ -n $ntfy_url ]]; then

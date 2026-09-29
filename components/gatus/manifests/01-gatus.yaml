@@ -68,6 +68,8 @@ spec:
           envFrom:
             - secretRef:
                 name: gatus-ntfy      # NTFY_URL / NTFY_TOPIC / NTFY_TOKEN(可为空)
+            - secretRef:
+                name: gatus-vmauth    # VMAUTH_READ_TOKEN: metrics-edge 探针的只读 token
           ports:
             - { name: http, containerPort: 8080 }
           readinessProbe:
