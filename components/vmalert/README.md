@@ -64,7 +64,7 @@ chart `victoria-metrics-alert` 0.47.0（app v1.150.0）
 
 ## 云主机规则
 
-`rules/cloud-hosts.yml` 覆盖 node0–node4（observability 仓 `make host-otel` 推送的 hostmetrics，标签 `host_name` / `host_group="cloud"`）：失联、全部失联、内存、CPU，以及 `host_watchdog="false"` 主机的磁盘。容器、systemd 单元和有 host-watchdog 主机的磁盘由 host-watchdog 直推，这里不重复。分工与验证记录见 observability 仓 `audit/host-otel-2026-09-29/REPORT.md`。
+`rules/cloud-hosts.yml` 覆盖 node0–node4（observability 仓 `make host-otel` 推送的 otelcol-contrib 指标，标签 `host_name` / `host_group="cloud"`）：失联、全部失联、内存、CPU，以及 `host_watchdog="false"` 主机的磁盘；`cloud-hosts-telemetry` 组用代理自身指标报日志链路的半故障（日志被丢弃、落盘队列积压、journald 停滞）。容器、systemd 单元和有 host-watchdog 主机的磁盘由 host-watchdog 直推，这里不重复。分工与验证记录见 observability 仓 `audit/host-otel-2026-09-29/REPORT.md`。
 
 ## 4. 暴露方式
 

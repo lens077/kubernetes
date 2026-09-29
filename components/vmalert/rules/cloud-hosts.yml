@@ -1,7 +1,7 @@
 # 云主机（node0–node4）资源与失联告警 —— 2026-09-29 新增。
 #
-# 数据来源：observability 仓 roles/host_otel（otelcol core + hostmetrics）→ otlp-dev.apikv.com
-# （bearer token）→ 集群 collector otlp/public → VictoriaMetrics。资源标签：
+# 数据来源：observability 仓 roles/host_otel（2026-09-29 起 otelcol-contrib：主机/容器指标 + journald/容器日志）
+# → otlp-dev.apikv.com（bearer token）→ 集群 collector otlp/public → VictoriaMetrics / VictoriaLogs。资源标签：
 #   host_name（node0…）  host_group="cloud"  cloud_provider  host_watchdog="true|false"
 # K8s 节点（k1–k3）走 k8s_node_name，不在本组；它们的 Ready 状态由 ecommerce-k8s 组负责。
 #
@@ -88,3 +88,43 @@ groups:
         annotations:
           summary: '云主机 {{ $labels.host_name }} 磁盘 {{ $labels.mountpoint }} 即将写满（{{ $value | humanizePercentage }}）'
           description: 写满后数据库、容器和日志都会失败。先腾出空间（清理旧日志 / 未用镜像），再查增长来源。
+
+  # ---- 采集代理自身（2026-09-29 contrib 升级时新增）----
+  # 数据来自代理自己的 otelcol_* 指标（127.0.0.1:18888 → prometheus/self → 与主机指标同一出口）。
+  # 出口整体断掉时这些指标也发不出来，那种情况由上面的 CloudHostMetricsMissing / AllMetricsMissing 报；
+  # 这一组只抓「指标还在、日志出了问题」的半故障。
+  - name: cloud-hosts-telemetry
+    interval: 1m
+    rules:
+      - alert: CloudHostLogExportFailing
+        # 永久错误（4xx，如请求体被 WAF 拦成 403、单条超限 413）不重试，直接丢弃，只有这个计数能看到。
+        expr: 'sum by (host_name) (increase(otelcol_exporter_send_failed_log_records_total{host_group="cloud"}[15m])) > 0'
+        for: 5m
+        labels: { severity: warning, category: observability }
+        annotations:
+          summary: '云主机 {{ $labels.host_name }} 日志发送失败，15 分钟内丢弃 {{ $value | humanize }} 条'
+          description: ssh 后 journalctl -u otelcol -n 50 看具体状态码。403 且入口在 node1 Traefik 时先查 SafeLine/CrowdSec 是否拦了 otlp-dev.apikv.com；401 是 token 被轮换，重跑 make host-otel。
+
+      - alert: CloudHostTelemetryBacklog
+        # 落盘队列（容量 5000 个请求，约十几个小时）持续积压：发送跟不上产生，或出口时好时坏。
+        expr: >-
+          max by (host_name) (
+            otelcol_exporter_queue_size{host_group="cloud"} / otelcol_exporter_queue_capacity{host_group="cloud"}
+          ) > 0.2
+        for: 15m
+        labels: { severity: warning, category: observability }
+        annotations:
+          summary: '云主机 {{ $labels.host_name }} 遥测发送队列积压 {{ $value | humanizePercentage }}'
+          description: 队列满了以后新数据会被拒收。看 journalctl -u otelcol 里的重试日志与 otlp-dev.apikv.com 的可用性；积压在 /var/lib/otelcol。
+
+      - alert: CloudHostJournaldStalled
+        # 每台主机每小时至少有 cron、sshd 等几十上百行 journal；1 小时一行都没收到，说明 journald 读取卡住
+        # （journalctl 子进程被杀、cursor 损坏等），而主机指标还在（否则由失联规则报）。
+        expr: >-
+          sum by (host_name) (increase(otelcol_receiver_accepted_log_records_total{host_group="cloud",receiver="journald"}[1h])) == 0
+          and on (host_name) group by (host_name) (system_memory_utilization_ratio{host_group="cloud"})
+        for: 15m
+        labels: { severity: warning, category: observability }
+        annotations:
+          summary: '云主机 {{ $labels.host_name }} 1 小时没有采到 journald 日志'
+          description: systemctl restart otelcol 通常即可恢复；仍不行就删 /var/lib/otelcol/receiver_journald_* 后重启（会从当前位置重新开始，中间的日志不补）。
