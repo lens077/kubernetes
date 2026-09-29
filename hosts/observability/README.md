@@ -40,4 +40,4 @@ python3 components/vmalert/verify-host-metrics.py
 
 共享指标语义与页面/告警迁移见 `components/vmalert/README-host-metrics.md`。仅修改清单或源码不会自动改远程机器，必须运行相应部署和验收。回退使用上一提交的同一入口，不运行旧 `observability/infra.yml` 或 `node.yml`。
 
-旧 `observability/Makefile` 的 `host-otel` 已改为转发入口；旧清单仅作本地历史，不再是现役真相源。
+旧 `observability/Makefile` 的 `host-otel` 已改为转发入口，`host-otel.yml` 转入本 playbook，`inventory.host-otel.yml` 是指向生成 inventory 的兼容链接；旧 Pigsty inventory 不再是现役真相源。
