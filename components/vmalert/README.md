@@ -62,6 +62,10 @@ chart `victoria-metrics-alert` 0.47.0（app v1.150.0）
 
 三条规则均带 `dashboard` 和 `runbook_url`，指向公网 Grafana 的 `ntfy-alerting-overview` 及其排查说明面板。同链路故障可能阻断这些通知，外部独立 dead-man 仍须另行建设。发布失败不要通过删除状态 PVC 处理，也不要把 token 输出到日志。
 
+## 云主机规则
+
+`rules/cloud-hosts.yml` 覆盖 node0–node4（observability 仓 `make host-otel` 推送的 hostmetrics，标签 `host_name` / `host_group="cloud"`）：失联、全部失联、内存、CPU，以及 `host_watchdog="false"` 主机的磁盘。容器、systemd 单元和有 host-watchdog 主机的磁盘由 host-watchdog 直推，这里不重复。分工与验证记录见 observability 仓 `audit/host-otel-2026-09-29/REPORT.md`。
+
 ## 4. 暴露方式
 
 - 集群内：`http://vmalert.observability.svc.cluster.local:8880`（`/api/v1/rules`、`/api/v1/alerts`）
