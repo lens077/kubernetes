@@ -1,0 +1,46 @@
+---
+# 与集群内 collector（kubernetes/components/opentelemetry*）同版本，避免行为漂移。
+#
+# 2026-09-29 由 core 换成 contrib：要采容器指标（docker_stats）、journald 与容器日志（file_log + docker_observer），
+# 以及断网落盘缓存（file_storage），这几样 core 都没有。代价是二进制 386MB（core 约 100MB），
+# 常驻内存实测见 audit/host-otel-2026-09-29/REPORT.md「contrib 升级」。
+otelcol_version: 0.158.0
+# 二进制取自官方镜像（按 digest 固定），不从 GitHub release 下：云主机与本机访问 GitHub release 只有 20–70KB/s，
+# 386MB 下载不现实；Docker Hub 经镜像源几十秒到几分钟。取法见 Makefile 的 $(OTELCOL_BIN)。
+otelcol_image: otel/opentelemetry-collector-contrib@sha256:c5918f78992ee73b0d6f0e599423ac5ec52dd5d9726733114d6eca53d5a32ed5
+otelcol_binary: "{{ playbook_dir }}/build/bin/otelcol-contrib-{{ otelcol_version }}/otelcol-contrib"
+# 上面镜像 linux/amd64 层里 /otelcol-contrib 的 sha256；换版本时与 otelcol_image 一起更新
+otelcol_sha256: 257867001618930780ca28a2c7a355ba86e8de2595e03b74da1769dfd7f231a3
+
+# 公网 OTLP 入口：Pangolin otlp-dev.apikv.com → 集群 collector 的 otlp/public（:4319，bearertokenauth）
+# → metrics 进 VictoriaMetrics、logs 进 VictoriaLogs。主机只往外推，不开任何监听端口。
+otlp_endpoint: https://otlp-dev.apikv.com
+# token 在控制机上从 Secret opentelemetry/otlp-public-auth 现取，不落仓库。
+otlp_token_cmd: kubectl -n opentelemetry get secret otlp-public-auth -o jsonpath='{.data.token}'
+
+otelcol_interval: 30s
+# 采集器自身指标（发送量、失败数、队列长度），vmalert 用它判断日志链路是否在丢数据。
+# 只监听 127.0.0.1，由本进程的 prometheus/self 抓取后随主流水线发出；端口避开常见的 8888
+otelcol_self_metrics_port: 18888
+otelcol_self_metrics_interval: 60s
+
+# 进程上限：GOMEMLIMIT 让 GC 提前回收，memory_limiter 在它之上拒收数据保命，MemoryHigh / MemoryMax 是 cgroup 硬顶。
+# MemoryMax 必须给 386MB 二进制的代码页留余量：cgroup 把进程读过的文件页也算进去，顶得太低会反复换出代码页、
+# 启动超时（k3 上 otel-node 内存上限 192Mi 时就是这样起不来，2026-09-29）。
+otelcol_gomemlimit: 100MiB
+otelcol_limit_mib: 120
+otelcol_spike_mib: 30
+otelcol_memory_high: 250M
+otelcol_memory_max: 400M
+otelcol_cpu_quota: 20%
+
+# 落盘缓存：OTLP 发不出去（集群、Pangolin 或 node1 故障）时，发送队列与日志读取位置都存在这里，恢复后补发。
+# 队列按请求计，每个请求是一个 batch（最多 otelcol_batch_size 条）。
+otelcol_state_dir: /var/lib/otelcol
+otelcol_queue_requests: 2000
+otelcol_batch_size: 1000
+
+# 日志：journald（priority ≤ info）与容器 json-file 日志。只读，不改 docker 的日志驱动。
+otelcol_journald_priority: info
+# 容器日志首次读取位置，见 config.yaml.j2 里 file_log 的说明
+otelcol_docker_logs_start_at: beginning

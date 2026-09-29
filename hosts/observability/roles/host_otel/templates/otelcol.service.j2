@@ -1,0 +1,50 @@
+# 由 observability/roles/host_otel 生成，勿手改。
+[Unit]
+Description=OpenTelemetry Collector contrib (host metrics/logs -> {{ otlp_endpoint }})
+Documentation=https://github.com/open-telemetry/opentelemetry-collector-contrib
+After=network-online.target{% if otelcol_docker %} docker.service{% endif %}
+
+Wants=network-online.target
+
+[Service]
+User=otelcol
+Group=otelcol
+# systemd-journal：journald receiver 调 journalctl 读系统日志。
+{% if otelcol_docker %}
+# docker：docker_stats / docker_observer 走 /var/run/docker.sock。注意这等同 root 权限（能调完整 Docker API）；
+# 采集器不监听任何端口，风险面只在二进制本身（官方镜像 digest 固定）。
+{% endif %}
+SupplementaryGroups=systemd-journal{% if otelcol_docker %} docker{% endif %}
+
+EnvironmentFile=/etc/otelcol/otelcol.env
+Environment=GOMEMLIMIT={{ otelcol_gomemlimit }}
+ExecStart=/usr/local/bin/otelcol-contrib --config=/etc/otelcol/config.yaml
+Restart=on-failure
+RestartSec=10
+Nice=10
+MemoryHigh={{ otelcol_memory_high }}
+MemoryMax={{ otelcol_memory_max }}
+CPUQuota={{ otelcol_cpu_quota }}
+# 落盘队列与日志读取位置（file_storage），systemd 建目录并归 otelcol 所有
+StateDirectory=otelcol
+StateDirectoryMode=0750
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+{% if otelcol_docker %}
+# 容器日志 /var/lib/docker/containers/<id>/<id>-json.log 是 root:root 0640、目录 0710，
+# 只给「绕过读权限检查」这一项能力，不给 root。
+AmbientCapabilities=CAP_DAC_READ_SEARCH
+CapabilityBoundingSet=CAP_DAC_READ_SEARCH
+{% else %}
+CapabilityBoundingSet=
+{% endif %}
+
+[Install]
+WantedBy=multi-user.target

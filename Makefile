@@ -58,6 +58,15 @@ contracts: ## 只读检查组件契约与当前集群
 mapping-test: ## 离线检查映射路径与 control-tower Schema
 	@"$(BASH_BIN)" tests/mapping_test.sh
 
+.PHONY: host-metrics-generate host-metrics-check host-otel
+host-metrics-generate: ## 从统一主机清单生成记录规则与云主机 inventory
+	@python3 components/vmalert/build-host-recording.py
+host-metrics-check: ## 检查共享规则生成物和主机契约测试
+	@python3 components/vmalert/build-host-recording.py --check
+	@PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s components/vmalert -p 'test_host_recording.py'
+host-otel: confirm ## 部署现役云主机采集器（H=node3 可限一台；不执行旧 Pigsty 剧本）
+	@$(MAKE) -C hosts/observability deploy $(if $(H),H=$(H))
+
 cc-plan: ## 预览服务配置差异，不写入
 	@"$(BASH_BIN)" tools/config-center-harvest.sh --strategy "$(STRATEGY)" --dry-run --require-schema
 

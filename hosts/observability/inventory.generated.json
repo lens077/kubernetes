@@ -1,0 +1,38 @@
+{
+  "all": {
+    "children": {
+      "host_otel": {
+        "hosts": {
+          "node0": {
+            "host_label": "node0",
+            "cloud_provider": "tencent",
+            "host_watchdog": true
+          },
+          "node1": {
+            "host_label": "node1",
+            "cloud_provider": "tencent",
+            "host_watchdog": true
+          },
+          "node2": {
+            "host_label": "node2",
+            "cloud_provider": "aliyun",
+            "host_watchdog": true
+          },
+          "node3": {
+            "host_label": "node3",
+            "cloud_provider": "tencent",
+            "host_watchdog": false
+          },
+          "node4": {
+            "host_label": "node4",
+            "cloud_provider": "tencent",
+            "host_watchdog": false
+          }
+        },
+        "vars": {
+          "host_group": "cloud"
+        }
+      }
+    }
+  }
+}

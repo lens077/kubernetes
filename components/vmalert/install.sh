@@ -18,6 +18,9 @@ comp_installed victoriametrics vm-single-victoria-metrics-single-server \
 comp_installed observability alertmanager \
   || log_warn "alertmanager 尚未安装: 规则会评估但告警发不出去, 装上后自动恢复"
 
+# Generated host rules and cloud inventory must match their shared source before deploying.
+python3 "$DIR/build-host-recording.py" --check
+
 # 规则文件语法先在本地过一遍 YAML, 错了别等 vmalert 起不来才发现
 rules=()
 while read -r f; do [[ -n $f ]] && rules+=("$f"); done < <(manifest_files "$DIR/rules")

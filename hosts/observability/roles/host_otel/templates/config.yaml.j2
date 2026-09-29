@@ -1,0 +1,196 @@
+# 由 observability/roles/host_otel 生成，勿手改。
+# 云主机采集代理（otelcol-contrib）：
+#   指标：host_metrics{% if otelcol_docker %} + docker_stats{% endif %} → VictoriaMetrics
+#   日志：journald{% if otelcol_docker %} + 容器 json-file 日志{% endif %} → VictoriaLogs
+# 都经公网 OTLP（bearer token）→ 集群 collector otlp/public。
+# 进库标签：host_name / host_group / cloud_provider / host_watchdog（VM 里点号转下划线；VL 里保留点号）。
+extensions:
+  # 发送队列与日志读取位置落盘：断网期间数据留在本机，恢复后补发；重启后从上次位置继续读，不重复不遗漏
+  file_storage:
+    directory: {{ otelcol_state_dir }}
+    compaction:
+      on_start: true
+      on_rebound: true
+      directory: {{ otelcol_state_dir }}
+{% if otelcol_docker %}
+  # 发现运行中的容器，给每个容器起一个 file_log 读它的 json-file 日志，并带上容器名与镜像名
+  docker_observer:
+    endpoint: unix:///var/run/docker.sock
+    include_all_containers: true   # 没有暴露端口的容器也要发现；配合 rule 的 port == 0 每个容器只起一个读取器
+    # 必须开：不开时端点按容器 IP 生成，接在两个网络上的容器（node1 上 gerbil、blog 等 6 个）会得到两个端点、
+    # 两个读取器，日志在 VictoriaLogs 里各重复一份（2026-09-29 实测）；而且 IP 一变读取位置就丢。
+    # 开了以后端点是容器 hostname（默认即容器 ID 前 12 位），一容器一个，重启不变。
+    use_hostname_if_present: true
+{% endif %}
+
+receivers:
+  host_metrics:              # 0.158 起的新名；旧名 hostmetrics 启动时打 deprecation warn
+    collection_interval: {{ otelcol_interval }}
+    scrapers:
+      cpu:
+        metrics:
+          system.cpu.utilization: { enabled: true }   # 默认关闭；不开则 CPU 使用率图为空
+      memory:
+        metrics:
+          system.memory.utilization: { enabled: true }
+      load: {}
+      paging: {}
+      disk:
+        exclude:
+          devices: ["^loop.*", "^ram.*", "^sr[0-9]+"]
+          match_type: regexp
+      filesystem:
+        exclude_fs_types:
+          fs_types: [autofs, binfmt_misc, bpf, cgroup, cgroup2, configfs, debugfs, devpts, devtmpfs, fuse.lxcfs, fusectl, hugetlbfs, iso9660, mqueue, nsfs, overlay, proc, procfs, pstore, ramfs, rpc_pipefs, securityfs, selinuxfs, squashfs, sysfs, tmpfs, tracefs]
+          match_type: strict
+        exclude_mount_points:
+          mount_points: ["^/var/lib/docker/.*", "^/run/.*", "^/snap/.*", "^/sys/.*", "^/proc/.*", "^/dev/.*"]
+          match_type: regexp
+      network:
+        exclude:
+          interfaces: ["^lo$", "^veth.*", "^br-.*", "^docker[0-9]*$", "^cali.*", "^cilium.*", "^lxc.*"]
+          match_type: regexp
+
+  prometheus/self:
+    config:
+      scrape_configs:
+        - job_name: host-otelcol
+          scrape_interval: {{ otelcol_self_metrics_interval }}
+          static_configs:
+            - targets: ["127.0.0.1:{{ otelcol_self_metrics_port }}"]
+
+  journald:
+    priority: {{ otelcol_journald_priority }}
+    start_at: end            # 首次安装不回灌历史 journal；之后靠 storage 里的 cursor 续读
+    storage: file_storage
+{% if otelcol_docker %}
+
+  docker_stats:
+    endpoint: unix:///var/run/docker.sock
+    collection_interval: {{ otelcol_interval }}
+    metrics:
+      container.restarts: { enabled: true }   # 默认关闭；看崩溃循环用
+      container.uptime: { enabled: true }
+
+  receiver_creator/docker_logs:
+    watch_observers: [docker_observer]
+    receivers:
+      file_log:
+        # host != ""：network_mode: service:X 的容器（node1 的 traefik 共用 gerbil 的网络栈）会多出一个空地址端点，
+        # 不排除就又是一份重复日志（2026-09-29 实测）
+        rule: type == "container" and port == 0 and host != ""
+        config:
+          include: ["/var/lib/docker/containers/`container_id`/`container_id`-json.log"]
+          # 读取位置按「接收器实例」存，实例名来自上面的 hostname 端点，重启不变：已读过的容器按偏移续读，
+          # 新容器（新 ID、新文件）从第一行读，不丢启动日志。首次安装会回灌现有日志，VictoriaLogs 丢弃超过保留期（7d）的行。
+          # 实例名规则变化时（例如改 docker_observer 的端点来源）先用 -e otelcol_docker_logs_start_at=end 跑一遍，避免整份重读。
+          start_at: {{ otelcol_docker_logs_start_at }}
+          storage: file_storage
+          max_log_size: 64KiB
+          operators:
+            - type: container
+              format: docker
+              add_metadata_from_filepath: false
+        resource_attributes:
+          container.name: "`name`"
+          container.image.name: "`image`"
+{% endif %}
+
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: {{ otelcol_limit_mib }}
+    spike_limit_mib: {{ otelcol_spike_mib }}
+  resource/host:
+    attributes:
+      - { key: host.name,      value: "{{ host_label }}",     action: upsert }
+      - { key: host.group,     value: "{{ host_group }}",     action: upsert }
+      - { key: cloud.provider, value: "{{ cloud_provider }}", action: upsert }
+      - { key: host.watchdog,  value: "{{ host_watchdog | bool | string | lower }}", action: upsert }
+  resource/journald:
+    attributes:
+      - { key: log.source, value: journald, action: upsert }
+  # journald 记录的 body 是整张字段表；只留 MESSAGE 作正文，单元名与级别拆成字段，其余（_PID、_BOOT_ID…）丢弃
+  transform/journald:
+    error_mode: ignore
+    log_statements:
+      - context: log
+        conditions: ['IsMap(body)']
+        statements:
+          - set(attributes["systemd.unit"], body["_SYSTEMD_UNIT"]) where body["_SYSTEMD_UNIT"] != nil
+          - set(attributes["syslog.identifier"], body["SYSLOG_IDENTIFIER"]) where body["SYSLOG_IDENTIFIER"] != nil
+          - set(severity_text, "ERROR") where body["PRIORITY"] != nil and IsMatch(body["PRIORITY"], "^[0-3]$")
+          - set(severity_number, SEVERITY_NUMBER_ERROR) where severity_text == "ERROR"
+          - set(severity_text, "WARN") where body["PRIORITY"] == "4"
+          - set(severity_number, SEVERITY_NUMBER_WARN) where severity_text == "WARN"
+          - set(severity_text, "INFO") where body["PRIORITY"] == "5" or body["PRIORITY"] == "6"
+          - set(severity_number, SEVERITY_NUMBER_INFO) where severity_text == "INFO"
+          - set(body, body["MESSAGE"]) where body["MESSAGE"] != nil
+{% if otelcol_docker %}
+  resource/docker:
+    attributes:
+      - { key: log.source, value: docker, action: upsert }
+  transform/docker:
+    error_mode: ignore
+    log_statements:
+      - context: log
+        statements:
+          - replace_pattern(body, "\\r?\\n$", "") where IsString(body)
+          - delete_key(attributes, "log.file.name")
+{% endif %}
+  batch:
+    timeout: 30s
+    send_batch_size: {{ otelcol_batch_size }}
+    send_batch_max_size: {{ otelcol_batch_size }}
+
+exporters:
+  otlp_http:                 # 0.158 起的新组件名；旧名 otlphttp 仍可用但会打 deprecation 日志
+    endpoint: {{ otlp_endpoint }}
+    headers:
+      Authorization: "Bearer ${env:OTLP_PUBLIC_TOKEN}"
+    compression: gzip
+    timeout: 30s
+    retry_on_failure:
+      enabled: true
+      max_elapsed_time: 0    # 可重试错误一直重试，数据留在落盘队列里；永久错误（4xx）不重试，直接丢弃并打日志
+    sending_queue:
+      enabled: true
+      storage: file_storage
+      num_consumers: 2
+      queue_size: {{ otelcol_queue_requests }}   # 约 30s 一个请求 × 3 条流水线，够缓存十几个小时
+
+service:
+  extensions: [file_storage{% if otelcol_docker %}, docker_observer{% endif %}]
+  telemetry:
+    logs:
+      level: warn
+    resource:
+      attributes:
+        - { name: service.name,        value: host-otelcol }
+        - { name: service.instance.id, value: "{{ host_label }}" }
+    # 自身指标（发出/失败的记录数、队列长度）只在 127.0.0.1 暴露，由上面的 prometheus/self 抓取后走主流水线（gzip + 落盘队列）。
+    # 不用 SDK 的 periodic OTLP 推送：它发的是明文 protobuf，otlp-dev 前面 node1 Traefik 上的 SafeLine WAF
+    # 会把里面的组件名、路径当攻击特征拦成 403（2026-09-29 node4 实测）；gzip 过的请求体 WAF 不解析。
+    metrics:
+      level: basic
+      readers:
+        - pull:
+            exporter:
+              prometheus:
+                host: 127.0.0.1
+                port: {{ otelcol_self_metrics_port }}
+  pipelines:
+    metrics:
+      receivers: [host_metrics, prometheus/self{% if otelcol_docker %}, docker_stats{% endif %}]
+      processors: [memory_limiter, resource/host, batch]
+      exporters: [otlp_http]
+    logs/journald:
+      receivers: [journald]
+      processors: [memory_limiter, transform/journald, resource/host, resource/journald, batch]
+      exporters: [otlp_http]
+{% if otelcol_docker %}
+    logs/docker:
+      receivers: [receiver_creator/docker_logs]
+      processors: [memory_limiter, transform/docker, resource/host, resource/docker, batch]
+      exporters: [otlp_http]
+{% endif %}

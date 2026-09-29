@@ -1,0 +1,10 @@
+---
+# Current host collection only. Never runs the retired Pigsty inventory/playbooks.
+- name: CLOUD HOST OBSERVABILITY
+  hosts: host_otel
+  become: true
+  gather_facts: false
+  serial: 1
+  any_errors_fatal: true
+  roles:
+    - host_otel

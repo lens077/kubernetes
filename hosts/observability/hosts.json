@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "hosts": [
+    {"host": "k1", "host_kind": "kubernetes", "disk_alert_owner": "watchdog"},
+    {"host": "k2", "host_kind": "kubernetes", "disk_alert_owner": "watchdog"},
+    {"host": "k3", "host_kind": "kubernetes", "disk_alert_owner": "watchdog"},
+    {"host": "node0", "host_kind": "cloud", "cloud_provider": "tencent", "disk_alert_owner": "watchdog", "ssh_alias": "node0"},
+    {"host": "node1", "host_kind": "cloud", "cloud_provider": "tencent", "disk_alert_owner": "watchdog", "ssh_alias": "node1"},
+    {"host": "node2", "host_kind": "cloud", "cloud_provider": "aliyun", "disk_alert_owner": "watchdog", "ssh_alias": "node2"},
+    {"host": "node3", "host_kind": "cloud", "cloud_provider": "tencent", "disk_alert_owner": "vmalert", "ssh_alias": "node3"},
+    {"host": "node4", "host_kind": "cloud", "cloud_provider": "tencent", "disk_alert_owner": "vmalert", "ssh_alias": "node4"}
+  ]
+}
