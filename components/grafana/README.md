@@ -55,6 +55,7 @@
 
 | 面板 | 用途 |
 |---|---|
+| `ops-portal` | 运维控制台：Grafana 面板与公网服务跳转卡片，全部主机（k1–k3 + node0–node4）CPU / 内存 / 根分区概览 |
 | `ntfy-alerting-overview` | 当前问题原文、实例入口、通知发布与降噪 |
 | `alert-instance-detail` | 单实例说明、表达式、实际值、标签与对象链接 |
 | `infra-overview` | 观测能力覆盖与统一入口；缺失来源明确标出 |
@@ -63,7 +64,9 @@
 | `infra-cdc` | Connect task、Debezium、复制槽 WAL、消费 lag 和 PG/ES 对账 |
 | `infra-observability` | OTel 队列、Hubble、Gatus 与通知链路 |
 
-**边界**：实例详情是实时视图，不保存已恢复实例的历史正文。`activeAt` 是条件开始时间，包含 pending 的 `for` 阶段；不是 Alertmanager `startsAt`。备份时间戳为 0 显示无记录，不换算成 1970 年起的年龄。宿主 CPU/内存、容器实际用量、Backup CR 状态和部分服务专属指标仍需采集，不用已有 Gatus/Pod 状态冒充覆盖。
+**运维控制台**：跳转卡片是 HTML 文本面板，只用 Grafana 消毒器保留的内联样式（flex，不用 grid）；外部服务 `target="_blank"`，站内面板同页打开。链接清单在 `build-dashboards.py` 的 `PORTAL_LINKS`，按 Pangolin 启用资源手工筛选：纯 API / 数据入口（`*-api`、`es-dev`、`minio` S3 端口、`otlp-dev`、`gateway`）、已屏蔽资源和个人 mac 上的站点不收录，`test_portal.py` 防止回归。资源面板读 OTel hostmetrics（`system_*`）：K8s 节点带 `k8s_node_name`（opentelemetry-node），云主机 node0–node4 带 `host_name`（observability 仓 `make host-otel`），用 `label_join` 合成同一个 `host` 维度。主机从图中消失即指标中断，由 vmalert `CloudHostMetricsMissing` 提醒。
+
+**边界**：实例详情是实时视图，不保存已恢复实例的历史正文。`activeAt` 是条件开始时间，包含 pending 的 `for` 阶段；不是 Alertmanager `startsAt`。备份时间戳为 0 显示无记录，不换算成 1970 年起的年龄。K8s 以外云主机的 CPU/内存、容器实际用量、Backup CR 状态和部分服务专属指标仍需采集，不用已有 Gatus/Pod 状态冒充覆盖。
 
 ### 生成与发布
 

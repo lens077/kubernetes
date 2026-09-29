@@ -13,6 +13,7 @@ PROM = {"type": "prometheus", "uid": "${datasource}"}
 EVIDENCE = {"type": "yesoreyeram-infinity-datasource", "uid": "ds-alert-evidence"}
 ROWS = (ROOT / "alert_rows.jq").read_text()
 NAV = [
+    ("运维控制台", "ops-portal"),
     ("问题工作台", "ntfy-alerting-overview"), ("基础设施", "infra-overview"),
     ("数据库 / 备份", "infra-cnpg"), ("Kubernetes", "infra-kubernetes"),
     ("Kafka / CDC", "infra-cdc"), ("采集 / 网络", "infra-observability"),
@@ -256,19 +257,116 @@ def build_overview():
     capabilities=[('Kubernetes 对象状态','k8s_container_ready','infra-kubernetes'),('CNPG / 备份时间','cnpg_collector_up','infra-cnpg'),
                   ('Kafka / Connect','kafka_connect_connector_task_status','infra-cdc'),('OTel 导出队列','otelcol_exporter_queue_size','infra-observability'),
                   ('Hubble 网络事件','hubble_flows_processed_total','infra-observability'),('Gatus 合成探测','gatus_results_endpoint_success','infra-observability'),
-                  ('通知 bridge','alert_bridge_notifications_total','ntfy-alerting-overview'),('宿主 CPU exporter','node_cpu_seconds_total','infra-kubernetes')]
+                  ('通知 bridge','alert_bridge_notifications_total','ntfy-alerting-overview'),('K8s 节点资源（hostmetrics）','system_cpu_utilization_ratio{k8s_node_name!=""}','ops-portal'),('云主机资源（node0–node4）','system_cpu_utilization_ratio{host_group="cloud"}','ops-portal')]
     expressions=['label_replace(label_replace((count('+metric+') > bool 0) or vector(0), "capability", '+json.dumps(name,ensure_ascii=False)+', "", ""), "dashboard_uid", "'+uid+'", "", "")' for name,metric,uid in capabilities]
     p=table(1,'观测覆盖 · 有指标不等于服务健康',' or '.join(expressions),0,0,24,10,fields={'capability':'观测能力','Value':'当前数据','dashboard_uid':'入口'})
     p['fieldConfig']['overrides']=[override('当前数据',mappings=mappings({0:('未接入 / 无数据','red'),1:('有指标','green')})),
         override('观测能力',links=[{'title':'打开证据面板','url':'/d/${__data.fields["入口"]}?${__url_time_range}','targetBlank':False}]),override('入口',**{'custom.hidden':True})]
     panels=[p,text(2,'基础设施定位路径','**数据库 / 备份**：可用备份时间、恢复点、WAL、连接与复制。\n\n**Kubernetes**：节点 Ready、Deployment/StatefulSet、运行容器与重启。\n\n**Kafka / CDC**：task、源库连接、复制槽、lag 和对账。\n\n**采集 / 网络**：OTel 队列、Hubble 丢弃、Gatus 与通知链。\n\n当前告警的「查看证据」会携带对象筛选；每页顶部可返回问题工作台。',10,7),
-      text(3,'仍需补齐的观测，不以空白冒充健康','- node0/node1/node2 宿主资源与 watchdog 状态尚无本套 Prometheus 证据；不能把 Kubernetes 节点状态当成全部宿主。\n- 容器实际 CPU/内存、磁盘容量需要对应采集器，requests/limits 不等于实际用量。\n- CNPG Backup / ScheduledBackup 对象状态和恢复演练尚未在本面板自动取证；备份时间为 0 能证明缺少可用备份记录，不能单独区分配置缺失与任务失败。\n- Silo、Redis、Elasticsearch 等应用专属指标未逐一接入；目前只能查其 Kubernetes 对象和已配置的 Gatus 探测。\n- 外部独立 dead-man 与手机送达仍需独立验证。',17,8)]
+      text(3,'仍需补齐的观测，不以空白冒充健康','- 云主机 node0–node4 已有 CPU/内存/磁盘/网络指标（host_otel），但容器、systemd 单元与 host-watchdog 巡检结果仍只在 host-watchdog 本机，不进本套指标。\n- 容器实际 CPU/内存、磁盘容量需要对应采集器，requests/limits 不等于实际用量。\n- CNPG Backup / ScheduledBackup 对象状态和恢复演练尚未在本面板自动取证；备份时间为 0 能证明缺少可用备份记录，不能单独区分配置缺失与任务失败。\n- Silo、Redis、Elasticsearch 等应用专属指标未逐一接入；目前只能查其 Kubernetes 对象和已配置的 Gatus 探测。\n- 外部独立 dead-man 与手机送达仍需独立验证。',17,8)]
     return dashboard('infra-overview','基础设施 · 观测覆盖与定位入口',panels)
+
+
+# 跳转控制台只收「给人打开的页面」。以下 Pangolin 资源刻意不收：纯 API / 数据入口
+# (argocd-api、config-api、scorpius-api、silo-api、es-dev、minio 的 S3 端口、otlp-dev、gateway)
+# 打开只会得到 JSON、401 或 404；lyrapass-tunnel-internal 已 blockAccess；
+# cat / getcat / dsh 在个人 mac 上，常离线，不属于运维入口。
+PORTAL_LINKS = [
+    ("观测 / 告警", [
+        ("VMUI 指标查询", "https://metrics.apikv.com/vmui/", "VictoriaMetrics"),
+        ("vmalert 规则", "https://vmalert.apikv.com/", "规则与评估状态"),
+        ("Alertmanager", "https://alerts.apikv.com/", "静默 / 分组"),
+        ("链路追踪", "https://traces.apikv.com/select/vmui/", "VictoriaTraces"),
+        ("Healthchecks", "https://hc.apikv.com/", "定时任务心跳"),
+        ("ntfy", "https://ntfy.apikv.com/", "通知主题"),
+    ]),
+    ("平台管理", [
+        ("Pangolin", "https://pangolin.apikv.com/", "公网入口 / 隧道"),
+        ("Argo CD", "https://argocd.apikv.com/", "K8s 发布"),
+        ("配置中心", "https://config.apikv.com/", ""),
+        ("Casdoor", "https://casdoor.apikv.com/", "统一登录"),
+        ("密码管理", "https://ps.apikv.com/", "Vaultwarden"),
+        ("Umami", "https://umami.apikv.com/", "站点访问统计"),
+        ("Gorse", "https://gorse.apikv.com/", "推荐引擎"),
+    ]),
+    ("业务站点", [
+        ("主页", "https://apikv.com/", ""),
+        ("博客", "https://blog.apikv.com/", ""),
+        ("剪贴板", "https://scorpius.apikv.com/", "Scorpius"),
+        ("Silo", "https://silo.apikv.com/", ""),
+        ("CS", "https://cs.apikv.com/", ""),
+        ("MCM", "https://mcm.apikv.com/", ""),
+        ("Stream", "https://stream.apikv.com/", "MediaMTX"),
+    ]),
+]
+
+
+def portal_html():
+    """Link cards for the text panel. Only inline styles Grafana's sanitizer keeps (flex, not grid)."""
+    card = ('display:block;min-width:150px;padding:8px 12px;border-radius:6px;text-decoration:none;'
+            'border:1px solid rgba(127,127,127,0.35);background:rgba(127,127,127,0.08)')
+    def link(name, url, note):
+        # 站内面板同页打开（保留登录态与时间范围），外部服务新标签页打开。
+        blank = '' if url.startswith('/') else ' target="_blank"'
+        caption = note or url.split('//')[-1].rstrip('/')
+        return (f'<a href="{url}"{blank} style="{card}"><b>{name}</b><br>'
+                f'<small style="opacity:0.7">{caption}</small></a>')
+    def group(title, items):
+        cards = ''.join(link(*item) for item in items)
+        return (f'<div style="margin-bottom:10px"><div style="font-weight:600;opacity:0.8;margin-bottom:6px">{title}</div>'
+                f'<div style="display:flex;flex-wrap:wrap;gap:8px">{cards}</div></div>')
+    notes = {'ntfy-alerting-overview': '当前告警与详情', 'infra-overview': '观测覆盖', 'infra-cnpg': '备份 / 复制',
+             'infra-kubernetes': '对象 / 就绪', 'infra-cdc': '位点 / 对账', 'infra-observability': 'OTel / Gatus / 通知'}
+    internal = [(name, '/d/' + uid, notes.get(uid, '')) for name, uid in NAV if uid != 'ops-portal']
+    internal.append(('日志 Explore', '/explore', 'VictoriaLogs'))
+    return ''.join(group(t, items) for t, items in [('Grafana 面板', internal), *PORTAL_LINKS])
+
+
+def bargauge(panel_id, title, expr, x, y, w=8, h=8, description=""):
+    return {**base(panel_id, title, "bargauge", x, y, w, h, description), "datasource": PROM,
+            "targets": [target(expr, instant=True, legend="{{host}}")],
+            "fieldConfig": {"defaults": {"unit": "percentunit", "min": 0, "max": 1, "decimals": 1, "noValue": "指标缺失",
+                 "color": {"mode": "thresholds"},
+                 "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": None}, {"color": "orange", "value": 0.7}, {"color": "red", "value": 0.9}]}},
+                 "overrides": []},
+            "options": {"orientation": "horizontal", "displayMode": "gradient", "showUnfilled": True, "valueMode": "color",
+                        "namePlacement": "left", "sizing": "auto",
+                        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": False}}}
+
+
+def by_host(selector):
+    """K8s 节点（opentelemetry-node）带 k8s_node_name，云主机（observability roles/host_otel）带 host_name；
+    两者互斥，label_join 拼成同一个 host 维度，面板按一套查询显示全部主机。"""
+    return 'label_join(' + selector + ', "host", "", "k8s_node_name", "host_name")'
+
+
+def build_portal():
+    cpu = '1 - avg by (host) (' + by_host('system_cpu_utilization_ratio{state="idle"}') + ')'
+    mem = 'sum by (host) (' + by_host('system_memory_utilization_ratio{state="used"}') + ')'
+    disk = ('sum by (host) (' + by_host('system_filesystem_usage_bytes{mountpoint="/",state="used"}') + ') / sum by (host) ('
+            + by_host('system_filesystem_usage_bytes{mountpoint="/",state=~"used|free"}') + ')')
+    links = text(1, '', portal_html(), 0, 11)
+    links['options']['mode'] = 'html'
+    panels = [
+        links,
+        bargauge(2, 'CPU 使用率', cpu, 0, 11, description='1 - idle 占比，主机所有核平均。'),
+        bargauge(3, '内存使用率', mem, 8, 11, description='hostmetrics 的 used 状态，不含 page cache / buffer，接近 free 命令里的 used。'),
+        bargauge(4, '根分区使用率', disk, 16, 11, description='used / (used + free)，与 df 的 Use% 同口径（不含 root 保留块）。'),
+        {**timeseries(5, 'CPU 使用率趋势', [(cpu, '{{host}}')], 0, 19, h=11, unit='percentunit'), 'interval': '1m'},
+        {**timeseries(6, '内存使用率趋势', [(mem, '{{host}}')], 12, 19, h=11, unit='percentunit'), 'interval': '1m'},
+        text(7, '覆盖范围', 'k1–k3 来自集群 opentelemetry-node；node0–node4 来自主机上的 otelcol（observability 仓 `make host-otel`），经 otlp-dev.apikv.com 推送。'
+             '某台主机从图中消失即表示指标中断，由 vmalert `CloudHostMetricsMissing` 提醒。容器实际用量尚未采集。', 30, 3),
+    ]
+    for p in panels[4:6]:
+        p['fieldConfig']['defaults'].update(min=0, max=1)
+    d = dashboard('ops-portal', '运维控制台 · 跳转与资源', panels, description='常用入口与全部主机（K8s 节点 + 云主机）CPU / 内存 / 磁盘概览。')
+    d['time'] = {'from': 'now-3h', 'to': 'now'}
+    return d
 
 
 def main():
     parser=argparse.ArgumentParser();parser.add_argument('--check',action='store_true');args=parser.parse_args()
-    documents=[build_main(),build_detail(),build_cnpg(),build_kubernetes(),build_cdc(),build_observability(),build_overview()]
+    documents=[build_portal(),build_main(),build_detail(),build_cnpg(),build_kubernetes(),build_cdc(),build_observability(),build_overview()]
     dirty=[]
     for doc in documents:
         out=ROOT/'dashboards'/(doc['uid']+'.json')

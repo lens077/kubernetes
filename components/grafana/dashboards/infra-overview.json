@@ -39,7 +39,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "label_replace(label_replace((count(k8s_container_ready) > bool 0) or vector(0), \"capability\", \"Kubernetes 对象状态\", \"\", \"\"), \"dashboard_uid\", \"infra-kubernetes\", \"\", \"\") or label_replace(label_replace((count(cnpg_collector_up) > bool 0) or vector(0), \"capability\", \"CNPG / 备份时间\", \"\", \"\"), \"dashboard_uid\", \"infra-cnpg\", \"\", \"\") or label_replace(label_replace((count(kafka_connect_connector_task_status) > bool 0) or vector(0), \"capability\", \"Kafka / Connect\", \"\", \"\"), \"dashboard_uid\", \"infra-cdc\", \"\", \"\") or label_replace(label_replace((count(otelcol_exporter_queue_size) > bool 0) or vector(0), \"capability\", \"OTel 导出队列\", \"\", \"\"), \"dashboard_uid\", \"infra-observability\", \"\", \"\") or label_replace(label_replace((count(hubble_flows_processed_total) > bool 0) or vector(0), \"capability\", \"Hubble 网络事件\", \"\", \"\"), \"dashboard_uid\", \"infra-observability\", \"\", \"\") or label_replace(label_replace((count(gatus_results_endpoint_success) > bool 0) or vector(0), \"capability\", \"Gatus 合成探测\", \"\", \"\"), \"dashboard_uid\", \"infra-observability\", \"\", \"\") or label_replace(label_replace((count(alert_bridge_notifications_total) > bool 0) or vector(0), \"capability\", \"通知 bridge\", \"\", \"\"), \"dashboard_uid\", \"ntfy-alerting-overview\", \"\", \"\") or label_replace(label_replace((count(node_cpu_seconds_total) > bool 0) or vector(0), \"capability\", \"宿主 CPU exporter\", \"\", \"\"), \"dashboard_uid\", \"infra-kubernetes\", \"\", \"\")",
+          "expr": "label_replace(label_replace((count(k8s_container_ready) > bool 0) or vector(0), \"capability\", \"Kubernetes 对象状态\", \"\", \"\"), \"dashboard_uid\", \"infra-kubernetes\", \"\", \"\") or label_replace(label_replace((count(cnpg_collector_up) > bool 0) or vector(0), \"capability\", \"CNPG / 备份时间\", \"\", \"\"), \"dashboard_uid\", \"infra-cnpg\", \"\", \"\") or label_replace(label_replace((count(kafka_connect_connector_task_status) > bool 0) or vector(0), \"capability\", \"Kafka / Connect\", \"\", \"\"), \"dashboard_uid\", \"infra-cdc\", \"\", \"\") or label_replace(label_replace((count(otelcol_exporter_queue_size) > bool 0) or vector(0), \"capability\", \"OTel 导出队列\", \"\", \"\"), \"dashboard_uid\", \"infra-observability\", \"\", \"\") or label_replace(label_replace((count(hubble_flows_processed_total) > bool 0) or vector(0), \"capability\", \"Hubble 网络事件\", \"\", \"\"), \"dashboard_uid\", \"infra-observability\", \"\", \"\") or label_replace(label_replace((count(gatus_results_endpoint_success) > bool 0) or vector(0), \"capability\", \"Gatus 合成探测\", \"\", \"\"), \"dashboard_uid\", \"infra-observability\", \"\", \"\") or label_replace(label_replace((count(alert_bridge_notifications_total) > bool 0) or vector(0), \"capability\", \"通知 bridge\", \"\", \"\"), \"dashboard_uid\", \"ntfy-alerting-overview\", \"\", \"\") or label_replace(label_replace((count(system_cpu_utilization_ratio{k8s_node_name!=\"\"}) > bool 0) or vector(0), \"capability\", \"K8s 节点资源（hostmetrics）\", \"\", \"\"), \"dashboard_uid\", \"ops-portal\", \"\", \"\") or label_replace(label_replace((count(system_cpu_utilization_ratio{host_group=\"cloud\"}) > bool 0) or vector(0), \"capability\", \"云主机资源（node0–node4）\", \"\", \"\"), \"dashboard_uid\", \"ops-portal\", \"\", \"\")",
           "datasource": {
             "type": "prometheus",
             "uid": "${datasource}"
@@ -183,7 +183,7 @@
       "description": "",
       "options": {
         "mode": "markdown",
-        "content": "- node0/node1/node2 宿主资源与 watchdog 状态尚无本套 Prometheus 证据；不能把 Kubernetes 节点状态当成全部宿主。\n- 容器实际 CPU/内存、磁盘容量需要对应采集器，requests/limits 不等于实际用量。\n- CNPG Backup / ScheduledBackup 对象状态和恢复演练尚未在本面板自动取证；备份时间为 0 能证明缺少可用备份记录，不能单独区分配置缺失与任务失败。\n- Silo、Redis、Elasticsearch 等应用专属指标未逐一接入；目前只能查其 Kubernetes 对象和已配置的 Gatus 探测。\n- 外部独立 dead-man 与手机送达仍需独立验证。"
+        "content": "- 云主机 node0–node4 已有 CPU/内存/磁盘/网络指标（host_otel），但容器、systemd 单元与 host-watchdog 巡检结果仍只在 host-watchdog 本机，不进本套指标。\n- 容器实际 CPU/内存、磁盘容量需要对应采集器，requests/limits 不等于实际用量。\n- CNPG Backup / ScheduledBackup 对象状态和恢复演练尚未在本面板自动取证；备份时间为 0 能证明缺少可用备份记录，不能单独区分配置缺失与任务失败。\n- Silo、Redis、Elasticsearch 等应用专属指标未逐一接入；目前只能查其 Kubernetes 对象和已配置的 Gatus 探测。\n- 外部独立 dead-man 与手机送达仍需独立验证。"
       }
     }
   ],
@@ -205,6 +205,14 @@
     ]
   },
   "links": [
+    {
+      "title": "运维控制台",
+      "url": "/d/ops-portal",
+      "type": "link",
+      "includeVars": false,
+      "keepTime": true,
+      "targetBlank": false
+    },
     {
       "title": "问题工作台",
       "url": "/d/ntfy-alerting-overview",

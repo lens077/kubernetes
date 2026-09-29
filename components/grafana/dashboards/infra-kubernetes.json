@@ -1267,6 +1267,14 @@
   },
   "links": [
     {
+      "title": "运维控制台",
+      "url": "/d/ops-portal",
+      "type": "link",
+      "includeVars": false,
+      "keepTime": true,
+      "targetBlank": false
+    },
+    {
       "title": "问题工作台",
       "url": "/d/ntfy-alerting-overview",
       "type": "link",
