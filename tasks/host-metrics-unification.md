@@ -78,8 +78,8 @@
 - [x] 共享契约和真实求值测试通过；审阅修复状态跨源配对、整核缺失、memory 单信号故障、coverage 记录缺失四项边界。
 - [x] 记录规则已持久化且影子对照通过：8 台，32 个信号覆盖项，16 条网络方向；同一评估时间的 raw parity 通过。
 - [x] 现役消费方和告警源码已迁移；五台云主机通过新版本化部署入口验收，全部 changed=0。
-- [ ] 完成所有发布与登录浏览器验收：Grafana 和 homepage 已部署；control-tower 0.2.21 标签发布进行中。
-- [ ] 源码迁移、提交推送及 main 合入完成。
+- [x] 三个现役消费方已发布：Grafana、homepage、control-tower 0.2.21。Grafana 和 control-tower 真实登录验收通过；homepage 为真实部署数据+隔离浏览器渲染及公网SSO拒绝验证，未声称完成其SSO登录旅程。
+- [x] 源码迁移、三仓提交推送及 Kubernetes main 快进合入完成。
 
 ## 验证记录
 
@@ -88,5 +88,7 @@
 - `host-alerts.yml` fixtures：never-seen 主机、整组失联只报一条、watchdog 磁盘归属、coverage absent、全局评估停止；全部通过。
 - Grafana：真实公网登录 cookie+Origin，10 个实际面板查询全部执行、8 台标签齐全，桌面/420px截图验收；仅点击/接口成功不算显示成功，覆盖表文字也核对。
 - homepage：18 项 Node 与 5 项 Python 测试；部署 payload 校验8台/4类/时间/比率；公网未登录仍由SSO拒绝。隔离浏览器用原样部署HTML+实际payload渲染并检查窄屏，无凭据注入、无SSO绕过；这不等于已完成公网登录旅程。
-- control-tower：13组live查询通过，CPU16/内存8/磁盘8/网络16；`make verify` 全仓build/vet/竞态测试通过，Web109项和build通过。真实管理员登录测试拟通过已有CI Secret运行，不将只读VM token当管理员token。
+- control-tower：13组live查询通过，CPU16/内存8/磁盘8/网络16；`make verify` 全仓build/vet/竞态测试通过，Web109项和build通过。发布 run `36577175295` 全绿，0.2.21 三个 Deployment 已上线，Argo 两个 Application 均 Synced/Healthy，公网healthz的build=0.2.21。
+- 真实登录 E2E run `36580892917`：系统页「共享指标覆盖全部主机，CPU与iowait独立」通过，登录/编辑器/CSP/网关等12项通过；3项管理变更用例按既有开关未启用。整体仍有1项原有legacy-token七天窗口门禁失败（旧0.2.11实例增量1），未删测或修改审计历史。
+- 主要提交：Kubernetes `12ef0ba6`（源和共享记录）、`29a6ae41`（告警）、`19cbefaf`（Grafana与记录）、`cacc34ec`（兼容入口）；此前功能分支11个提交按用户确认一同快进main。docker-deploy `dbb1bf0`；control-tower `bd89963` + 验收修正 `0965904`，发布自动提交 `03c4400`。目录外用户改动未暂存或提交。
 - 部署前 vmalert ConfigMap 备份：k1 `/root/rollback-host-metrics/vmalert-rules-before.json`；homepage 本次备份路径由发布日志记录，未拷贝凭据。

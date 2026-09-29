@@ -5,7 +5,7 @@
 - [x] 现役采集代码迁入 `hosts/observability`，以同一主机清单生成云主机 inventory 和预期主机 recording rule；五台云主机通过新入口验证，均 `changed=0`。
 - [x] 新增共享 CPU 忙碌、iowait、内存、磁盘、网络、原始心跳与逐类覆盖规则；隔离引擎验证多核/重复来源/缺整核/单信号缺失/整组中断，现网 8 台同一评估时刻 raw parity 通过。
 - [x] Grafana 与 d 总控制台改用共享记录；缺失、旧缓存和请求失败不呈现为正常零值。
-- [ ] control-tower 共享指标版本发布、真实登录 e2e 验收及三仓最终提交/合入完成。执行记录见 `tasks/host-metrics-unification.md`。
+- [x] control-tower 0.2.21 经 CI/GitOps 上线；真实登录系统页通过全部主机、独立iowait与新鲜度检查。三仓已提交推送，Kubernetes功能分支已快进main。完整E2E仍有原有legacy-token窗口1项失败，未修改审计门禁。执行记录见 `tasks/host-metrics-unification.md`。
 
 ## 安全：历史凭据清理
 
