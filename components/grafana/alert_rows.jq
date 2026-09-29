@@ -6,13 +6,15 @@ def row:
   fallback($l.exported_alertgroup; $l.alertgroup) as $group |
   fallback($l.k8s_namespace_name; fallback($l.namespace; "")) as $ns |
   fallback($l.k8s_pod_name; fallback($l.pod; "")) as $alert_pod |
-  fallback($l.k8s_node_name; fallback($l.node; "")) as $alert_node |
-  (if $group == "cnpg" then "infra-cnpg"
+  fallback($l.host; fallback($l.host_name; fallback($l.k8s_node_name; fallback($l.node; "")))) as $alert_node |
+  (if $group == "host-resources" or $group == "cloud-hosts-telemetry" then "ops-portal"
+   elif $group == "cnpg" then "infra-cnpg"
    elif $group == "ecommerce-cdc" then "infra-cdc"
    elif $group == "ecommerce-k8s" and $a.name != "AlertFiringTooLong" then "infra-kubernetes"
    elif $group == "ecommerce-security" or $group == "observability-pipeline" or $group == "ecommerce-observability-readiness" then "infra-observability"
    elif $ns != "" then "infra-kubernetes" else "infra-overview" end) as $target |
-  (if $target == "infra-cnpg" then "数据库 / 备份"
+  (if $target == "ops-portal" then "主机资源"
+   elif $target == "infra-cnpg" then "数据库 / 备份"
    elif $target == "infra-cdc" then "CDC / 位点"
    elif $target == "infra-kubernetes" then "工作负载"
    elif $target == "infra-observability" then "采集 / 网络" else "基础设施" end) as $destination |

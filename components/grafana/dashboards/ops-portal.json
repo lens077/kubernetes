@@ -5,7 +5,7 @@
   "version": 3,
   "schemaVersion": 42,
   "editable": true,
-  "description": "常用入口与全部主机（K8s 节点 + 云主机）CPU / 内存 / 磁盘概览。",
+  "description": "共享 host:* 指标：全部主机资源、I/O 等待、预期覆盖与采集新鲜度。",
   "tags": [
     "infrastructure",
     "alerting",
@@ -39,15 +39,15 @@
     },
     {
       "id": 2,
-      "title": "CPU 使用率",
+      "title": "CPU 忙碌率",
       "type": "bargauge",
       "gridPos": {
         "x": 0,
         "y": 11,
-        "w": 8,
+        "w": 6,
         "h": 8
       },
-      "description": "1 - (idle + iowait) 占比，主机所有核平均。iowait 不计入使用：它表示 CPU 空着在等 IO，且会被 io_uring 等待虚高。",
+      "description": "共享 host:cpu_busy_ratio；跨核平均，不包含 idle 与 iowait。",
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
@@ -55,7 +55,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "1 - sum by (host) (label_join(system_cpu_utilization_ratio{state=~\"idle|wait\"}, \"host\", \"\", \"k8s_node_name\", \"host_name\"))",
+          "expr": "(((host:cpu_busy_ratio) and (time() - timestamp(host:cpu_busy_ratio) < 180) and on(host,host_kind) (host:signal_present{signal=\"cpu\"} == 1) and on(host,host_kind) (time() - timestamp(host:signal_present{signal=\"cpu\"}) < 180) and on(host,host_kind) host:expected_info and on(host,host_kind) (time() - host:last_seen_timestamp_seconds < 180)) and on() (time() - host:rules_evaluation_timestamp_seconds < 180)) or on(host,host_kind) (group by(host,host_kind) (host:expected_info) * -1)",
           "datasource": {
             "type": "prometheus",
             "uid": "${datasource}"
@@ -92,7 +92,104 @@
                 "value": 0.9
               }
             ]
-          }
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "-1": {
+                  "text": "指标缺失",
+                  "color": "gray"
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "gradient",
+        "showUnfilled": true,
+        "valueMode": "color",
+        "namePlacement": "left",
+        "sizing": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      }
+    },
+    {
+      "id": 8,
+      "title": "I/O 等待",
+      "type": "bargauge",
+      "gridPos": {
+        "x": 6,
+        "y": 11,
+        "w": 6,
+        "h": 8
+      },
+      "description": "共享 host:cpu_iowait_ratio；等待不是 CPU 执行时间，不与忙碌率重复相加。",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "(((host:cpu_iowait_ratio) and (time() - timestamp(host:cpu_iowait_ratio) < 180) and on(host,host_kind) (host:signal_present{signal=\"cpu\"} == 1) and on(host,host_kind) (time() - timestamp(host:signal_present{signal=\"cpu\"}) < 180) and on(host,host_kind) host:expected_info and on(host,host_kind) (time() - host:last_seen_timestamp_seconds < 180)) and on() (time() - host:rules_evaluation_timestamp_seconds < 180)) or on(host,host_kind) (group by(host,host_kind) (host:expected_info) * -1)",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "instant": true,
+          "range": false,
+          "legendFormat": "{{host}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "decimals": 1,
+          "noValue": "指标缺失",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 0.7
+              },
+              {
+                "color": "red",
+                "value": 0.9
+              }
+            ]
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "-1": {
+                  "text": "指标缺失",
+                  "color": "gray"
+                }
+              }
+            }
+          ]
         },
         "overrides": []
       },
@@ -117,12 +214,12 @@
       "title": "内存使用率",
       "type": "bargauge",
       "gridPos": {
-        "x": 8,
+        "x": 12,
         "y": 11,
-        "w": 8,
+        "w": 6,
         "h": 8
       },
-      "description": "hostmetrics 的 used 状态，不含 page cache / buffer，接近 free 命令里的 used。",
+      "description": "OTel used 状态，不是 MemAvailable 口径；所有消费方使用同一记录规则。",
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
@@ -130,7 +227,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (host) (label_join(system_memory_utilization_ratio{state=\"used\"}, \"host\", \"\", \"k8s_node_name\", \"host_name\"))",
+          "expr": "(((host:memory_used_ratio) and (time() - timestamp(host:memory_used_ratio) < 180) and on(host,host_kind) (host:signal_present{signal=\"memory\"} == 1) and on(host,host_kind) (time() - timestamp(host:signal_present{signal=\"memory\"}) < 180) and on(host,host_kind) host:expected_info and on(host,host_kind) (time() - host:last_seen_timestamp_seconds < 180)) and on() (time() - host:rules_evaluation_timestamp_seconds < 180)) or on(host,host_kind) (group by(host,host_kind) (host:expected_info) * -1)",
           "datasource": {
             "type": "prometheus",
             "uid": "${datasource}"
@@ -167,7 +264,18 @@
                 "value": 0.9
               }
             ]
-          }
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "-1": {
+                  "text": "指标缺失",
+                  "color": "gray"
+                }
+              }
+            }
+          ]
         },
         "overrides": []
       },
@@ -192,12 +300,12 @@
       "title": "根分区使用率",
       "type": "bargauge",
       "gridPos": {
-        "x": 16,
+        "x": 18,
         "y": 11,
-        "w": 8,
+        "w": 6,
         "h": 8
       },
-      "description": "used / (used + free)，与 df 的 Use% 同口径（不含 root 保留块）。",
+      "description": "共享 used/(used+free)，不含 root 保留块。",
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
@@ -205,7 +313,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (host) (label_join(system_filesystem_usage_bytes{mountpoint=\"/\",state=\"used\"}, \"host\", \"\", \"k8s_node_name\", \"host_name\")) / sum by (host) (label_join(system_filesystem_usage_bytes{mountpoint=\"/\",state=~\"used|free\"}, \"host\", \"\", \"k8s_node_name\", \"host_name\"))",
+          "expr": "(((host:filesystem_used_ratio{mountpoint=\"/\"}) and (time() - timestamp(host:filesystem_used_ratio{mountpoint=\"/\"}) < 180) and on(host,host_kind) (host:signal_present{signal=\"filesystem\"} == 1) and on(host,host_kind) (time() - timestamp(host:signal_present{signal=\"filesystem\"}) < 180) and on(host,host_kind) host:expected_info and on(host,host_kind) (time() - host:last_seen_timestamp_seconds < 180)) and on() (time() - host:rules_evaluation_timestamp_seconds < 180)) or on(host,host_kind) (group by(host,host_kind) (host:expected_info) * -1)",
           "datasource": {
             "type": "prometheus",
             "uid": "${datasource}"
@@ -242,7 +350,18 @@
                 "value": 0.9
               }
             ]
-          }
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "-1": {
+                  "text": "指标缺失",
+                  "color": "gray"
+                }
+              }
+            }
+          ]
         },
         "overrides": []
       },
@@ -263,12 +382,230 @@
       }
     },
     {
-      "id": 5,
-      "title": "CPU 使用率趋势",
-      "type": "timeseries",
+      "id": 9,
+      "title": "预期主机覆盖 · 缺一项也不算齐全",
+      "type": "table",
       "gridPos": {
         "x": 0,
         "y": 19,
+        "w": 12,
+        "h": 9
+      },
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "(min by(host,host_kind) (host:signal_present and (time() - timestamp(host:signal_present) < 180)) and on(host,host_kind) (count by(host,host_kind) (host:signal_present and (time() - timestamp(host:signal_present) < 180)) == 4) and on() (time() - host:rules_evaluation_timestamp_seconds < 180)) or on(host,host_kind) (host:expected_info * -1)",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "instant": true,
+          "range": false,
+          "legendFormat": "",
+          "format": "table"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "filterable": true,
+            "wrapText": true,
+            "wrapHeaderText": true,
+            "cellOptions": {
+              "type": "auto"
+            }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "指标覆盖"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "1": {
+                        "text": "四类指标齐全",
+                        "color": "green"
+                      },
+                      "0": {
+                        "text": "部分指标缺失",
+                        "color": "orange"
+                      },
+                      "-1": {
+                        "text": "规则数据缺失 / 延迟",
+                        "color": "gray"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "enablePagination": false
+      },
+      "transformations": [
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "organize",
+          "options": {
+            "includeByName": {
+              "host": true,
+              "host_kind": true,
+              "Value": true
+            },
+            "renameByName": {
+              "host": "主机",
+              "host_kind": "类型",
+              "Value": "指标覆盖"
+            },
+            "indexByName": {
+              "host": 0,
+              "host_kind": 1,
+              "Value": 2
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "title": "原始上报距今 · 非规则重写时间",
+      "type": "table",
+      "gridPos": {
+        "x": 12,
+        "y": 19,
+        "w": 12,
+        "h": 9
+      },
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "(time() - host:last_seen_timestamp_seconds) or on(host,host_kind) (group by(host,host_kind) (host:expected_info) * -1)",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "instant": true,
+          "range": false,
+          "legendFormat": "",
+          "format": "table"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "filterable": true,
+            "wrapText": true,
+            "wrapHeaderText": true,
+            "cellOptions": {
+              "type": "auto"
+            }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "距今"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "noValue",
+                "value": "从未上报 / 无数据"
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "-1": {
+                        "text": "从未上报 / 无数据",
+                        "color": "gray"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "enablePagination": false
+      },
+      "transformations": [
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "organize",
+          "options": {
+            "includeByName": {
+              "host": true,
+              "host_kind": true,
+              "Value": true
+            },
+            "renameByName": {
+              "host": "主机",
+              "host_kind": "类型",
+              "Value": "距今"
+            },
+            "indexByName": {
+              "host": 0,
+              "host_kind": 1,
+              "Value": 2
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "CPU 忙碌率趋势",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 0,
+        "y": 28,
         "w": 12,
         "h": 11
       },
@@ -280,7 +617,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "1 - sum by (host) (label_join(system_cpu_utilization_ratio{state=~\"idle|wait\"}, \"host\", \"\", \"k8s_node_name\", \"host_name\"))",
+          "expr": "((host:cpu_busy_ratio) and (time() - timestamp(host:cpu_busy_ratio) < 180) and on(host,host_kind) (host:signal_present{signal=\"cpu\"} == 1) and on(host,host_kind) (time() - timestamp(host:signal_present{signal=\"cpu\"}) < 180) and on(host,host_kind) host:expected_info and on(host,host_kind) (time() - host:last_seen_timestamp_seconds < 180)) and on() (time() - host:rules_evaluation_timestamp_seconds < 180)",
           "datasource": {
             "type": "prometheus",
             "uid": "${datasource}"
@@ -323,8 +660,7 @@
         "tooltip": {
           "mode": "multi"
         }
-      },
-      "interval": "1m"
+      }
     },
     {
       "id": 6,
@@ -332,7 +668,7 @@
       "type": "timeseries",
       "gridPos": {
         "x": 12,
-        "y": 19,
+        "y": 28,
         "w": 12,
         "h": 11
       },
@@ -344,7 +680,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (host) (label_join(system_memory_utilization_ratio{state=\"used\"}, \"host\", \"\", \"k8s_node_name\", \"host_name\"))",
+          "expr": "((host:memory_used_ratio) and (time() - timestamp(host:memory_used_ratio) < 180) and on(host,host_kind) (host:signal_present{signal=\"memory\"} == 1) and on(host,host_kind) (time() - timestamp(host:signal_present{signal=\"memory\"}) < 180) and on(host,host_kind) host:expected_info and on(host,host_kind) (time() - host:last_seen_timestamp_seconds < 180)) and on() (time() - host:rules_evaluation_timestamp_seconds < 180)",
           "datasource": {
             "type": "prometheus",
             "uid": "${datasource}"
@@ -387,23 +723,146 @@
         "tooltip": {
           "mode": "multi"
         }
+      }
+    },
+    {
+      "id": 11,
+      "title": "I/O 等待趋势",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 0,
+        "y": 39,
+        "w": 12,
+        "h": 10
       },
-      "interval": "1m"
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "((host:cpu_iowait_ratio) and (time() - timestamp(host:cpu_iowait_ratio) < 180) and on(host,host_kind) (host:signal_present{signal=\"cpu\"} == 1) and on(host,host_kind) (time() - timestamp(host:signal_present{signal=\"cpu\"}) < 180) and on(host,host_kind) host:expected_info and on(host,host_kind) (time() - host:last_seen_timestamp_seconds < 180)) and on() (time() - host:rules_evaluation_timestamp_seconds < 180)",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "instant": false,
+          "range": true,
+          "legendFormat": "{{host}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "noValue": "指标缺失",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 6,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "min": 0,
+          "max": 1
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 12,
+      "title": "主机网络速率",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 12,
+        "y": 39,
+        "w": 12,
+        "h": 10
+      },
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "((host:network_io_bytes_per_second) and (time() - timestamp(host:network_io_bytes_per_second) < 180) and on(host,host_kind) (host:signal_present{signal=\"network\"} == 1) and on(host,host_kind) (time() - timestamp(host:signal_present{signal=\"network\"}) < 180) and on(host,host_kind) host:expected_info and on(host,host_kind) (time() - host:last_seen_timestamp_seconds < 180)) and on() (time() - host:rules_evaluation_timestamp_seconds < 180)",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "instant": false,
+          "range": true,
+          "legendFormat": "{{host}} / {{direction}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps",
+          "noValue": "指标缺失",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 6,
+            "showPoints": "never",
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
     },
     {
       "id": 7,
-      "title": "覆盖范围",
+      "title": "覆盖范围与数据口径",
       "type": "text",
       "gridPos": {
         "x": 0,
-        "y": 30,
+        "y": 49,
         "w": 24,
-        "h": 3
+        "h": 4
       },
       "description": "",
       "options": {
         "mode": "markdown",
-        "content": "k1–k3 来自集群 opentelemetry-node；node0–node4 来自主机上的 otelcol（observability 仓 `make host-otel`），经 otlp-dev.apikv.com 推送。某台主机从图中消失即表示指标中断，由 vmalert `CloudHostMetricsMissing` 提醒。容器实际用量尚未采集。"
+        "content": "主机清单来自 Kubernetes 仓 `hosts/observability/hosts.json`，采集部署用 `make host-otel CONFIRM=yes`。**CPU、iowait、内存、磁盘与网络统一读取共享记录指标**；缺失不补零，主机不会因从未上报而从清单消失。\n\n180 秒是展示新鲜度，不是失联通知的触发时间。历史曲线从共享规则上线时开始，不回填或改写原始数据。容器与进程数据属于其它指标，不与宿主资源混用。"
       }
     }
   ],

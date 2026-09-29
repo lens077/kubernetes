@@ -49,24 +49,27 @@ class PortalTest(unittest.TestCase):
             urls = [link["url"] for link in json.loads(file.read_text())["links"]]
             self.assertIn("/d/ops-portal", urls, file.name)
 
-    def test_resource_panels_use_hostmetrics_and_show_missing_data(self):
-        for panel_id, metric in ((2, "system_cpu_utilization_ratio"), (3, "system_memory_utilization_ratio"),
-                                 (4, "system_filesystem_usage_bytes"), (5, "system_cpu_utilization_ratio"),
-                                 (6, "system_memory_utilization_ratio")):
+    def test_resource_panels_use_shared_records_and_keep_missing_hosts(self):
+        for panel_id, metric in ((2, "host:cpu_busy_ratio"), (3, "host:memory_used_ratio"),
+                                 (4, "host:filesystem_used_ratio"), (5, "host:cpu_busy_ratio"),
+                                 (6, "host:memory_used_ratio"), (8, "host:cpu_iowait_ratio")):
             with self.subTest(panel_id=panel_id):
                 panel = self.panels[panel_id]
                 expr = panel["targets"][0]["expr"]
                 self.assertIn(metric, expr)
-                # K8s 节点与云主机合并为同一 host 维度，缺任何一边都会让一类主机从面板消失
-                self.assertIn('"k8s_node_name", "host_name"', expr)
-                self.assertIn("by (host)", expr)
+                self.assertIn("host:signal_present", expr)
+                self.assertIn("host:rules_evaluation_timestamp_seconds", expr)
+                self.assertNotRegex(expr, r"\bsystem_[a-z_]+")
                 self.assertNotIn("vector(0)", expr)
                 defaults = panel["fieldConfig"]["defaults"]
                 self.assertEqual("percentunit", defaults["unit"])
                 self.assertEqual("指标缺失", defaults["noValue"])
-        # iowait 必须算作空闲：k3 上 Dragonfly 的 io_uring 等待会把 iowait 常驻抬到 24%
-        self.assertIn('state=~"idle|wait"', self.panels[2]["targets"][0]["expr"])
-        self.assertIn('state=~"used|free"', self.panels[4]["targets"][0]["expr"])
+                if panel["type"] == "bargauge":
+                    self.assertIn("host:expected_info", expr)
+                    self.assertIn("* -1", expr, "display sentinel must not look like a healthy zero")
+                    self.assertEqual("指标缺失", defaults["mappings"][0]["options"]["-1"]["text"])
+        self.assertIn("host:signal_present", self.panels[9]["targets"][0]["expr"])
+        self.assertIn("host:last_seen_timestamp_seconds", self.panels[10]["targets"][0]["expr"])
 
 
 if __name__ == "__main__":

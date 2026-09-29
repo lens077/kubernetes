@@ -257,7 +257,7 @@ def build_overview():
     capabilities=[('Kubernetes 对象状态','k8s_container_ready','infra-kubernetes'),('CNPG / 备份时间','cnpg_collector_up','infra-cnpg'),
                   ('Kafka / Connect','kafka_connect_connector_task_status','infra-cdc'),('OTel 导出队列','otelcol_exporter_queue_size','infra-observability'),
                   ('Hubble 网络事件','hubble_flows_processed_total','infra-observability'),('Gatus 合成探测','gatus_results_endpoint_success','infra-observability'),
-                  ('通知 bridge','alert_bridge_notifications_total','ntfy-alerting-overview'),('K8s 节点资源（hostmetrics）','system_cpu_utilization_ratio{k8s_node_name!=""}','ops-portal'),('云主机资源（node0–node4）','system_cpu_utilization_ratio{host_group="cloud"}','ops-portal')]
+                  ('通知 bridge','alert_bridge_notifications_total','ntfy-alerting-overview'),('K8s 节点资源（共享指标）','host:cpu_busy_ratio{host_kind="kubernetes"}','ops-portal'),('云主机资源（共享指标）','host:cpu_busy_ratio{host_kind="cloud"}','ops-portal')]
     expressions=['label_replace(label_replace((count('+metric+') > bool 0) or vector(0), "capability", '+json.dumps(name,ensure_ascii=False)+', "", ""), "dashboard_uid", "'+uid+'", "", "")' for name,metric,uid in capabilities]
     p=table(1,'观测覆盖 · 有指标不等于服务健康',' or '.join(expressions),0,0,24,10,fields={'capability':'观测能力','Value':'当前数据','dashboard_uid':'入口'})
     p['fieldConfig']['overrides']=[override('当前数据',mappings=mappings({0:('未接入 / 无数据','red'),1:('有指标','green')})),
@@ -335,34 +335,66 @@ def bargauge(panel_id, title, expr, x, y, w=8, h=8, description=""):
                         "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": False}}}
 
 
-def by_host(selector):
-    """K8s 节点（opentelemetry-node）带 k8s_node_name，云主机（observability roles/host_otel）带 host_name；
-    两者互斥，label_join 拼成同一个 host 维度，面板按一套查询显示全部主机。"""
-    return 'label_join(' + selector + ', "host", "", "k8s_node_name", "host_name")'
+HOST_FRESH = '(time() - host:rules_evaluation_timestamp_seconds < 180)'
+
+
+def host_query(metric, signal):
+    """Consume the shared contract; do not reimplement resource formulas here."""
+    return (f'(({metric}) and (time() - timestamp({metric}) < 180) '
+            f'and on(host,host_kind) (host:signal_present{{signal="{signal}"}} == 1) '
+            f'and on(host,host_kind) (time() - timestamp(host:signal_present{{signal="{signal}"}}) < 180) '
+            'and on(host,host_kind) host:expected_info '
+            'and on(host,host_kind) (time() - host:last_seen_timestamp_seconds < 180)) '
+            f'and on() {HOST_FRESH}')
+
+
+def expected_or_missing(expr):
+    # VM drops NaN results. A display-only -1 sentinel is explicitly mapped to gray
+    # missing text; canonical ratio records remain 0..1 or absent, never synthetic zero.
+    return f'({expr}) or on(host,host_kind) (group by(host,host_kind) (host:expected_info) * -1)'
 
 
 def build_portal():
-    # iowait 也算空闲：CPU 在等 IO 时并没有干活。k3 上 Dragonfly 的 io_uring 线程等待网络完成事件
-    # 会被内核记成 iowait（常驻 1 个线程 ≈ 4 核里 24%），按 1 - idle 算会把 k3 的 CPU 从 15% 虚报到 38%。
-    cpu = '1 - sum by (host) (' + by_host('system_cpu_utilization_ratio{state=~"idle|wait"}') + ')'
-    mem = 'sum by (host) (' + by_host('system_memory_utilization_ratio{state="used"}') + ')'
-    disk = ('sum by (host) (' + by_host('system_filesystem_usage_bytes{mountpoint="/",state="used"}') + ') / sum by (host) ('
-            + by_host('system_filesystem_usage_bytes{mountpoint="/",state=~"used|free"}') + ')')
+    cpu = host_query('host:cpu_busy_ratio', 'cpu')
+    wait = host_query('host:cpu_iowait_ratio', 'cpu')
+    mem = host_query('host:memory_used_ratio', 'memory')
+    disk = host_query('host:filesystem_used_ratio{mountpoint="/"}', 'filesystem')
     links = text(1, '', portal_html(), 0, 11)
     links['options']['mode'] = 'html'
+    current_coverage = '(host:signal_present and (time() - timestamp(host:signal_present) < 180))'
+    coverage_expr = (f'(min by(host,host_kind) {current_coverage} '
+                     f'and on(host,host_kind) (count by(host,host_kind) {current_coverage} == 4) '
+                     f'and on() {HOST_FRESH}) or on(host,host_kind) (host:expected_info * -1)')
+    coverage = table(9, '预期主机覆盖 · 缺一项也不算齐全', coverage_expr, 0, 19, 12, 9,
+                     fields={'host':'主机','host_kind':'类型','Value':'指标覆盖'})
+    coverage['fieldConfig']['overrides'] = [override('指标覆盖', mappings=mappings({1:('四类指标齐全','green'),0:('部分指标缺失','orange'),-1:('规则数据缺失 / 延迟','gray')}))]
+    age = table(10, '原始上报距今 · 非规则重写时间', expected_or_missing('time() - host:last_seen_timestamp_seconds'), 12, 19, 12, 9,
+                fields={'host':'主机','host_kind':'类型','Value':'距今'})
+    age['fieldConfig']['overrides'] = [override('距今', unit='s', decimals=0, noValue='从未上报 / 无数据', mappings=mappings({-1:('从未上报 / 无数据','gray')}))]
+    for p in (coverage, age):
+        p['options'].update(enablePagination=False, cellHeight='sm')
     panels = [
         links,
-        bargauge(2, 'CPU 使用率', cpu, 0, 11, description='1 - (idle + iowait) 占比，主机所有核平均。iowait 不计入使用：它表示 CPU 空着在等 IO，且会被 io_uring 等待虚高。'),
-        bargauge(3, '内存使用率', mem, 8, 11, description='hostmetrics 的 used 状态，不含 page cache / buffer，接近 free 命令里的 used。'),
-        bargauge(4, '根分区使用率', disk, 16, 11, description='used / (used + free)，与 df 的 Use% 同口径（不含 root 保留块）。'),
-        {**timeseries(5, 'CPU 使用率趋势', [(cpu, '{{host}}')], 0, 19, h=11, unit='percentunit'), 'interval': '1m'},
-        {**timeseries(6, '内存使用率趋势', [(mem, '{{host}}')], 12, 19, h=11, unit='percentunit'), 'interval': '1m'},
-        text(7, '覆盖范围', 'k1–k3 来自集群 opentelemetry-node；node0–node4 来自主机上的 otelcol（observability 仓 `make host-otel`），经 otlp-dev.apikv.com 推送。'
-             '某台主机从图中消失即表示指标中断，由 vmalert `CloudHostMetricsMissing` 提醒。容器实际用量尚未采集。', 30, 3),
+        bargauge(2, 'CPU 忙碌率', expected_or_missing(cpu), 0, 11, w=6, description='共享 host:cpu_busy_ratio；跨核平均，不包含 idle 与 iowait。'),
+        bargauge(8, 'I/O 等待', expected_or_missing(wait), 6, 11, w=6, description='共享 host:cpu_iowait_ratio；等待不是 CPU 执行时间，不与忙碌率重复相加。'),
+        bargauge(3, '内存使用率', expected_or_missing(mem), 12, 11, w=6, description='OTel used 状态，不是 MemAvailable 口径；所有消费方使用同一记录规则。'),
+        bargauge(4, '根分区使用率', expected_or_missing(disk), 18, 11, w=6, description='共享 used/(used+free)，不含 root 保留块。'),
+        coverage, age,
+        timeseries(5, 'CPU 忙碌率趋势', [(cpu, '{{host}}')], 0, 28, h=11, unit='percentunit'),
+        timeseries(6, '内存使用率趋势', [(mem, '{{host}}')], 12, 28, h=11, unit='percentunit'),
+        timeseries(11, 'I/O 等待趋势', [(wait, '{{host}}')], 0, 39, h=10, unit='percentunit'),
+        timeseries(12, '主机网络速率', [(host_query('host:network_io_bytes_per_second','network'), '{{host}} / {{direction}}')], 12, 39, h=10, unit='Bps'),
+        text(7, '覆盖范围与数据口径', '主机清单来自 Kubernetes 仓 `hosts/observability/hosts.json`，采集部署用 `make host-otel CONFIRM=yes`。'
+             '**CPU、iowait、内存、磁盘与网络统一读取共享记录指标**；缺失不补零，主机不会因从未上报而从清单消失。'
+             '\n\n180 秒是展示新鲜度，不是失联通知的触发时间。历史曲线从共享规则上线时开始，不回填或改写原始数据。'
+             '容器与进程数据属于其它指标，不与宿主资源混用。', 49, 4),
     ]
-    for p in panels[4:6]:
-        p['fieldConfig']['defaults'].update(min=0, max=1)
-    d = dashboard('ops-portal', '运维控制台 · 跳转与资源', panels, description='常用入口与全部主机（K8s 节点 + 云主机）CPU / 内存 / 磁盘概览。')
+    for p in panels:
+        if p['type'] == 'timeseries' and p['id'] != 12:
+            p['fieldConfig']['defaults'].update(min=0, max=1)
+        if p['type'] == 'bargauge':
+            p['fieldConfig']['defaults']['mappings'] = mappings({-1:('指标缺失','gray')})
+    d = dashboard('ops-portal', '运维控制台 · 跳转与资源', panels, description='共享 host:* 指标：全部主机资源、I/O 等待、预期覆盖与采集新鲜度。')
     d['time'] = {'from': 'now-3h', 'to': 'now'}
     return d
 
