@@ -56,9 +56,13 @@ config:
           value: ${env:OTEL_K8S_NODE_NAME}
           action: upsert
 
+# 2026-09-29 k3 重启后 CrashLoop：cgroup 192Mi 里 anon 只有 6MB，file 占满 193MB——
+# otelcol-contrib 可执行文件 386MB，代码页在 cgroup 内反复被回收又缺页读回（workingset_refault_file 50 万+，
+# 主线程 D 状态卡在 filemap_fault），k3 磁盘 IO pressure 65% 时 30s 内起不来被 liveness 杀掉。
+# 旧 Pod 只是没重启过才没暴露。上限放到能装下代码页的量级；实际 anon 仍只有几十 MB，requests 不变。
 resources:
   requests:
     cpu: 20m
     memory: 64Mi
   limits:
-    memory: 192Mi
+    memory: 512Mi
