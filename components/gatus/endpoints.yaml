@@ -5,6 +5,8 @@
 #   cdc                     集群内 CDC 链 (Connect task 状态 / ES 存活)
 #   public-edge             经 Pangolin/newt 暴露的公网入口(与 node3 时代同一批域名)
 #   node1-public            node1 VPS 上的站点
+#   product-sites           对外产品站与博客（带告警，挂了影响访客）
+#   console-edge            d.apikv.com 总控制台卡片的入口状态（不带告警，只供控制台显示，见该组说明）
 # 端点里的 `alerts: [{type: custom, failure-threshold: 11, success-threshold: 6}]` 行在未配置 ntfy 时会被 install.sh 删掉。
 endpoints:
   # ---------- cluster-origin ----------
@@ -216,3 +218,108 @@ endpoints:
     client: {timeout: 10s, ignore-redirect: true}
     conditions: ["[STATUS] == 200", "[CERTIFICATE_EXPIRATION] > 720h"]
     alerts: [{type: custom, failure-threshold: 3, success-threshold: 2}]
+
+  # ---------- product-sites ----------
+  # 2026-09-29 补：d.apikv.com 总控制台上的对外产品站。之前没有任何探针，挂了只能靠访客反馈。
+  # 与 homepage 同口径：匿名 200 + 证书。blog 前面是 EdgeOne，探到的是 CDN 回源后的结果。
+  - name: scorpius-site
+    group: product-sites
+    url: https://scorpius.apikv.com/
+    interval: 5m
+    client: {timeout: 10s, ignore-redirect: true}
+    conditions: ["[STATUS] == 200", "[CERTIFICATE_EXPIRATION] > 720h"]
+    alerts: [{type: custom, failure-threshold: 3, success-threshold: 2}]
+  - name: mcm-site
+    group: product-sites
+    url: https://mcm.apikv.com/
+    interval: 5m
+    client: {timeout: 10s, ignore-redirect: true}
+    conditions: ["[STATUS] == 200", "[CERTIFICATE_EXPIRATION] > 720h"]
+    alerts: [{type: custom, failure-threshold: 3, success-threshold: 2}]
+  - name: lyrapass-site
+    group: product-sites
+    url: https://lyrapass.apikv.com/
+    interval: 5m
+    client: {timeout: 10s, ignore-redirect: true}
+    conditions: ["[STATUS] == 200", "[CERTIFICATE_EXPIRATION] > 720h"]
+    alerts: [{type: custom, failure-threshold: 3, success-threshold: 2}]
+  - name: blog
+    group: product-sites
+    url: https://blog.apikv.com/
+    interval: 5m
+    client: {timeout: 10s, ignore-redirect: true}
+    conditions: ["[STATUS] == 200", "[CERTIFICATE_EXPIRATION] > 720h"]
+    alerts: [{type: custom, failure-threshold: 3, success-threshold: 2}]
+
+  # ---------- console-edge ----------
+  # 2026-09-29 新增，只给 d.apikv.com 总控制台的卡片显示「入口在线 / 异常」，**全部不带告警**。
+  # ⚠️ 与 public-edge 头部那条规矩不冲突：SSO 资源匿名只能拿到 302（Gatus UA）→ 只证明 Pangolin 边缘在，
+  # 证明不了后端，所以不能拿它告警；后端是否正常仍由 cluster-origin 负责。控制台上 SSO 卡片也写的是「入口」。
+  # 自带登录的应用（argocd、silo、umami、gorse）探的是匿名可达的页面或健康接口，结果能代表应用本身。
+  - name: d-console
+    group: console-edge
+    url: https://d.apikv.com/
+    interval: 5m
+    client: {timeout: 10s, ignore-redirect: true}
+    conditions: ["[STATUS] == 302", "[CERTIFICATE_EXPIRATION] > 720h"]
+  - name: argocd-edge
+    group: console-edge
+    url: https://argocd.apikv.com/healthz
+    interval: 5m
+    client: {timeout: 10s, ignore-redirect: true}
+    conditions: ["[STATUS] == 200", "[CERTIFICATE_EXPIRATION] > 720h"]
+  - name: silo-edge
+    group: console-edge
+    url: https://silo.apikv.com/
+    interval: 5m
+    client: {timeout: 10s, ignore-redirect: true}
+    conditions: ["[STATUS] == 200", "[CERTIFICATE_EXPIRATION] > 720h"]
+  - name: umami-edge
+    group: console-edge
+    url: https://umami.apikv.com/api/heartbeat
+    interval: 5m
+    client: {timeout: 10s, ignore-redirect: true}
+    conditions: ["[STATUS] == 200", "[CERTIFICATE_EXPIRATION] > 720h"]
+  - name: gorse-edge
+    group: console-edge
+    # node2 docker；未登录 302 到 /login
+    url: https://gorse.apikv.com/
+    interval: 5m
+    client: {timeout: 10s, ignore-redirect: true}
+    conditions: ["[STATUS] == 302", "[CERTIFICATE_EXPIRATION] > 720h"]
+  - name: dsh-edge
+    group: console-edge
+    url: https://dsh.apikv.com/
+    interval: 5m
+    client: {timeout: 10s, ignore-redirect: true}
+    conditions: ["[STATUS] == 302", "[CERTIFICATE_EXPIRATION] > 720h"]
+  - name: ps-edge
+    group: console-edge
+    url: https://ps.apikv.com/
+    interval: 5m
+    client: {timeout: 10s, ignore-redirect: true}
+    conditions: ["[STATUS] == 302", "[CERTIFICATE_EXPIRATION] > 720h"]
+  - name: traces-edge
+    group: console-edge
+    url: https://traces.apikv.com/
+    interval: 5m
+    client: {timeout: 10s, ignore-redirect: true}
+    conditions: ["[STATUS] == 302", "[CERTIFICATE_EXPIRATION] > 720h"]
+  - name: vmalert-edge
+    group: console-edge
+    url: https://vmalert.apikv.com/
+    interval: 5m
+    client: {timeout: 10s, ignore-redirect: true}
+    conditions: ["[STATUS] == 302", "[CERTIFICATE_EXPIRATION] > 720h"]
+  - name: alerts-edge
+    group: console-edge
+    url: https://alerts.apikv.com/
+    interval: 5m
+    client: {timeout: 10s, ignore-redirect: true}
+    conditions: ["[STATUS] == 302", "[CERTIFICATE_EXPIRATION] > 720h"]
+  - name: hc-edge
+    group: console-edge
+    url: https://hc.apikv.com/
+    interval: 5m
+    client: {timeout: 10s, ignore-redirect: true}
+    conditions: ["[STATUS] == 302", "[CERTIFICATE_EXPIRATION] > 720h"]
