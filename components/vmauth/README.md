@@ -37,6 +37,7 @@ kubectl -n victoriametrics get secret vmauth-credentials -o jsonpath='{.data.ui-
 token 的使用方（换 token 后要同步）：
 - Gatus `metrics-edge` 探针：Secret `ops/gatus-vmauth`，由 `components/gatus/install.sh` 从同一 creds 生成，重跑即同步。
 - control-tower：`scripts/dev-local.sh` 运行时从上面的 Secret 现取；GitHub Actions Secret `E2E_METRICS_TOKEN`（lens077/control-tower）需手动更新。
+- d.apikv.com 总控制台（docker-deploy 仓 `homepage/`）：node1 上 `/home/docker/homepage/telemetry.env`，重跑 `bash homepage/deploy.sh` 即同步。
 
 ## 4. 安装与验收
 
