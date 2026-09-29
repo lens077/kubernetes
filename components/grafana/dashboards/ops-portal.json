@@ -47,7 +47,7 @@
         "w": 8,
         "h": 8
       },
-      "description": "1 - idle 占比，主机所有核平均。",
+      "description": "1 - (idle + iowait) 占比，主机所有核平均。iowait 不计入使用：它表示 CPU 空着在等 IO，且会被 io_uring 等待虚高。",
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
@@ -55,7 +55,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "1 - avg by (host) (label_join(system_cpu_utilization_ratio{state=\"idle\"}, \"host\", \"\", \"k8s_node_name\", \"host_name\"))",
+          "expr": "1 - sum by (host) (label_join(system_cpu_utilization_ratio{state=~\"idle|wait\"}, \"host\", \"\", \"k8s_node_name\", \"host_name\"))",
           "datasource": {
             "type": "prometheus",
             "uid": "${datasource}"
@@ -280,7 +280,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "1 - avg by (host) (label_join(system_cpu_utilization_ratio{state=\"idle\"}, \"host\", \"\", \"k8s_node_name\", \"host_name\"))",
+          "expr": "1 - sum by (host) (label_join(system_cpu_utilization_ratio{state=~\"idle|wait\"}, \"host\", \"\", \"k8s_node_name\", \"host_name\"))",
           "datasource": {
             "type": "prometheus",
             "uid": "${datasource}"

@@ -57,7 +57,8 @@ groups:
           description: 持续 15 分钟以上。ssh 后 ps aux --sort=-rss | head 或 docker stats --no-stream 找占用大户；再涨可能触发 OOM kill 业务容器。
 
       - alert: CloudHostCPUSaturated
-        expr: '1 - avg by (host_name) (system_cpu_utilization_ratio{host_group="cloud",state="idle"}) > 0.9'
+        # iowait 算空闲：它不是 CPU 在干活，且 io_uring 程序（如 Dragonfly）等待网络事件也会被记成 iowait。
+        expr: '1 - sum by (host_name) (system_cpu_utilization_ratio{host_group="cloud",state=~"idle|wait"}) > 0.9'
         for: 30m
         labels: { severity: warning, category: host }
         annotations:

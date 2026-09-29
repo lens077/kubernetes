@@ -341,7 +341,9 @@ def by_host(selector):
 
 
 def build_portal():
-    cpu = '1 - avg by (host) (' + by_host('system_cpu_utilization_ratio{state="idle"}') + ')'
+    # iowait 也算空闲：CPU 在等 IO 时并没有干活。k3 上 Dragonfly 的 io_uring 线程等待网络完成事件
+    # 会被内核记成 iowait（常驻 1 个线程 ≈ 4 核里 24%），按 1 - idle 算会把 k3 的 CPU 从 15% 虚报到 38%。
+    cpu = '1 - sum by (host) (' + by_host('system_cpu_utilization_ratio{state=~"idle|wait"}') + ')'
     mem = 'sum by (host) (' + by_host('system_memory_utilization_ratio{state="used"}') + ')'
     disk = ('sum by (host) (' + by_host('system_filesystem_usage_bytes{mountpoint="/",state="used"}') + ') / sum by (host) ('
             + by_host('system_filesystem_usage_bytes{mountpoint="/",state=~"used|free"}') + ')')
@@ -349,7 +351,7 @@ def build_portal():
     links['options']['mode'] = 'html'
     panels = [
         links,
-        bargauge(2, 'CPU 使用率', cpu, 0, 11, description='1 - idle 占比，主机所有核平均。'),
+        bargauge(2, 'CPU 使用率', cpu, 0, 11, description='1 - (idle + iowait) 占比，主机所有核平均。iowait 不计入使用：它表示 CPU 空着在等 IO，且会被 io_uring 等待虚高。'),
         bargauge(3, '内存使用率', mem, 8, 11, description='hostmetrics 的 used 状态，不含 page cache / buffer，接近 free 命令里的 used。'),
         bargauge(4, '根分区使用率', disk, 16, 11, description='used / (used + free)，与 df 的 Use% 同口径（不含 root 保留块）。'),
         {**timeseries(5, 'CPU 使用率趋势', [(cpu, '{{host}}')], 0, 19, h=11, unit='percentunit'), 'interval': '1m'},

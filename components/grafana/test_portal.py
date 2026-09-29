@@ -64,7 +64,8 @@ class PortalTest(unittest.TestCase):
                 defaults = panel["fieldConfig"]["defaults"]
                 self.assertEqual("percentunit", defaults["unit"])
                 self.assertEqual("指标缺失", defaults["noValue"])
-        self.assertIn('state="idle"', self.panels[2]["targets"][0]["expr"])
+        # iowait 必须算作空闲：k3 上 Dragonfly 的 io_uring 等待会把 iowait 常驻抬到 24%
+        self.assertIn('state=~"idle|wait"', self.panels[2]["targets"][0]["expr"])
         self.assertIn('state=~"used|free"', self.panels[4]["targets"][0]["expr"])
 
 

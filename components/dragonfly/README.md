@@ -24,3 +24,24 @@ redis-cli --tls --cacert <global-root-ca> --sni redis-dev.apikv.com -h redis-dev
 
 旧 `components/dragonflydb`（6380、`dragonfly-password-secret`、node4 site）是集群重建前的形态；`CC_PROVIDERS` 已把
 `redis` 指到本组件。
+
+## 节点 iowait / IO pressure 虚高（io_uring 记账，不是磁盘繁忙）
+
+2026-09-29 排查 k3 `/proc/pressure/io` 长期 `some≈65% full≈55%`，而磁盘 `sda` 利用率约 5%。定位结果：
+
+| 证据 | 值 |
+|---|---|
+| IO pressure 最高的 cgroup | Pod `dragonfly/dragonfly-0`，`some avg60≈95%`；其它 Pod 均 < 1% |
+| 该 Pod 实际磁盘 IO（`io.stat`） | 写 0 字节，读累计 157MB（启动加载），无持续 IO |
+| 线程状态 | `Proactor0` 常驻 `S` 状态，`wchan=io_cqring_wait`（等 io_uring 完成事件，即等网络请求） |
+| `delayacct_blkio_ticks` 5 秒增量 | 0（没有真实块设备等待） |
+| `/proc/stat procs_blocked` | 连续 6 秒恒为 1 |
+| k3 CPU `state=wait` | 24%（4 核中 1 个线程一直记为 iowait）；k1 0.2%、k2 2% |
+
+Dragonfly v1.39 默认用 io_uring，只有 1 个 proactor 线程（CPU limit 250m）。内核 7.0 把这个线程等待完成事件的时间记成 iowait，
+于是节点 PSI io 与 CPU iowait 一直虚高。这不影响性能，但会误导排障：CPU「使用率」若按 `1 - idle` 算，k3 从 15% 虚报到 38%；
+以 IO pressure 做判断的告警或容量评估也会误判。
+
+已做：运维控制台和 `vmalert/rules/cloud-hosts.yml` 的 CPU 使用率改为 `1 - (idle + wait)`。
+可选：给 Dragonfly 加 `--force_epoll` 改用 epoll（官方 flag，本版本支持），记账随之恢复正常；需要滚动重启 `dragonfly-0`，
+单副本会短暂断连，先确认下游（control-tower BFF 会话等）能容忍再做。
