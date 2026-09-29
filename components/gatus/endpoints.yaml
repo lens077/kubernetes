@@ -132,6 +132,16 @@ endpoints:
     client: {timeout: 10s, ignore-redirect: true}
     conditions: ["[STATUS] == 200", "[CERTIFICATE_EXPIRATION] > 720h", "[RESPONSE_TIME] < 5000"]
     alerts: [{type: custom, failure-threshold: 11, success-threshold: 6}]
+  - name: shop-edge
+    group: public-edge
+    # 商城首页(consumer-next SSR)。2026-09-29 发现 Pangolin 里已没有 shop 资源、公网 404 而无任何告警,
+    # 当日经 API 重建为 rid 75: site k8s-cluster(11) → 10.10.31.240:443 https, tlsServerName shop.dev.test,
+    # Host 保持 shop.apikv.com(与 gateway 同写法; HTTPRoute 两个 hostname 都挂着)。
+    url: https://shop.apikv.com/
+    interval: 2m
+    client: {timeout: 10s, ignore-redirect: true}
+    conditions: ["[STATUS] == 200", "[CERTIFICATE_EXPIRATION] > 720h", "[RESPONSE_TIME] < 5000"]
+    alerts: [{type: custom, failure-threshold: 6, success-threshold: 4}]
   - name: config-center-web-edge
     group: public-edge
     url: https://config.apikv.com/

@@ -291,6 +291,7 @@ PORTAL_LINKS = [
     ]),
     ("业务站点", [
         ("主页", "https://apikv.com/", ""),
+        ("商城", "https://shop.apikv.com/", "灯市 · ecommerce"),
         ("博客", "https://blog.apikv.com/", ""),
         ("剪贴板", "https://scorpius.apikv.com/", "Scorpius"),
         ("Silo", "https://silo.apikv.com/", ""),
