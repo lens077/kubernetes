@@ -25,7 +25,7 @@
 | 上游默认/建议 | 本集群 | 原因 |
 |---|---|---|
 | cluster 版（生产推荐） | **single 版** | 两节点、指标量小，cluster 版三件套要多花 1G+ 内存，换不来任何可用性（存储还是本地 LVM 卷，节点挂了一样没数据）。 |
-| Service 默认 ClusterIP | 保持 ClusterIP + HTTPRoute | 集群内组件走 Service，对外只经共享网关（`metrics.dev.test`）。不开 LoadBalancer 省一个 LB IP。 |
+| Service 默认 ClusterIP | 保持 ClusterIP；对外入口归 [vmauth](../vmauth/) | 集群内组件走 Service。对外 `metrics.dev.test`（Pangolin `metrics.apikv.com`）经 vmauth 只读鉴权，本组件不再带 gateway/（2026-09-29，之前直通导致公网可写、可删数据）。 |
 | 无 resources | `requests 100m/256Mi`，`limits.memory 1Gi` | 只限内存不限 CPU：查询是突发型负载，限 CPU 会让 Grafana 面板卡顿；限内存防止大查询把节点拖垮。 |
 | 存储 8Gi | `${VM_STORAGE_SIZE}`（config.env，默认 8Gi） | OpenEBS LVM 本地卷有**节点绑定**特性——扩容要在同一节点上做。 |
 
@@ -33,7 +33,7 @@
 
 - 集群内写入（OTLP）：`http://vm-single-victoria-metrics-single-server.victoriametrics.svc.cluster.local:8428/opentelemetry/v1/metrics`
 - 集群内查询：同上主机 `:8428`，`/api/v1/query`
-- 对外：`https://metrics.dev.test`（共享网关，证书由 global-ca-issuer 签）
+- 对外：`https://metrics.dev.test` / `https://metrics.apikv.com` → [vmauth](../vmauth/)，只读；程序带 Bearer token，浏览器 VMUI 用户 `ops`。写入与管理接口不对外
 
 ## 5. 验证
 
@@ -52,10 +52,11 @@ kubectl -n victoriametrics exec $VM -- sh -c \
   'wget -qO- "http://127.0.0.1:8428/api/v1/query?query=probe_metric"'
 ```
 
-经网关（从局域网其他主机）：
+经网关（从局域网其他主机，经 vmauth，需只读 token）：
 
 ```bash
-curl -sk "https://metrics.dev.test/api/v1/query?query=up" --resolve metrics.dev.test:443:$GW | head -c 200
+TOKEN=$(kubectl -n victoriametrics get secret vmauth-credentials -o jsonpath='{.data.read-token}' | base64 -d)
+curl -sk -H "Authorization: Bearer $TOKEN" "https://metrics.dev.test/api/v1/query?query=up" --resolve metrics.dev.test:443:$GW | head -c 200
 ```
 
 ## 6. 踩坑

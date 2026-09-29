@@ -1,0 +1,107 @@
+# vmauth: 公网只读代理。占位符 ${...} 由 render_tpl 替换; %{...} 是 vmauth 自己在启动时从环境变量展开的,
+# 所以配置文件本身不含任何凭据, 可以放 ConfigMap。
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vmauth-config
+  namespace: ${NAMESPACE}
+  labels: { app.kubernetes.io/name: vmauth }
+data:
+  auth.yml: |
+    # 只放行查询与 VMUI 需要的只读路径(src_paths 是整路径正则)。没列出的一律 401/403:
+    #   写入 /api/v1/write /api/v1/import* /opentelemetry/*   → 公网写入走 otlp-dev.apikv.com
+    #   管理 /api/v1/admin/* /snapshot/* /internal/* /flags /metrics /debug/pprof/*
+    users:
+      - name: reader
+        bearer_token: "%{VMAUTH_READ_TOKEN}"
+        url_map:
+          # VMUI 走 /prometheus 前缀(实测), 程序多用无前缀, 两种都放行
+          - src_paths: &ro_paths
+              - "(/prometheus)?/api/v1/(query|query_range|series|labels|label/[^/]+/values|metadata|query_exemplars)"
+              - "(/prometheus)?/api/v1/status/(buildinfo|tsdb|top_queries|active_queries|metric_names_stats)"
+              - "(/prometheus)?/api/v1/export(/csv)?"
+              - "(/prometheus)?/(expand-with-exprs|prettify-query|metric-relabel-debug)"
+            url_prefix: "http://vm-single-victoria-metrics-single-server.${NAMESPACE}.svc.cluster.local:8428"
+      - name: vmui
+        username: ops
+        password: "%{VMAUTH_UI_PASSWORD}"
+        url_map:
+          - src_paths: *ro_paths
+            url_prefix: "http://vm-single-victoria-metrics-single-server.${NAMESPACE}.svc.cluster.local:8428"
+          # 页面静态资源 + VMUI 启动时读的 config.json / timezone / custom-dashboards
+          - src_paths: ["/", "/vmui", "/vmui/.*", "/prometheus/vmui/.*", "/favicon.ico"]
+            url_prefix: "http://vm-single-victoria-metrics-single-server.${NAMESPACE}.svc.cluster.local:8428"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vmauth
+  namespace: ${NAMESPACE}
+  labels: { app.kubernetes.io/name: vmauth }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app.kubernetes.io/name: vmauth }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: vmauth }
+      annotations:
+        # 配置或凭据变了就滚动(vmauth 只在启动时展开 %{ENV})
+        checksum/config: "${VMAUTH_CONFIG_SHA}"
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: vmauth
+          image: ${VMAUTH_IMAGE}
+          args:
+            - -auth.config=/config/auth.yml
+            - -httpListenAddr=:8427
+            # 自身的 /metrics /flags /-/reload /debug/pprof 放到独立端口, 不经网关暴露;
+            # 否则它们和被代理的路径共用 8427, 公网能直接读 vmauth 的启动参数。
+            - -httpInternalListenAddr=:8426
+            - -loggerFormat=json
+          env:
+            - name: VMAUTH_READ_TOKEN
+              valueFrom: { secretKeyRef: { name: vmauth-credentials, key: read-token } }
+            - name: VMAUTH_UI_PASSWORD
+              valueFrom: { secretKeyRef: { name: vmauth-credentials, key: ui-password } }
+          ports:
+            - { name: http, containerPort: 8427 }
+            - { name: internal, containerPort: 8426 }
+          readinessProbe:
+            httpGet: { path: /health, port: internal }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /health, port: internal }
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          resources:
+            requests: { cpu: 10m, memory: 32Mi }
+            limits: { memory: 128Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          volumeMounts:
+            - { name: config, mountPath: /config, readOnly: true }
+      volumes:
+        - name: config
+          configMap: { name: vmauth-config }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vmauth
+  namespace: ${NAMESPACE}
+  labels: { app.kubernetes.io/name: vmauth }
+spec:
+  type: ClusterIP
+  selector: { app.kubernetes.io/name: vmauth }
+  ports:
+    - { name: http, port: 8427, targetPort: http }
+    # internal(8426) 不进 Service: 只给 kubelet 探针和 kubectl port-forward 用

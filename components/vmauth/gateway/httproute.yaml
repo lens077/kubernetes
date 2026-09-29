@@ -1,0 +1,46 @@
+# metrics.dev.test(Pangolin metrics.apikv.com 的后端 Host)→ vmauth。
+# 名字沿用原 victoriametrics 组件的 vm-single / vm-single-redirect: kubectl apply 原地改后端,
+# 不会出现两条同 hostname 的路由抢匹配。victoriametrics 组件已删掉自己的 gateway/, 重跑它不会改回直连。
+# ⚠️ 不要把 backendRefs 改回 vm-single-victoria-metrics-single-server:8428 —— 那是无鉴权的 VM,
+#    公网能写入、能调 /api/v1/admin/tsdb/delete_series。
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: vm-single-redirect
+  namespace: ${NAMESPACE}
+spec:
+  parentRefs:
+    - name: cilium-gateway
+      namespace: default
+      sectionName: http
+  hostnames:
+    - "${HOSTNAME}"
+  rules:
+    - filters:
+        - type: RequestRedirect
+          requestRedirect:
+            scheme: https
+            port: 443
+            statusCode: 301
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: vm-single
+  namespace: ${NAMESPACE}
+spec:
+  parentRefs:
+    - name: cilium-gateway
+      namespace: default
+      sectionName: https
+  hostnames:
+    - "${HOSTNAME}"
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: vmauth
+          port: 8427
