@@ -43,5 +43,15 @@ Dragonfly v1.39 默认用 io_uring，只有 1 个 proactor 线程（CPU limit 25
 以 IO pressure 做判断的告警或容量评估也会误判。
 
 已做：运维控制台和 `vmalert/rules/cloud-hosts.yml` 的 CPU 使用率改为 `1 - (idle + wait)`。
-可选：给 Dragonfly 加 `--force_epoll` 改用 epoll（官方 flag，本版本支持），记账随之恢复正常；需要滚动重启 `dragonfly-0`，
-单副本会短暂断连，先确认下游（control-tower BFF 会话等）能容忍再做。
+同日根治：`install.sh` 加 `--set 'extraArgs[0]=--force_epoll'`（官方 flag），`INFO server` 的 `multiplexing_api` 由 `iouring` 变为 `epoll`。
+
+| 指标（k3） | 之前 | 之后 |
+|---|---|---|
+| `/proc/pressure/io` some avg60 | 65% | 6%（剩余来自排查时自己的 ssh 会话） |
+| CPU `state=wait` | 24% | 1.6% |
+| `procs_blocked` | 恒为 1 | 0 |
+
+变更过程：重启前 `SAVE` 手动快照；`helm upgrade --reuse-values` 先 `--dry-run=server` 对比，manifest 只多一行参数；
+单副本滚动约 15 秒不可用，11 个客户端 Pod（ecommerce 各服务、control-tower-gateway、config-center）只在
+15:30:46–15:31:01 报 `connection refused`，之后自动重连，无 Pod 重启；重启后 DBSIZE 与键名指纹与重启前一致（启动时从 `/data` 快照加载）。
+以后重跑 `install.sh` 会保留该参数。

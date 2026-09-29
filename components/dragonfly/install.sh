@@ -21,6 +21,9 @@ fi
 
 kctl -n "$NAMESPACE" apply -f "$DIR/manifests/00-certificate.yaml"
 
+# --force_epoll(2026-09-29): 默认 io_uring 下唯一的 proactor 线程等网络完成事件会被内核记成 iowait,
+# k3 节点 PSI io 常驻 65%、CPU iowait 24%, 磁盘却几乎不动(README「节点 iowait 虚高」)。
+# 单线程(limit 250m)、几十个连接的负载下 epoll 与 io_uring 没有可感知的性能差。
 chart="${CACHE_DIR:-/var/cache/k8s-installer}/charts/dragonfly-${DRAGONFLY_CHART_VERSION}.tgz"
 [[ -s "$chart" ]] || chart="oci://ghcr.io/dragonflydb/dragonfly/helm/dragonfly"
 helm upgrade --install dragonfly "$chart" \
@@ -41,7 +44,8 @@ helm upgrade --install dragonfly "$chart" \
   --set tls.existing_secret=dragonfly-tls \
   --set storage.enabled=true \
   --set storage.storageClassName="$SC_NAME" \
-  --set storage.requests=2Gi
+  --set storage.requests=2Gi \
+  --set 'extraArgs[0]=--force_epoll'
 
 kctl apply -f "$DIR/manifests/01-tcp-route.yaml"
 kctl -n "$NAMESPACE" rollout status statefulset/dragonfly --timeout=300s
