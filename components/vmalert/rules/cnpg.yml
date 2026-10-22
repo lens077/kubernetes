@@ -94,21 +94,68 @@ groups:
           description: 15 分钟内有归档失败且未恢复。查对象存储凭据/网络(kubectl -n postgresql logs <pod> | grep -i archive)；归档断了等于备份的恢复点在倒退。
 
       - alert: CNPGBackupStale
-        # 备份新鲜度的第一道: 最近一次可用备份超过 26h(每日 ScheduledBackup + 2h 余量)。
-        # 第二道是 healthchecks 死人开关(备份 CronJob ping), 两道互相独立。
-        expr: 'time() - max by (cnpg_cluster) (cnpg_collector_last_available_backup_timestamp) > 26 * 3600'
+        # 备份新鲜度的第一道: 最近一次成功备份超过 26h(每日 ScheduledBackup + 2h 余量)。
+        #
+        # 2026-10-21 二次修正(接对象存储备份后): 数据源整体换掉。
+        #   实例导出器的 cnpg_collector_last_available_backup_timestamp **看不见插件做的备份**
+        #   —— 它只认 1.26 起已废弃的 in-tree barmanObjectStore。改用 Barman Cloud Plugin 后,
+        #   即便备份真实成功, 该指标也恒为 0。后果是双向的: 旧表达式恒真永久告警,
+        #   而真的备份缺失反而检测不出来。
+        #   现在改读 cnpg_backup_last_success_timestamp_seconds: 由
+        #   postgres/manifests/cnpg-backup-freshness-probe 直接查 K8s Backup 对象得来的真值。
+        # 保留 "> 0" 这道闸: 0 表示"从没有成功备份", 那不是"变旧", 归下一条规则管。
+        # ⚠️ 必须包 last_over_time(...[2h])：探针 30 分钟一轮，而 VictoriaMetrics 默认
+        #    lookback 只有 5 分钟，直接写裸指标名的话每轮中间 25 分钟 series 等于"不存在"，
+        #    规则会周期性假报警。
+        expr: 'last_over_time(cnpg_backup_last_success_timestamp_seconds[2h]) > 0 and (time() - last_over_time(cnpg_backup_last_success_timestamp_seconds[2h]) > 26 * 3600)'
         for: 30m
         labels: { severity: critical, category: backup }
         annotations:
-          summary: 'CNPG 集群 {{ $labels.cnpg_cluster }} 超过 26 小时没有可用备份'
-          description: 检查 ScheduledBackup 与最近的 Backup 对象状态(kubectl -n postgresql get backup)。没有备份的数据库不算生产库。
+          summary: 'CNPG 集群 {{ $labels.cluster }} 超过 26 小时没有成功备份'
+          description: 曾有成功备份但已超过 26 小时没新的。检查 ScheduledBackup 与最近 Backup 的 phase(kubectl -n postgresql get backup)，以及 freshness-probe CronJob 是否在正常跑。没有备份的数据库不算生产库。
 
       - alert: CNPGNoBackupEver
-        # 集群跑起来了但从来没成功备份过。CNPG 在未配置备份时仍暴露值为 0 的 series，
-        # 不能只用 unless 判「不存在」；2026-09-24 现场正因这个 0 值让规则错误地保持 inactive。
-        expr: '(cnpg_collector_up == 1 unless on (cnpg_cluster) cnpg_collector_last_available_backup_timestamp) or on (cnpg_cluster) (cnpg_collector_last_available_backup_timestamp <= 0)'
+        # 同上数据源修正: 探针值为 0 代表一次成功的 Backup 都没有。
+        # 2026-10-21 之后备份已真实启用, 这条再响就是真故障而不是既定缺口,
+        # 因此去掉了当初标在它身上的 known_gap 标签。
+        expr: 'last_over_time(cnpg_backup_last_success_timestamp_seconds[2h]) == 0'
         for: 6h
         labels: { severity: warning, category: backup }
         annotations:
-          summary: 'CNPG 集群 {{ $labels.cnpg_cluster }} 没有任何可用备份'
-          description: 6 小时内没有出现过 last_available_backup 指标。要么备份没配(components/postgres README 已承认这是缺口)，要么第一次备份一直失败。
+          summary: 'CNPG 集群 {{ $labels.cluster }} 没有任何成功备份'
+          description: 探针连续 6 小时没找到 completed 的 Backup。查 kubectl -n postgresql get backup 的 phase 与失败原因，以及 ObjectStore pg-main-backups 指向的桶是否可达、凭据是否仍有效。
+
+      - alert: CNPGBackupProbeMissing
+        # 兜底: 上面两条都依赖探针推的数据。探针一停, 那两条会因为没数据而静默变绿 ——
+        # 死人开关必须自己被看着, 否则"没告警"和"没监控"长得一模一样。
+        expr: 'absent(last_over_time(cnpg_probe_run_timestamp_seconds[2h]))'
+        for: 15m
+        labels: { severity: warning, category: backup }
+        annotations:
+          summary: 'CNPG 备份新鲜度探针已停止上报 {{ $labels.cluster }}'
+          description: 探针 CronJob(postgresql 命名空间 cnpg-backup-freshness-probe)超过 3 小时没推数据。此时上面两条备份告警已失效。先看 kubectl -n postgresql get cronjob,job 与最近一次 Job 的日志。
+
+      - alert: CNPGWALArchiveFailed
+        # 归档失败才是"备份链路真断了"的直接信号: 对象存储不可达、凭据失效、
+        # 插件 sidecar 异常, 都会让 archive_command 返回非零, failed_count 随之上涨。
+        # 这条与上面几条互相独立 —— 不看 Backup 对象, 只看 PostgreSQL 自己的 pg_stat_archiver。
+        # for: 10m 过滤 rollout 期间几秒~几分钟的瞬时失败(2026-10-22 注入 sidecar 时出现过 12 次)。
+        expr: 'increase(cnpg_pg_stat_archiver_failed_count_total[15m]) > 0'
+        for: 10m
+        labels: { severity: critical, category: backup }
+        annotations:
+          summary: 'CNPG 集群 {{ $labels.cnpg_cluster }} WAL 归档连续失败'
+          description: archive_command 连续失败超过 10 分钟。归档一断，RPO 就开始追着现在跑；即使有旧的 base backup 也补不上这一段。查 ObjectStore pg-main-backups 指向的桶是否可达、凭据是否仍有效，以及实例日志里的 archive 报错。
+
+      - alert: CNPGWALArchiveStalled
+        # 兜底: 归档进程整体死掉时既不会成功也不会失败, 上面那条看不到。
+        # 阈值必须容忍空闲库 —— 2026-10-22 曾按"archive_timeout=5min 所以空闲也每 5 分钟归档一次"
+        # 设 1 小时阈值, 实测误报: PostgreSQL 只在**有新 WAL 时**才强制切段,
+        # 完全空闲的库可以几十分钟不归档(当时 LSN 70 秒零推进、pg_wal 无 .ready 堆积、failed_count=0)。
+        # 本库实测再空闲每小时仍有一对归档, 24 小时阈值不会漏真故障也不会误报空闲。
+        expr: 'cnpg_pg_stat_archiver_seconds_since_last_archival > 86400'
+        for: 1h
+        labels: { severity: warning, category: backup }
+        annotations:
+          summary: 'CNPG 集群 {{ $labels.cnpg_cluster }} 超过 24 小时没有任何 WAL 归档'
+          description: 既没有成功归档也没有失败记录，通常是归档进程整体停止。先确认库里是否真的没有写入（空闲库不会归档）；有写入却 24 小时无归档，查 pg-main-1 实例日志与插件 sidecar 状态。

@@ -30,7 +30,7 @@ ecommerce 的业务库和 outbox CDC 源表都运行在该实例上。
 | ≥3 实例同步复制 | dev 使用 `instances: 1` | 当前先控制资源开销；生产 HA 需另行规划 ≥3 实例、反亲和和独立故障域。 |
 | requests=limits 含 CPU（Guaranteed） | **只钉内存 1Gi，CPU 不限** | 内存紧 + 查询是突发负载（与 VM/dragonfly 同理）。代价是 QoS 降为 Burstable、丢掉 OOM 调优收益，主动取舍。 |
 | `walStorage` 分卷 | 不分 | 本集群两个 PVC 都落同一个 LVM VG，I/O 并行收益为零；只剩"满盘隔离"一条，对 10Gi 测试实例不值得背"加了拆不掉"的单向决定。 |
-| 对象存储备份 | **暂缺** | MinIO 与数据库跑在同一批本地盘上，备份到那里不构成异地容灾。要做备份应指向集群外（node1 VPS 或云端），且要走 Barman Cloud Plugin（见上）。**这是当前的已知缺口。** |
+| 对象存储备份 | **已接集群内 MinIO**（2026-10-22） | MinIO 与数据库跑在同一批本地盘上，**备份到那里不构成异地容灾**——主机或 LVM VG 整体损毁时备份一起没。走 CNPG-I 的 Barman Cloud Plugin（`backup.barmanObjectStore` 已 deprecated），保留 30 天，每日 03:15 UTC 全量 + WAL 连续归档。已具备误删/数据损坏/PITR 防护；真容灾仍缺集群外一路，见 `manifests/` 与第 6 节。 |
 | bitnami postgresql-ha | 换 CNPG | bitnami 镜像 2025 年起受限；CNPG 不需要 pgpool/repmgr 附加组件。 |
 
 ## 4. 暴露方式
@@ -84,3 +84,21 @@ PGPASSWORD=xxx psql "host=pg.dev.test hostaddr=$VIP user=app dbname=ecommerce \
   改配置要改 `spec.postgresql.parameters`。
 - **Debezium CDC 相关**：复制槽残留、`publication` 缺失、`binary.handling.mode` 取值等
   一整套踩坑记录在仓库根的 [TODO.md](../../TODO.md)（2026-08-06 那次排查）。
+- **备份相关（2026-10-22 接 Barman Cloud Plugin 时踩到，三条都能无声咬人）**：
+  1. **CNPG 的 `schedule` 是 6 段 cron（秒 分 时 日 月 周），不是标准 5 段。**
+     想「每天 03:15」必须写 `0 15 3 * * *`；按 5 段直觉写 `15 3 * * *` 实际语义是
+     「每小时第 3 分第 15 秒」，20 小时能跑 43 次全量、吃掉 2.8 GiB。
+  2. **插件做的备份，CNPG 自带 exporter 看不见。**
+     `cnpg_collector_last_available_backup_timestamp` 恒为 0，
+     `.status.lastSuccessfulBackup` / `firstRecoverabilityPoint` 也不填充——
+     它们只认内置 `barmanObjectStore`。所以另有一个 CronJob 探针
+     （`manifests/cnpg-backup-freshness-probe/`）每 30 分钟读 Backup CR 真值推 VM，
+     并由 `CNPGBackupProbeMissing` 盯探针自身。验证这些 30 分钟级指标**别用 VM 即时查询**
+     （回看窗口只有 5 分钟，会 25/30 的时间返回空），要用 `query_range` 或 `/api/v1/series`。
+  3. **`instanceSidecarConfiguration.env` 里的 `AWS_REQUEST_CHECKSUM_CALCULATION` /
+     `AWS_RESPONSE_CHECKSUM_VALIDATION` / `AWS_NO_CHUNKED_ENCODING` 不是可选项。**
+     boto3 新版默认强制算 `x-amz-content-sha256` 并对分片启用 chunked encoding，
+     MinIO 这类非 AWS 实现会直接报 `x-amz-content-sha256`（插件 issue #393），
+     去掉它们 WAL 归档必失败。
+- **备份落点仍是集群内 MinIO**：与数据库共用同一批本地盘，挡得住误删/数据损坏/PITR，
+  挡不住主机或 LVM VG 整体损毁。要真容灾需再加一路集群外对象存储。

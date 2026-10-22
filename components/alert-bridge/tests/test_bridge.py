@@ -58,6 +58,10 @@ class BridgeTest(unittest.TestCase):
             self.assertIn(f'alert_bridge_notifications_total{{notification_class="{kind}",reason="backoff",result="suppressed"}} 0', lines)
         self.assertIn('alert_bridge_state_entries{active="true"} 0', lines)
         self.assertIn('alert_bridge_state_entries{active="false"} 0', lines)
+        # 续期上限与心跳也要有零值基线, 否则 increase() 看不到首次事件。
+        for kind in ('page', 'ticket', 'test'):
+            self.assertIn(f'alert_bridge_notifications_total{{notification_class="{kind}",reason="renewal_cap",result="suppressed"}} 0', lines)
+            self.assertIn(f'alert_bridge_notifications_total{{notification_class="{kind}",reason="recap",result="sent"}} 0', lines)
 
     def test_metrics_distinguish_failed_publish_retry_and_suppression(self):
         p = payload(alert())
@@ -72,6 +76,11 @@ class BridgeTest(unittest.TestCase):
             self.assertIn(f'alert_bridge_notifications_total{{notification_class="page",reason="{reason}",result="{result}"}} 1', lines)
         self.assertEqual(1, len(self.sent))
 
+    def assert_metric(self, kind, reason, result, value):
+        lines = self.engine.metrics.render(self.engine).splitlines()
+        self.assertIn(f'alert_bridge_notifications_total{{notification_class="{kind}",'
+                      f'reason="{reason}",result="{result}"}} {value}', lines)
+
     def test_page_backoff_persists_and_caps(self):
         p = payload(alert())
         self.engine.process(p)
@@ -85,6 +94,71 @@ class BridgeTest(unittest.TestCase):
             self.engine.process(p)
             self.assertEqual(count + 1, len(self.sent))
         self.assertEqual(7, len(self.sent))
+
+    def test_page_renewal_cap_persists_then_heartbeat_only(self):
+        p = payload(alert())
+        self.engine.process(p)
+        for hours in [1, 2, 4, 8, 24, 24, 24]:
+            self.now += hours * 3600
+            self.engine.process(p)
+        self.assertEqual(8, len(self.sent))                  # 首发 + 7 次续期 = MAX_SENDS
+        # 上限后重建进程: 状态在 PVC 上, 上限必须仍然生效, 24h 阶梯到点也不再推。
+        self.engine = self.make_engine()
+        self.now += 24 * 3600
+        self.engine.process(p)
+        self.assertEqual(8, len(self.sent))
+        self.assert_metric('page', 'renewal_cap', 'suppressed', 1)
+        # RECAP_INTERVAL 之后只放行一条心跳, 且不重启退避阶梯。
+        self.now += self.engine.RECAP_INTERVAL['page']
+        self.engine.process(p)
+        self.assertEqual(9, len(self.sent))
+        self.assert_metric('page', 'recap', 'sent', 1)
+        self.now += 24 * 3600
+        self.engine.process(p)
+        self.assertEqual(9, len(self.sent))
+        self.assert_metric('page', 'renewal_cap', 'suppressed', 2)
+
+    def test_ticket_renewal_cap_and_heartbeat(self):
+        p = payload(alert(severity='warning'))
+        self.engine.process(p)
+        for hours in [4, 8, 16, 24, 24]:
+            self.now += hours * 3600
+            self.engine.process(p)
+        self.assertEqual(6, len(self.sent))
+        self.now += 24 * 3600
+        self.engine.process(p)
+        self.assertEqual(6, len(self.sent))
+        self.assert_metric('ticket', 'renewal_cap', 'suppressed', 1)
+        self.now += self.engine.RECAP_INTERVAL['ticket']
+        self.engine.process(p)
+        self.assertEqual(7, len(self.sent))
+        self.assert_metric('ticket', 'recap', 'sent', 1)
+
+    def test_member_change_and_new_episode_beat_renewal_cap(self):
+        p = payload(alert())
+        self.engine.process(p)
+        for hours in [1, 2, 4, 8, 24, 24, 24]:
+            self.now += hours * 3600
+            self.engine.process(p)
+        self.assertEqual(8, len(self.sent))
+        # 新成员进组是新的故障面, 必须穿透上限。
+        self.engine.process(payload(alert(), alert('pod-b')))
+        self.assertEqual(9, len(self.sent))
+        # 同标签新 episode(startsAt 不同)同样必须穿透, 上限不能吞掉复发。
+        self.engine.process(payload(alert(start='2026-09-27T00:00:00Z')))
+        self.assertEqual(10, len(self.sent))
+
+    def test_recovery_after_renewal_cap_still_notifies(self):
+        p = payload(alert())
+        self.engine.process(p)
+        for hours in [1, 2, 4, 8, 24, 24, 24]:
+            self.now += hours * 3600
+            self.engine.process(p)
+        self.now += 24 * 3600
+        self.engine.process(p)                      # 被上限吞掉, 不再打扰
+        self.engine.process(payload(alert(status='resolved'), status='resolved'))
+        self.assertEqual(9, len(self.sent))
+        self.assertIn('[恢复]', self.sent[-1]['title'])
 
     def test_ticket_intervals_and_unknown_are_visible(self):
         p = payload(alert(severity='unexpected'))

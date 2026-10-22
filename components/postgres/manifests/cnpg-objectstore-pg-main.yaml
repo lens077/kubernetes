@@ -1,0 +1,45 @@
+# CNPG pg-main 的备份对象存储（Barman Cloud Plugin 用）
+#
+# 前置：
+#   1. 已安装 barman-cloud 插件：kubectl apply -f plugin-barman-cloud-v0.15.1.yaml
+#   2. 已创建桶与最小权限凭据：bash setup-cnpg-backup-bucket.sh（同目录，产出 Secret cnpg-backup-s3）
+#
+# ⚠️ instanceSidecarConfiguration.env 那三个 AWS_* 变量不是可选项。
+#    boto3 新版默认强制计算 x-amz-content-sha256 校验和并对分片启用 chunked encoding，
+#    MinIO 这类非 AWS S3 实现会因此报错 `x-amz-content-sha256`（插件 issue #393）。
+#    去掉它们 WAL 归档会直接失败。
+#
+# ⚠️ 这是集群内 MinIO，与数据库共用同一批本地盘 —— 挡得住误删/数据损坏/PITR 需求，
+#    挡不住主机或 LVM VG 整体损毁。要做异地容灾必须再加一路外部对象存储。
+apiVersion: barmancloud.cnpg.io/v1
+kind: ObjectStore
+metadata:
+  name: pg-main-backups
+  namespace: postgresql
+spec:
+  # 保留 30 天。注意它属于 ObjectStore，不是 Cluster 的字段。
+  # sidecar 默认每 30 分钟执行一次清理，可用 instanceSidecarConfiguration.retentionPolicyIntervalSeconds 调。
+  retentionPolicy: "30d"
+  configuration:
+    # 插件会在该路径下按 serverName（默认取集群名）分子目录。
+    # CERIT 文档的坑：新集群启用归档前插件会校验 WAL 目录为空，非空会报 Expected empty archive。
+    # destinationPath 里 s3Credentials 之外的路径都必须是全新的。
+    destinationPath: "s3://cnpg-backups/"
+    endpointURL: "http://minio-service.minio.svc.cluster.local:9000"
+    s3Credentials:
+      accessKeyId:
+        name: cnpg-backup-s3
+        key: ACCESS_KEY_ID
+      secretAccessKey:
+        name: cnpg-backup-s3
+        key: ACCESS_SECRET_KEY
+    wal:
+      compression: gzip
+  instanceSidecarConfiguration:
+    env:
+      - name: AWS_REQUEST_CHECKSUM_CALCULATION
+        value: when_required
+      - name: AWS_RESPONSE_CHECKSUM_VALIDATION
+        value: when_required
+      - name: AWS_NO_CHUNKED_ENCODING
+        value: "true"

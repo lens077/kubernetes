@@ -1,0 +1,89 @@
+# pg-main 备份新鲜度探针
+#
+# 存在的理由：改用 Barman Cloud Plugin 后，CNPG 实例导出器的
+# cnpg_collector_last_available_backup_timestamp 恒为 0 —— 它只认已废弃的
+# in-tree barmanObjectStore。于是「备份到底有没有成功」在 Prometheus 里失明：
+# 旧规则会永久假报警，同时失去了真备份缺失的检测能力。
+#
+# 这个探针绕过导出器，直接读 Kubernetes API 里 Backup 对象的 phase / stoppedAt，
+# 把真值推进 VictoriaMetrics：
+#   cnpg_backup_last_success_timestamp_seconds{cluster="pg-main"}   最近一次成功备份
+#   cnpg_probe_run_timestamp_seconds{cluster="pg-main"}             探针心跳（死人开关）
+#
+# 探针自身挂掉时这两个 series 会 stale 消失，由 vmalert 的 CNPGProbeMissing 兜住，
+# 不会「探针死了 = 没数据 = 不报警」这种假绿。
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: cnpg-backup-probe
+  namespace: postgresql
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: cnpg-backup-probe
+  namespace: postgresql
+rules:
+  - apiGroups: ["postgresql.cnpg.io"]
+    resources: ["backups"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: cnpg-backup-probe
+  namespace: postgresql
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: cnpg-backup-probe
+subjects:
+  - kind: ServiceAccount
+    name: cnpg-backup-probe
+    namespace: postgresql
+# 注意：probe.py 不在这里内联，而是由同目录 apply.sh 现场生成 ConfigMap，
+# 避免「YAML 缩进副本」和「源文件」两份内容漂移。
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: cnpg-backup-freshness-probe
+  namespace: postgresql
+spec:
+  schedule: "*/30 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        spec:
+          serviceAccountName: cnpg-backup-probe
+          restartPolicy: OnFailure
+          containers:
+            - name: probe
+              image: python:3.13-alpine
+              command: ["python3", "-u", "/probe/probe.py"]
+              env:
+                - name: PROBE_NAMESPACE
+                  value: "postgresql"
+                - name: PROBE_CLUSTER
+                  value: "pg-main"
+                - name: VM_URL
+                  value: "http://vm-single-victoria-metrics-single-server.victoriametrics.svc.cluster.local:8428"
+              resources:
+                requests:
+                  cpu: 10m
+                  memory: 48Mi
+                limits:
+                  cpu: 200m
+                  memory: 128Mi
+              volumeMounts:
+                - name: probe
+                  mountPath: /probe
+                  readOnly: true
+          volumes:
+            - name: probe
+              configMap:
+                name: cnpg-backup-freshness-probe

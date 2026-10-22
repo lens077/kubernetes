@@ -88,9 +88,16 @@ groups:
         # ALERTS_FOR_STATE 不带 alertstate label，不要加该过滤条件（会永远查不到）。
         # Watchdog 是设计上永远 firing 的心跳（observability-pipeline.yml），必须排除——
         # 否则本规则对它永久 firing，自己变成一条慢性红（2026-09-21 起挂了 1d11h 才发现）。
-        expr: '(time() - ALERTS_FOR_STATE{alertname!~"AlertFiringTooLong|Watchdog"}) > 4*3600'
+        # 2026-10-21 修正一: 加 known_gap!="true"。CNPG 未配置备份是书面接受的缺口,
+        # 再对它可持续地发「告警本身已经响了太久」的通知, 属于用元规则放大已知噪音:
+        # 2026-10-13~10-20 期间它稳定每天贡献 2 条通知, 且因上游不可自愈而永不结束。
+        # 2026-10-21 修正二: 时长口径。ALERTS_FOR_STATE 由 vmalert 写入远端存储,
+        # 组件重建后 vmalert 从远端**恢复**状态保留了旧时间戳, 而 Alertmanager 的
+        # startsAt 在同一次重建里被重置 —— 于是 summary 说「已持续 20d13h」而 AM 认为
+        # 只有 6.9d。在 summary 里显式标注数据来源, 避免两个视图对不上时被误读。
+        expr: '(time() - ALERTS_FOR_STATE{alertname!~"AlertFiringTooLong|Watchdog", known_gap!="true"}) > 4*3600'
         for: 15m
         labels: { severity: warning, category: observability }
         annotations:
-          summary: '告警已持续 {{ $value | humanizeDuration }}：{{ $labels.alertname }}'
+          summary: '告警已持续 {{ $value | humanizeDuration }}（vmalert 视角，可能与 Alertmanager startsAt 不同）：{{ $labels.alertname }}'
           description: 该告警长期未恢复，已失去信号价值。必须二选一：修掉根因，或删掉/修正这条规则。不要靠调阈值让它变绿——那会把真问题永久藏起来。

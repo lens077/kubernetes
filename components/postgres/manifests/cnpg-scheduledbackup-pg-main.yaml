@@ -1,0 +1,28 @@
+# pg-main 每日全量备份
+#
+# 前置：ObjectStore pg-main-backups + Cluster.spec.plugins 已启用 barman-cloud 插件。
+# 首次全量备份已由 pg-main-base-20261021 完成；这里只负责之后的每日调度。
+#
+# ⚠️ immediate: false —— 首次备份已跑过，不需要启动时再来一次。
+#    改 true 时如果同时还有 Backup 在跑会被拒绝。
+# ⚠️ 保留策略不在 ScheduledBackup 上，而在 ObjectStore.spec.retentionPolicy（当前 30d）。
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: pg-main-daily
+  namespace: postgresql
+spec:
+  # 每天 03:15:00 UTC = 11:15 CST
+  #
+  # ⚠️ CNPG 的 schedule 是 **6 段 cron（秒 分 时 日 月 周）**，不是标准 5 段。
+  #    曾误写成 "15 3 * * *"（秒=15 分=3），实际语义变成「每小时第 3 分第 15 秒」，
+  #    20 小时跑了 24 次全量、吃掉 2.8 GiB —— 本地 MinIO 只有 20G，撑不到一周。
+  #    想要「每天 03:15」必须写全 6 段：秒=0 分=15 时=3。
+  schedule: "0 15 3 * * *"
+  backupOwnerReference: self
+  cluster:
+    name: pg-main
+  method: plugin
+  pluginConfiguration:
+    name: barman-cloud.cloudnative-pg.io
+  immediate: false

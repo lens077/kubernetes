@@ -5,7 +5,9 @@
 vmalert 的唯一 notifier。做四件事：按 `alertname` 分组、`K8sNodeNotReady` / 采集断链时抑制下游告警、
 人工静默、把结果 webhook 给 `alert-bridge`（再由桥推 ntfy）。**不直接对接 ntfy**：Alertmanager 没有
 ntfy receiver，而桥这一层顺便把每条告警落成 JSON 日志（进 VictoriaLogs），这是「告警去了哪」的第二条证据链。
-通知策略（2026-09-26）：`group_wait 1m`、`group_interval 5m`、`repeat_interval 5m`。后者是给桥的刷新，不是手机频率；桥在 PVC 持久化 page 的 1/2/4/8/24h、ticket 的 4/8/16/24h 退避。**先部署新桥与三主题，再部署此路由；不能将 5m 刷新接到旧桥。**
+通知策略（2026-09-26 定，2026-10-22 调）：`group_wait 1m`、`group_interval 5m`、`repeat_interval 15m`。后者只是给桥的刷新粒度，不是手机频率；桥在 PVC 持久化 page 的 1/2/4/8/24h、ticket 的 4/8/16/24h 退避，并对同一批成员设续期上限（page 8 次 / ticket 6 次）后只留慢速心跳。**先部署新桥与三主题，再部署此路由；不能把刷新接到旧桥。**
+
+`repeat_interval` 从 5m 调到 15m 的原因：5m 时一个持续 11 天的告警会产生约 3168 次 webhook，几乎全被桥以 backoff 抑制，纯浪费；桥最短退避是 page 1h / ticket 4h，15m 粒度远低于它，只影响桥丢状态后多久被重新提醒。**改这个值要走「patch ConfigMap + SIGHUP」，不要 helm upgrade**：upgrade 会改 `checksum/config` 注解触发 StatefulSet 滚动重启，AM 丢内存态、`startsAt` 重置，桥会把同一批告警当成新 episode 重发（2026-10-22 已实际发生过一次，产生 2 条重复 ticket）。
 
 ## 2. 上游最佳实践
 
@@ -22,7 +24,7 @@ chart `prometheus-community/alertmanager` 1.42.0（app v0.34.0）
 | 上游默认/建议 | 本集群 | 原因 |
 |---|---|---|
 | 多 receiver（邮件/Slack/…） | 只有 `alert-bridge` webhook + `null` | 推送渠道统一为 ntfy；桥可换渠道而不动 Alertmanager |
-| 固定手机重复间隔 | AM 5m 刷新，桥持久指数退避 | 未变化的故障不刷屏，成员变化与新 episode 不受旧冷却误抑制 |
+| 固定手机重复间隔 | AM 15m 刷新，桥持久指数退避 + 续期上限 | 未变化的故障不刷屏，成员变化与新 episode 不受旧冷却误抑制 |
 | 高可用多副本 | 单副本 + `ALERTMANAGER_STORAGE_SIZE=200Mi` PVC | 三节点小集群；`AlertmanagerNotificationFailures` 与 gatus 的 watchdog 探针覆盖它自身故障 |
 | 抑制 `NodeDown → node 类` | `K8sNodeNotReady → category=kubernetes`（equal `k8s_node_name`）、`K8sClusterMetricsMissing → category=kubernetes` | 节点没了、采集断了，同类别的下游告警都是噪音 |
 

@@ -33,10 +33,10 @@ class Metrics:
     def __init__(self):
         self.lock = threading.Lock()
         # Export zeros before the first event so increase() can observe its delta.
-        # Fixed classes/reasons bound this family to 18 series per process.
-        outcomes = [("sent", "state_change_or_reminder"), ("failed", "publish")]
+        # Fixed classes/reasons bound this family to 24 series per process.
+        outcomes = [("sent", "state_change_or_reminder"), ("sent", "recap"), ("failed", "publish")]
         outcomes += [("suppressed", reason) for reason in
-                     ("stale", "unmatched_recovery", "closed_episode", "backoff")]
+                     ("stale", "unmatched_recovery", "closed_episode", "backoff", "renewal_cap")]
         self.values = {
             ("alert_bridge_notifications_total", tuple(sorted({
                 "notification_class": kind, "result": result, "reason": reason
@@ -244,10 +244,19 @@ def format_notification(alerts, kind, topic, truncated):
 class NotificationEngine:
     """Single-process serial publisher with atomic, fsynced persistent state.
 
-    No queue: AM retries failed requests and polls successful groups every 5m.
+    No queue: AM retries failed requests and polls successful groups every 15m.
     A crash after publish but before state commit can duplicate once (at-least-once).
     """
     INTERVALS = {"page": [1, 2, 4, 8, 24], "ticket": [4, 8, 16, 24], "test": [4, 8, 16, 24]}
+    # 同一批成员的重复提醒上限。阶梯最后一档封顶 24h 只是"单次间隔"封顶,
+    # 不限制总次数 —— 2026-10-21 的 CNPGBackupStale 因此 11 天推了 11 条,
+    # 而根因(未配备份)是个被书面接受的缺口, 不是需要反复叫醒的事故。
+    # 上限只约束"成员不变的续期": 成员变化(changed)会重置计数,
+    # 恢复通知走另一条分支, 都不经过这里。
+    MAX_SENDS = {"page": 8, "ticket": 6, "test": 6}
+    # 达到上限后保留一条慢速心跳, 证明"它还在烧"。
+    # 没有它, 静音会被误读成已恢复; 心跳比 24h 阶梯更慢, 成本可忽略。
+    RECAP_INTERVAL = {"page": 3*86400, "ticket": 7*86400, "test": 7*86400}
 
     def __init__(self, path, sender=None, clock=time.time, metrics=None):
         self.path = pathlib.Path(path)
@@ -330,6 +339,7 @@ class NotificationEngine:
                 active = sorted(member_id(a) for a in alerts if a["status"] == "firing")
                 all_ids = {member_id(a) for a in alerts}
                 now = self.clock()
+                recap = False
                 if not active:
                     if (not previous.get("active") or payload.get("truncatedAlerts", 0)
                             or not set(previous["members"]).issubset(all_ids)):
@@ -345,6 +355,16 @@ class NotificationEngine:
                     changed = not previous.get("active") or active != previous.get("members")
                     intervals = self.INTERVALS[kind]
                     count = 0 if changed else previous["count"]
+                    # 续期上限: 同一批成员提醒满 MAX_SENDS 次后停止重复推送,
+                    # 只留 RECAP_INTERVAL 一条慢速心跳。成员变化不在此列——
+                    # 新 Pod/新 severity 会换 key 或重置计数, 必须能进来。
+                    capped = (not changed
+                              and previous.get("count", 0) >= self.MAX_SENDS[kind])
+                    recap = capped and now - previous["last_sent"] >= self.RECAP_INTERVAL[kind]
+                    if capped and not recap:
+                        self.metrics.inc("alert_bridge_notifications_total", notification_class=kind,
+                                         result="suppressed", reason="renewal_cap")
+                        continue
                     delay = intervals[min(max(count-1, 0), len(intervals)-1)] * 3600
                     if not changed and now - previous["last_sent"] < delay:
                         self.metrics.inc("alert_bridge_notifications_total", notification_class=kind,
@@ -357,7 +377,7 @@ class NotificationEngine:
                                      result="failed", reason="publish")
                     raise
                 self.metrics.inc("alert_bridge_notifications_total", notification_class=kind,
-                                 result="sent", reason="state_change_or_reminder")
+                                 result="sent", reason="recap" if recap else "state_change_or_reminder")
                 # Never advance suppression before a successful publish.
                 self.commit(key, {"active": bool(active), "members": active,
                                   "closed_members": sorted(all_ids) if not active else [],

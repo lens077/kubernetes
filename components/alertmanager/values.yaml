@@ -1,5 +1,5 @@
 # Alertmanager 负责聚合/抑制，bridge 持久化 page/ticket 指数退避。
-# 5m repeat 是向桥的刷新周期，不是手机推送周期；必须先部署带持久状态的新桥。
+# 15m repeat 是向桥的刷新周期，不是手机推送周期；必须先部署带持久状态的新桥。
 baseURL: https://${HOSTNAME}
 
 persistence:
@@ -26,7 +26,12 @@ config:
     group_by: ['alertname', 'cluster', 'k8s_namespace_name', 'service_name', 'deployment_environment_name', 'severity']
     group_wait: 1m
     group_interval: 5m
-    repeat_interval: 5m
+    # 2026-10-22: 5m → 15m。这个值只是"向桥刷新"的粒度, 不是手机频率
+    # (手机节奏由 bridge 的 1/2/4/8/24h 与 4/8/16/24h 阶梯 + 续期上限决定)。
+    # 5m 时一个持续 11 天的告警会产生约 3168 次 webhook, 其中绝大多数被 bridge
+    # 以 backoff 抑制 —— 纯浪费。取 15m 而非 30m: 桥最短退避是 page 1h / ticket 4h,
+    # 15m 粒度远低于它, 只影响桥丢状态后多久被重新提醒, 再大没有额外收益。
+    repeat_interval: 15m
     routes:
       # Watchdog 只证明评估到 AM，消失检测由 Gatus 独立探针负责；不推手机。
       - matchers: ['alertname="Watchdog"']

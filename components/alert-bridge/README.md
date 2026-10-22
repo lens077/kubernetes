@@ -5,7 +5,8 @@ Alertmanager webhook → 单副本 bridge → ntfy JSON UTF-8 发布。只使用
 ## 契约
 
 - Alertmanager 负责首次触发的 `for` 与 `group_wait`，bridge **不再延迟首发**。短时重启在 10 分钟内恢复是否不通知，必须由源规则 `for >=10m` 与相应条件保证。
-- AM 的 `repeat_interval=5m` 用来重新投递；实际 ntfy 重复间隔由 bridge 管理：page 为 **1、2、4、8、24 小时**，ticket/test 为 **4、8、16、24 小时**，之后封顶 24 小时。实际触发受 AM 轮询粒度影响；bridge 无后台队列。
+- AM 的 `repeat_interval=15m` 用来重新投递；实际 ntfy 重复间隔由 bridge 管理：page 为 **1、2、4、8、24 小时**，ticket/test 为 **4、8、16、24 小时**。实际触发受 AM 轮询粒度影响；bridge 无后台队列。
+- **续期上限（2026-10-22 新增）**：同一批成员连续提醒满 **page 8 次 / ticket、test 6 次**后停止重复推送，之后只保留一条慢速心跳（page 每 3 天、ticket/test 每 7 天一条），指标记 `reason="recap"`。上限之前被 `reason="renewal_cap"` 抑制。加它是因为阶梯最后一档封顶 24h 只限制单次间隔、不限制总次数：2026-10-21 的 `CNPGBackupStale` 在 11 天里推了 11 条，而根因是个被书面接受的缺口。上限**只**约束"成员不变的续期"——成员变化、同标签新 episode（startsAt 不同 → member_id 不同）、恢复通知都不经过它，因此永远不会把新故障吞成永久静音；心跳则保证"它还在烧"不会被误读成已恢复。
 - 每条 member 的 severity `crit/critical` → page，其他（包括未知值）→ ticket。未知 severity 在正文可见。显式 `labels.notification_class=test` 或 `labels.notification_route=test` → test；测试 topic 未配置绝不回退 core。
 - 状态 key 为 `receiver + groupKey + notification class + topic` 的 SHA-256；混合 severity 按 class 分别发送。身份为 fingerprint（缺失时完整 labels hash）加规范化 UTC startsAt，避免相同标签的新 episode 被吞；只变 annotation/value 不重置退避。
 - firing 成员集合改变立即更新并重置退避。混合 payload 分别计数 firing/resolved，最多显示 3 个对象；只有已通知的 active episode 被完全覆盖恢复且上游未截断时才发完整恢复，每个 episode 一次。每个 fingerprint 的最新 startsAt 随发送成功持久化；晚到的旧 firing/resolved class 快照整体忽略，避免旧成员过滤后误删新 episode，下一轮 AM 当前快照仍可处理。已恢复 episode 的重复 firing 不重开。
@@ -50,7 +51,7 @@ Manifest 新增 `${SC_NAME}` 的 1 GiB ReadWriteOnce PVC `alert-bridge-state`，
 
 | 指标 | 类型与含义 |
 |---|---|
-| `alert_bridge_notifications_total{notification_class,result,reason}` | counter。`page/ticket/test` 与固定结果/原因组合在启动时导出零值，共 18 条 series；避免首个事件之前没有基线。`sent` 为 ntfy 已接受发布，`failed` 为发布异常，`suppressed` 为状态机抑制。 |
+| `alert_bridge_notifications_total{notification_class,result,reason}` | counter。`page/ticket/test` 与固定结果/原因组合在启动时导出零值，共 24 条 series；避免首个事件之前没有基线。`sent` 为 ntfy 已接受发布（`state_change_or_reminder`=状态变化或阶梯续期，`recap`=达上限后的慢速心跳），`failed` 为发布异常，`suppressed` 为状态机抑制（`stale`/`unmatched_recovery`/`closed_episode`/`backoff`/`renewal_cap`）。`renewal_cap` 持续增长说明有长期未恢复的告警被按住了，是给运维的线索不是错误。 |
 | `alert_bridge_state_entries{active}` | gauge。当前持久状态中的 active / closed 组数量，不是待发送队列长度。 |
 
 指标只覆盖 Alertmanager webhook 路径，不覆盖 Gatus、宿主 watchdog、证书任务或 Bugsink 直推。`sent` **不证明手机送达**。计数器随进程重启归零，`rate` / `increase` 能处理已观察到的重置，但首次抓取前的事件、重启间隙和接入前历史仍可能漏计；不能作为消息审计账本。退避状态独立保存在 PVC，不因计数器归零而重置。
@@ -65,13 +66,13 @@ bash -n components/alert-bridge/install.sh
 git diff --check -- components/alert-bridge
 ```
 
-测试使用假 sender/clock、临时 JSON 状态和 loopback HTTP server，覆盖：持久退避与封顶、进程重建、发送失败重试、partial-class 重试、混合恢复、新 startsAt、旧 webhook、损坏状态、Unicode 上限、显式 topic、unknown severity、JSON 发布、非法 Content-Length、缺配置 fail closed、import 不启动服务器。真实 ntfy 发布只能在授权的隔离 test topic 做；不能复用 core 做测试。
+测试使用假 sender/clock、临时 JSON 状态和 loopback HTTP server，覆盖：持久退避与封顶、续期上限与慢速心跳（含进程重建后上限仍生效、成员变化/新 episode/恢复通知穿透上限）、进程重建、发送失败重试、partial-class 重试、混合恢复、新 startsAt、旧 webhook、损坏状态、Unicode 上限、显式 topic、unknown severity、JSON 发布、非法 Content-Length、缺配置 fail closed、import 不启动服务器。真实 ntfy 发布只能在授权的隔离 test topic 做；不能复用 core 做测试。
 
 ### 上线/回滚核对
 
 1. 先确认三个 topic 的写权限与手机订阅策略，Secret 包含三 topic；不能以 Secret 存在替代配置有效性。
 2. 在隔离环境应用 PVC/Deployment/脚本，再验证 Ready、持久卷写权限与离线 fixture；部署过程会短暂没有 bridge，AM 应保留重试。
-3. 再由维护者更新 AM grouping 与 5m repeat，并分阶段恢复业务通知。验证只读 AM status、bridge health 与持续的 ntfy 结果，不仅看 CM 内容。
+3. 再由维护者更新 AM grouping 与 15m repeat，并分阶段恢复业务通知。验证只读 AM status、bridge health 与持续的 ntfy 结果，不仅看 CM 内容。**改 AM 配置用 patch ConfigMap + SIGHUP，不要 helm upgrade**：upgrade 改 `checksum/config` 注解会滚动重启 StatefulSet，AM 丢内存态后桥会把同一批告警按新 episode 重发。
 4. 回滚脚本/Deployment 前保留 PVC。旧脚本不会理解新状态，也不会遵守退避；回滚前评估重复量。不要删除状态卷来「修复」通知。
 
 本目录不包含真实凭据。Healthchecks/Gatus 的独立旁路不能因为 bridge 分流统一而移除。
