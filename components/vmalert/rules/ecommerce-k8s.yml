@@ -95,7 +95,10 @@ groups:
         # 组件重建后 vmalert 从远端**恢复**状态保留了旧时间戳, 而 Alertmanager 的
         # startsAt 在同一次重建里被重置 —— 于是 summary 说「已持续 20d13h」而 AM 认为
         # 只有 6.9d。在 summary 里显式标注数据来源, 避免两个视图对不上时被误读。
-        expr: '(time() - ALERTS_FOR_STATE{alertname!~"AlertFiringTooLong|Watchdog", known_gap!="true"}) > 4*3600'
+        # 2026-10-23 修正三: label_replace 把源 alertname 复制成 source_alertname,
+        # 这样用户在 ntfy 上点元告警的「静音」时, 桥接器能按 alertname 同时压住源告警
+        # 的续期提醒(否则只能压住元告警自己, 源告警仍在狂轰)。
+        expr: 'label_replace((time() - ALERTS_FOR_STATE{alertname!~"AlertFiringTooLong|Watchdog", known_gap!="true"}) > 4*3600, "source_alertname", "$1", "alertname", "(.+)")'
         for: 15m
         labels: { severity: warning, category: observability }
         annotations:

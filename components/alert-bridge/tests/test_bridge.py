@@ -381,5 +381,186 @@ class BridgeTest(unittest.TestCase):
         self.assertEqual(2, len(self.sent))
 
 
+class AckTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.state_path = str(pathlib.Path(self.tmp.name) / 'state.json')
+        self.ack_path = str(pathlib.Path(self.tmp.name) / 'acks.json')
+        self.now = 100000.
+        self.sent = []
+        self.env = patch.dict(bridge.os.environ, {
+            'NTFY_URL': 'https://ntfy.example', 'NTFY_TOPIC': 'core',
+            'NTFY_TICKET_TOPIC': 'ticket', 'NTFY_TEST_TOPIC': 'test', 'NTFY_TOKEN': '',
+            'ACK_TOKEN': 'test-ack-token', 'ACK_ENDPOINT': 'https://ack.example'})
+        self.env.start(); self.addCleanup(self.env.stop)
+
+    def make_engine(self):
+        ack = bridge.AckStore(self.ack_path, clock=lambda: self.now)
+        return bridge.NotificationEngine(self.state_path, sender=self.sent.append,
+                                         clock=lambda: self.now, metrics=bridge.Metrics(),
+                                         ack_store=ack)
+
+    def group_key(self, kind='page', topic='core'):
+        return bridge.digest(['bridge', '{}:{alertname="RestartStorm"}', kind, topic])
+
+    def test_ack_suppresses_renewal_but_not_recovery(self):
+        e = self.make_engine()
+        e.process(payload(alert()))
+        self.assertEqual(1, len(self.sent))
+        e.ack_store.set('group', self.group_key(), 86400)
+        self.now += 7200  # 跨过 page 首次退避(1h)但仍在 24h 静音窗内
+        e.process(payload(alert()))
+        self.assertEqual(1, len(self.sent))
+        lines = e.metrics.render(e).splitlines()
+        self.assertIn('alert_bridge_notifications_total{notification_class="page",'
+                      'reason="acked",result="suppressed"} 1', lines)
+        e.process(payload(alert(status='resolved'), status='resolved'))
+        self.assertEqual(2, len(self.sent))
+        self.assertIn('[恢复]', self.sent[-1]['title'])
+        self.assertIsNone(e.ack_store.active(self.group_key(), set()))
+
+    def test_ack_persists_across_engine_rebuild(self):
+        e = self.make_engine()
+        e.process(payload(alert()))
+        e.ack_store.set('group', self.group_key(), 86400)
+        e2 = self.make_engine()
+        self.now += 7200  # still inside the 24h mute window on disk
+        e2.process(payload(alert()))
+        self.assertEqual(1, len(self.sent))  # still suppressed via persisted ack file
+
+    def test_ack_expiry_resumes_reminder(self):
+        e = self.make_engine()
+        e.process(payload(alert()))
+        e.ack_store.set('group', self.group_key(), 3600)
+        self.now += 3600 + 1
+        e.process(payload(alert()))
+        self.assertEqual(2, len(self.sent))  # ack expired -> reminder resumes
+
+    def test_new_episode_beats_ack(self):
+        e = self.make_engine()
+        e.process(payload(alert()))
+        e.ack_store.set('group', self.group_key(), 86400)
+        self.now += 3600
+        e.process(payload(alert(start='2026-09-27T00:00:00Z')))
+        self.assertEqual(2, len(self.sent))  # new startsAt -> changed -> bypass ack
+
+    def test_alert_scope_ack_from_meta_silences_source(self):
+        e = self.make_engine()
+        meta = alert(); meta['labels']['alertname'] = 'AlertFiringTooLong'
+        meta['labels']['source_alertname'] = 'CNPGBackupStale'
+        meta['labels']['severity'] = 'warning'
+        src = alert(); src['labels']['alertname'] = 'CNPGBackupStale'
+        e.process(payload(src))          # 1: source first sight
+        e.process(payload(meta))         # 2: meta first sight (new group always notifies)
+        self.assertEqual(2, len(self.sent))
+        e.ack_store.set('alert', 'CNPGBackupStale', 86400)
+        self.now += 7200  # inside the 24h mute window; past first backoff
+        e.process(payload(src))          # source renewal suppressed via alert-scope ack
+        self.assertEqual(2, len(self.sent))
+        e.process(payload(meta))         # meta renewal suppressed (match set includes source)
+        self.assertEqual(2, len(self.sent))
+
+    def test_format_includes_ack_actions_when_configured(self):
+        msg = bridge.format_notification([alert()], 'page', 'core', 0,
+                                         key=self.group_key(), ack_scope='group',
+                                         ack_target=self.group_key())
+        self.assertEqual(3, len(msg['actions']))
+        self.assertTrue(all(a['action'] == 'http' and a.get('clear') for a in msg['actions']))
+        self.assertTrue(all('sig=' in a['url'] for a in msg['actions']))
+
+    def test_format_no_actions_when_unconfigured(self):
+        with patch.dict(bridge.os.environ, {'ACK_TOKEN': '', 'ACK_ENDPOINT': ''}):
+            msg = bridge.format_notification([alert()], 'page', 'core', 0,
+                                             key='k', ack_scope='group', ack_target='k')
+            self.assertEqual([], msg['actions'])
+
+    def test_build_ack_url_unconfigured_empty(self):
+        with patch.dict(bridge.os.environ, {'ACK_TOKEN': '', 'ACK_ENDPOINT': ''}):
+            self.assertEqual('', bridge.build_ack_url('group', 'x', 86400))
+
+    def test_corrupt_ack_file_fails_closed(self):
+        pathlib.Path(self.ack_path).write_text('{"x": {"until": "soon"}}')
+        with self.assertRaises(bridge.ConfigurationError):
+            bridge.AckStore(self.ack_path)
+
+
+class AckEndpointTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.state_path = str(pathlib.Path(self.tmp.name) / 'state.json')
+        self.ack_path = str(pathlib.Path(self.tmp.name) / 'acks.json')
+        self.sent = []
+        self.env = patch.dict(bridge.os.environ, {
+            'NTFY_URL': 'https://ntfy.example', 'NTFY_TOPIC': 'core',
+            'NTFY_TICKET_TOPIC': 'ticket', 'NTFY_TEST_TOPIC': 'test', 'NTFY_TOKEN': '',
+            'ACK_TOKEN': 'test-ack-token', 'ACK_ENDPOINT': 'https://ack.example'})
+        self.env.start(); self.addCleanup(self.env.stop)
+        ack = bridge.AckStore(self.ack_path)
+        self.engine = bridge.NotificationEngine(self.state_path, sender=self.sent.append, ack_store=ack)
+        self.server = bridge.ThreadingHTTPServer(('127.0.0.1', 0), bridge.AlertmanagerHandler)
+        self.server.engine = self.engine
+        self.server.ack_store = self.engine.ack_store
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+        self.addCleanup(self.server.server_close)
+        self.addCleanup(lambda: (self.server.shutdown(), self.thread.join()))
+
+    def get(self, url, method='GET', headers=None):
+        if url.startswith('http'):  # build_ack_url returns a full URL; strip to path+query
+            from urllib.parse import urlsplit as _us
+            parts = _us(url)
+            url = parts.path + (('?' + parts.query) if parts.query else '')
+        conn = http.client.HTTPConnection('127.0.0.1', self.server.server_port, timeout=2)
+        conn.request(method, url, headers=headers or {})
+        r = conn.getresponse(); body = r.read().decode(); conn.close()
+        return r.status, body
+
+    def test_ack_endpoint_valid_sets_silence(self):
+        url = bridge.build_ack_url('group', 'abc', 86400)
+        self.assertTrue(url)
+        status, body = self.get(url)
+        self.assertEqual(200, status)
+        self.assertIn('"ok": true', body)
+        self.assertIsNotNone(self.engine.ack_store.active('abc', set()))
+
+    def test_ack_endpoint_bad_signature_rejected(self):
+        url = bridge.build_ack_url('group', 'abc', 86400)
+        tampered = url.rsplit('sig=', 1)[0] + 'sig=' + '0' * 64
+        status, _ = self.get(tampered)
+        self.assertEqual(403, status)
+
+    def test_ack_endpoint_bad_duration_rejected(self):
+        import time as _t
+        exp = int(_t.time()) + 3600
+        msg = f"group|abc|999999|{exp}"
+        sig = bridge.hmac.new(b'test-ack-token', msg.encode(), bridge.hashlib.sha256).hexdigest()
+        status, _ = self.get(f'/ack?scope=group&target=abc&dur=999999&exp={exp}&sig={sig}')
+        self.assertEqual(400, status)
+
+    def test_acks_requires_bearer_and_lists(self):
+        self.engine.ack_store.set('group', 'abc', 86400)
+        status, _ = self.get('/acks')
+        self.assertEqual(401, status)
+        status, body = self.get('/acks', headers={'Authorization': 'Bearer test-ack-token'})
+        self.assertEqual(200, status)
+        self.assertIn('abc', body)
+
+    def test_unack_clears(self):
+        self.engine.ack_store.set('group', 'abc', 86400)
+        status, _ = self.get('/unack?scope=group&target=abc', method='POST',
+                             headers={'Authorization': 'Bearer test-ack-token'})
+        self.assertEqual(200, status)
+        self.assertIsNone(self.engine.ack_store.active('abc', set()))
+
+    def test_ack_disabled_without_token(self):
+        with patch.dict(bridge.os.environ, {'ACK_TOKEN': '', 'ACK_ENDPOINT': 'https://ack.example'}):
+            conn = http.client.HTTPConnection('127.0.0.1', self.server.server_port, timeout=2)
+            conn.request('GET', '/ack?scope=group&target=abc&dur=86400&exp=9999999999&sig=x')
+            r = conn.getresponse(); conn.close()
+            self.assertEqual(503, r.status)
+
+
 if __name__ == '__main__':
     unittest.main()

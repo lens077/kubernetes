@@ -25,6 +25,9 @@ Alertmanager webhook → 单副本 bridge → ntfy JSON UTF-8 发布。只使用
 | `ALERTMANAGER_LISTEN` | 默认 `0.0.0.0:9099` |
 | `BUGSINK_BRIDGE_LISTEN` | 默认 `0.0.0.0:9199` |
 | `BUGSINK_BRIDGE_TOKEN` | 现有 Bugsink 路径凭据；不要轮换或写进仓库 |
+| `ACK_TOKEN` | ntfy 静音回执的 HMAC 签名密钥；安装器一次性生成并持久化（`creds/ack-token`），进 Secret `alert-bridge-ntfy`，不在仓库 |
+| `ACK_ENDPOINT` | 公网静音端点根 URL，默认 `https://ack.apikv.com`（VPS 边缘终结 `*.apikv.com` TLS 后隧道进集群） |
+| `BRIDGE_ACK_FILE` | 默认 `/state/acks.json`，与状态同卷；静音记录持久化于此 |
 
 安装器先从 `$STATE_DIR/creds/ntfy.env` 读取默认值，再保留显式环境值（包括显式空值）。core/ticket/test 必须非空且彼此不同，否则 readiness=503、发送拒绝，安装器在修改 Secret 前退出。凭据文件保留原有内容，追加 shell 安全转义后的当前五个字段，权限 0600；与 Gatus 共用时不能删掉未知字段。现有 bridge Secret 存在而本地 Bugsink 路径 token 缺失时也退出，避免意外改坏已有 webhook。不得在日志/对话里输出 token/topic。
 
@@ -51,8 +54,9 @@ Manifest 新增 `${SC_NAME}` 的 1 GiB ReadWriteOnce PVC `alert-bridge-state`，
 
 | 指标 | 类型与含义 |
 |---|---|
-| `alert_bridge_notifications_total{notification_class,result,reason}` | counter。`page/ticket/test` 与固定结果/原因组合在启动时导出零值，共 24 条 series；避免首个事件之前没有基线。`sent` 为 ntfy 已接受发布（`state_change_or_reminder`=状态变化或阶梯续期，`recap`=达上限后的慢速心跳），`failed` 为发布异常，`suppressed` 为状态机抑制（`stale`/`unmatched_recovery`/`closed_episode`/`backoff`/`renewal_cap`）。`renewal_cap` 持续增长说明有长期未恢复的告警被按住了，是给运维的线索不是错误。 |
+| `alert_bridge_notifications_total{notification_class,result,reason}` | counter。`page/ticket/test` 与固定结果/原因组合在启动时导出零值，共 30 条 series；避免首个事件之前没有基线。`sent` 为 ntfy 已接受发布（`state_change_or_reminder`=状态变化或阶梯续期，`recap`=达上限后的慢速心跳），`failed` 为发布异常，`suppressed` 为状态机抑制（`stale`/`unmatched_recovery`/`closed_episode`/`backoff`/`renewal_cap`/`acked`）。`renewal_cap` 持续增长说明有长期未恢复的告警被按住了，是给运维的线索不是错误；`acked` 增长说明用户在 ntfy 上主动点了静音，是预期降噪而非故障。 |
 | `alert_bridge_state_entries{active}` | gauge。当前持久状态中的 active / closed 组数量，不是待发送队列长度。 |
+| `alert_bridge_acks_active` | gauge。当前活跃的 ntfy 静音（用户 mute）数量，到期自动归零。 |
 
 指标只覆盖 Alertmanager webhook 路径，不覆盖 Gatus、宿主 watchdog、证书任务或 Bugsink 直推。`sent` **不证明手机送达**。计数器随进程重启归零，`rate` / `increase` 能处理已观察到的重置，但首次抓取前的事件、重启间隙和接入前历史仍可能漏计；不能作为消息审计账本。退避状态独立保存在 PVC，不因计数器归零而重置。
 
@@ -66,7 +70,20 @@ bash -n components/alert-bridge/install.sh
 git diff --check -- components/alert-bridge
 ```
 
-测试使用假 sender/clock、临时 JSON 状态和 loopback HTTP server，覆盖：持久退避与封顶、续期上限与慢速心跳（含进程重建后上限仍生效、成员变化/新 episode/恢复通知穿透上限）、进程重建、发送失败重试、partial-class 重试、混合恢复、新 startsAt、旧 webhook、损坏状态、Unicode 上限、显式 topic、unknown severity、JSON 发布、非法 Content-Length、缺配置 fail closed、import 不启动服务器。真实 ntfy 发布只能在授权的隔离 test topic 做；不能复用 core 做测试。
+测试使用假 sender/clock、临时 JSON 状态和 loopback HTTP server，覆盖：持久退避与封顶、续期上限与慢速心跳（含进程重建后上限仍生效、成员变化/新 episode/恢复通知穿透上限）、进程重建、发送失败重试、partial-class 重试、混合恢复、新 startsAt、旧 webhook、损坏状态、Unicode 上限、显式 topic、unknown severity、JSON 发布、非法 Content-Length、缺配置 fail closed、import 不启动服务器、**ntfy 静音（ack）**：续期抑制但不压恢复、跨进程重建仍生效、到期恢复提醒、新 episode 穿透、元告警 alert-scope 静音压住源告警、按钮注入与未配置时不注入、回执端点签名/duration/exp 校验、`/acks` 需 Bearer、`/unack` 清除、损坏 ack 文件 fail closed。真实 ntfy 发布与回执只能在授权的隔离 test topic / 隔离端点做。
+
+## ntfy 静音（ack）
+
+每条 firing 通知在 ntfy 上带「静音」按钮（iOS/Android/Web 均支持 http action，点击后客户端直接 POST 到 `ACK_ENDPOINT/ack`，`clear:true` 自动收起该通知）。**静音只压「成员不变的续期提醒」**——新成员、同标签新 episode（`startsAt` 不同）、恢复通知都不在此列，永不把新故障吞成永久静音；恢复还会清除该组静音以免复发被旧静音吞掉。
+
+- 签名：`ACK_TOKEN` 对 `scope|target|dur|exp` 的 HMAC-SHA256；`exp` 1h 有效，防重放；`dur` 必须是白名单 `{4h,24h,3d,7d}`，防篡改成无限期静音。未配置 `ACK_TOKEN`/`ACK_ENDPOINT` 时不挂按钮（graceful）。
+- 静音范围：`scope=group`（默认，按通知组 key）或 `scope=alert`（按 alertname）。后者用于元告警——vmalert 的 `AlertFiringTooLong` 通过 `label_replace` 把源 `alertname` 复制成 `source_alertname`，桥接器据此把元告警的静音按钮指向源 alertname，于是点元告警的「静音」会同时压住源告警的续期。
+- 时长按钮：page 为 **4h / 24h / 3d**，ticket/test 为 **24h / 7d**（ntfy 单条通知最多 3 个按钮）。
+- 持久化：`BRIDGE_ACK_FILE`（`/state/acks.json`）与状态同卷，原子 fsync+replace；加载即丢弃过期项。进程重启后静音仍生效；到期自动恢复提醒。
+- 运维端点（同 9099 端口）：`GET /ack?...`（回执，校验签名后记录静音）、`GET /acks`（`Authorization: Bearer <ACK_TOKEN>`，列出活跃静音）、`POST /unack?scope=&target=`（同 Bearer，清除）。按客户端 IP 限流 30/60s。
+- 指标新增 `alert_bridge_notifications_total{...,reason="acked"}`（被静音压住的续期）与 `alert_bridge_acks_active`（当前活跃静音数）。`acked` 持续增长说明用户在主动降噪，是预期行为而非错误。
+
+暴露：`components/alert-bridge/manifests/02-ack-route.yaml` 新增 `ack.apikv.com` 的 HTTPRoute（http→https 重定向 + https 路由到 `alert-bridge:9099`）。`*.apikv.com` 真证书在 VPS 边缘（Pangolin/Traefik）终结并隧道进来，网关只路由。
 
 ### 上线/回滚核对
 

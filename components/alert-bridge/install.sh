@@ -44,6 +44,7 @@ mkdir -p "$STATE_DIR/creds"
  done >> "$creds_file")
 chmod 600 "$creds_file"
 bridge_token=$(get_cred bugsink-bridge-token)   # 只生成一次
+ack_token=$(get_cred ack-token)                  # ntfy 静音回执签名密钥, 只生成一次
 
 log_step "安装 $ID → 命名空间 $NAMESPACE (core/ticket/test 分流；持久退避状态)"
 ns_ensure "$NAMESPACE"
@@ -55,6 +56,7 @@ kctl -n "$NAMESPACE" create secret generic alert-bridge-ntfy \
   --from-literal=NTFY_TEST_TOPIC="$ntfy_test_topic" \
   --from-literal=NTFY_TOKEN="$ntfy_token" \
   --from-literal=BUGSINK_BRIDGE_TOKEN="$bridge_token" \
+  --from-literal=ACK_TOKEN="$ack_token" \
   --dry-run=client -o yaml | kctl apply -f -
 
 kctl -n "$NAMESPACE" create configmap alert-bridge-script \

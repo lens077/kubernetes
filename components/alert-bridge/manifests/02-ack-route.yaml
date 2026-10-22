@@ -1,0 +1,45 @@
+# ack.apikv.com: ntfy 通知上的「静音」按钮, 由手机客户端直接 POST 到这里(公网),
+# bridge 校验 HMAC 签名后压住该组续期提醒。TLS 由 VPS 边缘(Pangolin/Traefik)用
+# *.apikv.com 真证书终结并隧道进集群; 网关只做路由, 不终止 *.apikv.com。
+# 复用 alert-bridge 的 9099 端口(AlertmanagerHandler 同时服务 /alerts 与 /ack)。
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: alert-bridge-ack-redirect
+  namespace: ${NAMESPACE}
+spec:
+  parentRefs:
+    - name: cilium-gateway
+      namespace: default
+      sectionName: http
+  hostnames:
+    - "ack.apikv.com"
+  rules:
+    - filters:
+        - type: RequestRedirect
+          requestRedirect:
+            scheme: https
+            port: 443
+            statusCode: 301
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: alert-bridge-ack
+  namespace: ${NAMESPACE}
+spec:
+  parentRefs:
+    - name: cilium-gateway
+      namespace: default
+      sectionName: https
+  hostnames:
+    - "ack.apikv.com"
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: alert-bridge
+          port: 9099

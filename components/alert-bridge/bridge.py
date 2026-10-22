@@ -8,11 +8,12 @@ import datetime
 import json
 import os
 import hashlib
+import hmac
 import pathlib
 import tempfile
 import time
 import threading
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, quote, parse_qs
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.request import Request, HTTPRedirectHandler, build_opener
 
@@ -27,6 +28,54 @@ urlopen = build_opener(NoRedirect()).open
 MAX_BODY = 1024 * 1024
 BUGSINK_BRIDGE_TOKEN = os.environ.get("BUGSINK_BRIDGE_TOKEN", "")
 
+# --- ntfy 静音(ack) -----------------------------------------------------------------
+# 用户在 ntfy 通知上点「静音」按钮, 客户端直接 POST 到 ACK_ENDPOINT/ack。回执带 HMAC
+# 签名 + 1h 有效期, 且 dur 必须落在白名单, 防止被篡改成无限期静音。静音只压「成员不变
+# 的续期提醒」, 绝不吞新 episode / 新成员 / 恢复通知。
+ACK_TOKEN = os.environ.get("ACK_TOKEN", "")
+ACK_ENDPOINT = os.environ.get("ACK_ENDPOINT", "").rstrip("/")
+ACK_DURATIONS = frozenset({14400, 86400, 259200, 604800})  # 4h/24h/3d/7d
+ACK_BUTTONS = {
+    "page": [("静音 4h", 14400), ("静音 24h", 86400), ("静音 3d", 259200)],
+    "ticket": [("静音 24h", 86400), ("静音 7d", 604800)],
+    "test": [("静音 24h", 86400), ("静音 7d", 604800)],
+}
+ACK_RATE = {}            # client IP -> [timestamps] 内存限流
+ACK_RATE_LIMIT = 30      # 每 IP 每 60s
+
+
+def _ack_rate_ok(client):
+    now = time.time()
+    recent = [t for t in ACK_RATE.get(client, []) if now - t < 60]
+    if len(recent) >= ACK_RATE_LIMIT:
+        ACK_RATE[client] = recent
+        return False
+    recent.append(now)
+    ACK_RATE[client] = recent
+    return True
+
+
+def build_ack_url(scope, target, dur_seconds):
+    """Signed, expiring ack deep-link for an ntfy http action button.
+
+    Returns "" when ack is unconfigured (no buttons attached) or inputs are invalid.
+    Signature binds scope+target+duration+expiry so a token cannot be replayed with
+    a longer mute; expiry (1h) limits token lifetime, mute duration is separate.
+    Reads env at call time so both the container and tests can configure it.
+    """
+    endpoint = os.environ.get("ACK_ENDPOINT", "").rstrip("/")
+    token = os.environ.get("ACK_TOKEN", "")
+    if not safe_https(endpoint) or not token or scope not in ("group", "alert"):
+        return ""
+    target = target.strip()
+    if not target or dur_seconds not in ACK_DURATIONS:
+        return ""
+    exp = int(time.time()) + 3600
+    msg = f"{scope}|{target}|{dur_seconds}|{exp}"
+    sig = hmac.new(token.encode(), msg.encode(), hashlib.sha256).hexdigest()
+    return (f"{endpoint}/ack?scope={scope}&target={quote(target)}"
+            f"&dur={dur_seconds}&exp={exp}&sig={sig}")
+
 
 class Metrics:
     """Bounded-label Prometheus counters for delivery and suppression decisions."""
@@ -36,7 +85,7 @@ class Metrics:
         # Fixed classes/reasons bound this family to 24 series per process.
         outcomes = [("sent", "state_change_or_reminder"), ("sent", "recap"), ("failed", "publish")]
         outcomes += [("suppressed", reason) for reason in
-                     ("stale", "unmatched_recovery", "closed_episode", "backoff", "renewal_cap")]
+                     ("stale", "unmatched_recovery", "closed_episode", "backoff", "renewal_cap", "acked")]
         self.values = {
             ("alert_bridge_notifications_total", tuple(sorted({
                 "notification_class": kind, "result": result, "reason": reason
@@ -70,12 +119,119 @@ class Metrics:
                 f"alert_bridge_state_entries{{active=\"true\"}} {active}",
                 f"alert_bridge_state_entries{{active=\"false\"}} {len(state)-active}",
             ])
+            ack_store = getattr(engine, "ack_store", None)
+            if ack_store is not None:
+                now = time.time()
+                ack_active = sum(1 for v in ack_store.acks.values() if v.get("until", 0) > now)
+                lines.extend([
+                    "# HELP alert_bridge_acks_active Currently active ack silences (user mutes).",
+                    "# TYPE alert_bridge_acks_active gauge",
+                    f"alert_bridge_acks_active {ack_active}",
+                ])
         return "\n".join(lines) + "\n"
 
 
 METRICS = Metrics()
 ALERTMANAGER_LISTEN = os.environ.get("ALERTMANAGER_LISTEN", "0.0.0.0:9099")
 BUGSINK_BRIDGE_LISTEN = os.environ.get("BUGSINK_BRIDGE_LISTEN", "0.0.0.0:9199")
+
+
+class AckStore:
+    """User ack silences, persisted atomically like the notification state.
+
+    A silence maps a group key (scope=group) or an alertname (scope=alert) to an
+    expiry timestamp. scope=alert lets a meta-alert's mute button also silence the
+    source alert's reminders: vmalert labels the meta alert with source_alertname,
+    and process() folds that name into the match set so acking the meta covers the
+    source too. Atomic fsync+replace mirrors NotificationEngine.commit.
+    """
+
+    def __init__(self, path, clock=time.time):
+        self.path = pathlib.Path(path)
+        self.clock = clock
+        self.lock = threading.Lock()
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            self.acks = json.loads(self.path.read_text()) if self.path.exists() else {}
+            if not isinstance(self.acks, dict):
+                raise ValueError()
+            for key, entry in self.acks.items():
+                if (not isinstance(key, str) or not isinstance(entry, dict)
+                        or entry.get("scope") not in ("group", "alert")
+                        or not isinstance(entry.get("target"), str)
+                        or type(entry.get("until")) not in (int, float)):
+                    raise ValueError()
+            # Drop expired silences on load so a stale file never mutes forever.
+            now = self.clock()
+            self.acks = {k: v for k, v in self.acks.items() if v["until"] > now}
+            with tempfile.TemporaryFile(dir=self.path.parent) as probe:
+                probe.write(b"ack-check"); probe.flush(); os.fsync(probe.fileno())
+        except (ValueError, OSError, TypeError) as exc:
+            raise ConfigurationError("invalid or unwritable ack file") from exc
+
+    def active(self, key, names=()):
+        now = self.clock()
+        entry = self.acks.get(key)
+        if entry and entry["until"] > now and entry["scope"] == "group":
+            return entry
+        for name in names:
+            entry = self.acks.get("alert:" + name)
+            if entry and entry["until"] > now and entry["scope"] == "alert":
+                return entry
+        return None
+
+    def set(self, scope, target, dur_seconds):
+        now = self.clock()
+        key = target if scope == "group" else "alert:" + target
+        entry = {"scope": scope, "target": target, "until": now + dur_seconds,
+                 "created": now, "duration": dur_seconds}
+        with self.lock:
+            self.acks[key] = entry
+            self._commit()
+
+    def clear_key(self, scope, target):
+        key = target if scope == "group" else "alert:" + target
+        with self.lock:
+            if key in self.acks:
+                del self.acks[key]
+                self._commit()
+
+    def clear_for(self, key, names=()):
+        with self.lock:
+            changed = False
+            if key in self.acks:
+                del self.acks[key]; changed = True
+            for name in names:
+                k = "alert:" + name
+                if k in self.acks:
+                    del self.acks[k]; changed = True
+            if changed:
+                self._commit()
+
+    def clear_expired(self):
+        now = self.clock()
+        with self.lock:
+            before = len(self.acks)
+            self.acks = {k: v for k, v in self.acks.items() if v["until"] > now}
+            if len(self.acks) != before:
+                self._commit()
+
+    def _commit(self):
+        state = dict(self.acks)
+        fd, tmp = tempfile.mkstemp(prefix=".ack-", dir=self.path.parent)
+        try:
+            with os.fdopen(fd, "w") as f:
+                json.dump(state, f, ensure_ascii=False)
+                f.flush(); os.fsync(f.fileno())
+            os.replace(tmp, self.path)
+            directory = os.open(self.path.parent, os.O_RDONLY)
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
+        finally:
+            if os.path.exists(tmp):
+                os.unlink(tmp)
 
 
 def log(record):
@@ -111,7 +267,7 @@ def utf8_limit(value, limit):
     return text if len(text.encode()) <= limit else text.encode()[:limit-3].decode("utf-8", "ignore") + "…"
 
 
-def send_raw(title, message, priority, tags, click="", topic=None):
+def send_raw(title, message, priority, tags, click="", topic=None, actions=None):
     url = os.environ.get("NTFY_URL", "").rstrip("/")
     topic = os.environ.get("NTFY_TOPIC", "") if topic is None else topic
     if not safe_https(url) or not topic:
@@ -121,6 +277,8 @@ def send_raw(title, message, priority, tags, click="", topic=None):
             "priority": priority, "tags": tags.split(",")}
     if safe_https(click):
         body["click"] = click
+    if actions:
+        body["actions"] = actions
     headers = {"Content-Type": "application/json; charset=utf-8"}
     token = os.environ.get("NTFY_TOKEN", "")
     if token:
@@ -211,7 +369,7 @@ def member_id(alert):
     return digest([fingerprint_id(alert), timestamp(alert["startsAt"])])
 
 
-def format_notification(alerts, kind, topic, truncated):
+def format_notification(alerts, kind, topic, truncated, key="", ack_scope="group", ack_target=""):
     firing = [a for a in alerts if a["status"] == "firing"]
     resolved = not firing
     focus = (firing or alerts)[0]
@@ -235,10 +393,18 @@ def format_notification(alerts, kind, topic, truncated):
     extra = max(0, len(alerts)-3)
     lines.append(f"来源：Alertmanager · 集群 {cluster} · 另有 {extra} 对象 · 上游截断 {truncated}")
     click = next((safe_https(a.get("annotations", {}).get("dashboard", "")) for a in alerts if safe_https(a.get("annotations", {}).get("dashboard", ""))), "")
+    actions = []
+    if ack_scope and ack_target:
+        for label, dur in ACK_BUTTONS.get(kind, []):
+            url = build_ack_url(ack_scope, ack_target, dur)
+            if url:
+                # clear:true 让客户端在点击后自动收起该通知; 静音只压续期, 不删历史。
+                actions.append({"action": "http", "label": label, "url": url,
+                                "method": "POST", "clear": True})
     return {"title": title, "body": "\n".join(utf8_limit(line, 490) for line in lines),
             "priority": 2 if resolved else {"page": 4, "ticket": 2, "test": 1}[kind],
             "tags": "white_check_mark" if resolved else ("rotating_light" if kind == "page" else "memo"),
-            "topic": topic, "click": click}
+            "topic": topic, "click": click, "actions": actions}
 
 
 class NotificationEngine:
@@ -258,11 +424,12 @@ class NotificationEngine:
     # 没有它, 静音会被误读成已恢复; 心跳比 24h 阶梯更慢, 成本可忽略。
     RECAP_INTERVAL = {"page": 3*86400, "ticket": 7*86400, "test": 7*86400}
 
-    def __init__(self, path, sender=None, clock=time.time, metrics=None):
+    def __init__(self, path, sender=None, clock=time.time, metrics=None, ack_store=None):
         self.path = pathlib.Path(path)
         self.clock = clock
         self.sender = sender or self.publish
         self.metrics = metrics or METRICS
+        self.ack_store = ack_store
         self.lock = threading.Lock()
         self.path.parent.mkdir(parents=True, exist_ok=True)
         try:
@@ -316,6 +483,8 @@ class NotificationEngine:
         if not configured():
             raise ConfigurationError("distinct core/ticket/test destinations required")
         groups = {}
+        if self.ack_store is not None:
+            self.ack_store.clear_expired()
         for alert in payload["alerts"]:
             groups.setdefault(alert_class(alert), []).append(alert)
         sent = 0
@@ -338,6 +507,9 @@ class NotificationEngine:
                     latest[fp] = max(latest.get(fp, ""), timestamp(a["startsAt"]))
                 active = sorted(member_id(a) for a in alerts if a["status"] == "firing")
                 all_ids = {member_id(a) for a in alerts}
+                group_names = {a["labels"]["alertname"] for a in alerts}
+                focus = (active and [a for a in alerts if a["status"] == "firing"] or alerts)[0]
+                meta_source = focus.get("labels", {}).get("source_alertname")
                 now = self.clock()
                 recap = False
                 if not active:
@@ -353,6 +525,16 @@ class NotificationEngine:
                                          result="suppressed", reason="closed_episode")
                         continue  # Old firing webhook delivered after this episode resolved.
                     changed = not previous.get("active") or active != previous.get("members")
+                    # ACK：用户在 ntfy 点了「静音」。只压成员不变的续期提醒;
+                    # 新成员/新 episode(changed)/恢复都不在此列, 永不吞新故障。
+                    if self.ack_store is not None and not changed:
+                        names = set(group_names)
+                        if meta_source:
+                            names.add(meta_source)  # 元告警静音同时压住源告警续期
+                        if self.ack_store.active(key, names):
+                            self.metrics.inc("alert_bridge_notifications_total", notification_class=kind,
+                                             result="suppressed", reason="acked")
+                            continue
                     intervals = self.INTERVALS[kind]
                     count = 0 if changed else previous["count"]
                     # 续期上限: 同一批成员提醒满 MAX_SENDS 次后停止重复推送,
@@ -370,8 +552,10 @@ class NotificationEngine:
                         self.metrics.inc("alert_bridge_notifications_total", notification_class=kind,
                                          result="suppressed", reason="backoff")
                         continue
+                ack_scope, ack_target = ("alert", meta_source) if meta_source else ("group", key)
                 try:
-                    self.sender(format_notification(alerts, kind, topic, payload.get("truncatedAlerts", 0)))
+                    self.sender(format_notification(alerts, kind, topic, payload.get("truncatedAlerts", 0),
+                                                   key=key, ack_scope=ack_scope, ack_target=ack_target))
                 except Exception:
                     self.metrics.inc("alert_bridge_notifications_total", notification_class=kind,
                                      result="failed", reason="publish")
@@ -383,6 +567,9 @@ class NotificationEngine:
                                   "closed_members": sorted(all_ids) if not active else [],
                                   "latest_starts": latest,
                                   "count": count+1, "last_sent": now})
+                # 恢复即清除该组静音, 以免复发被旧静音吞掉。
+                if self.ack_store is not None and not active:
+                    self.ack_store.clear_for(key, group_names)
                 sent += 1
         return sent
 
@@ -474,7 +661,21 @@ class WebhookHandler(BaseHTTPRequestHandler):
 
 
 class AlertmanagerHandler(WebhookHandler):
+    def do_GET(self):
+        if self.path.startswith("/acks"):
+            self.handle_acks()
+        elif self.path == "/ack" or self.path.startswith("/ack?"):
+            self.handle_ack()
+        else:
+            super().do_GET()
+
     def do_POST(self):
+        if self.path == "/ack" or self.path.startswith("/ack?"):
+            self.handle_ack()
+            return
+        if self.path.startswith("/unack"):
+            self.handle_unack()
+            return
         if self.path != "/alerts":
             self.reply(404)
             return
@@ -486,6 +687,79 @@ class AlertmanagerHandler(WebhookHandler):
             self.reply(200)
         except Exception as exc:  # Fail closed: AM retries 502 without advancing state.
             self.error(exc)
+
+    def handle_ack(self):
+        client = self.client_address[0]
+        if not _ack_rate_ok(client):
+            self.reply(429, {"ok": False, "error": "rate limited"})
+            return
+        qs = parse_qs(urlsplit(self.path).query)
+        scope = qs.get("scope", [""])[0]
+        target = qs.get("target", [""])[0]
+        dur_s = qs.get("dur", [""])[0]
+        exp_s = qs.get("exp", [""])[0]
+        sig = qs.get("sig", [""])[0]
+        token = os.environ.get("ACK_TOKEN", "")
+        if not token:
+            self.reply(503, {"ok": False, "error": "ack disabled"})
+            return
+        try:
+            dur = int(dur_s); exp = int(exp_s)
+        except ValueError:
+            self.reply(400, {"ok": False, "error": "bad params"})
+            return
+        now = int(time.time())
+        if (scope not in ("group", "alert") or not target.strip()
+                or dur not in ACK_DURATIONS or exp <= now or exp > now + 3600 + 60):
+            self.reply(400, {"ok": False, "error": "bad params"})
+            return
+        msg = f"{scope}|{target}|{dur}|{exp}"
+        expected = hmac.new(token.encode(), msg.encode(), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(expected, sig):
+            self.reply(403, {"ok": False, "error": "bad signature"})
+            return
+        store = getattr(self.server, "ack_store", None)
+        if store is None:
+            self.reply(503, {"ok": False, "error": "ack store unavailable"})
+            return
+        store.set(scope, target.strip(), dur)
+        log({"source": "ack", "event": "set", "scope": scope, "target": target,
+             "duration": dur, "client": client})
+        self.reply(200, {"ok": True, "until": now + dur})
+
+    def handle_acks(self):
+        auth = self.headers.get("Authorization", "")
+        token = os.environ.get("ACK_TOKEN", "")
+        if not token or auth != f"Bearer {token}":
+            self.reply(401, {"ok": False, "error": "unauthorized"})
+            return
+        store = getattr(self.server, "ack_store", None)
+        if store is None:
+            self.reply(503, {"ok": False, "error": "ack store unavailable"})
+            return
+        now = time.time()
+        self.reply(200, {"acks": [{"key": k, **v} for k, v in store.acks.items()
+                                   if v.get("until", 0) > now]})
+
+    def handle_unack(self):
+        auth = self.headers.get("Authorization", "")
+        token = os.environ.get("ACK_TOKEN", "")
+        if not token or auth != f"Bearer {token}":
+            self.reply(401, {"ok": False, "error": "unauthorized"})
+            return
+        qs = parse_qs(urlsplit(self.path).query)
+        scope = qs.get("scope", [""])[0]
+        target = qs.get("target", [""])[0]
+        if scope not in ("group", "alert") or not target.strip():
+            self.reply(400, {"ok": False, "error": "bad params"})
+            return
+        store = getattr(self.server, "ack_store", None)
+        if store is None:
+            self.reply(503, {"ok": False, "error": "ack store unavailable"})
+            return
+        store.clear_key(scope, target.strip())
+        log({"source": "ack", "event": "clear", "scope": scope, "target": target})
+        self.reply(200, {"ok": True})
 
 
 class BugsinkHandler(WebhookHandler):
@@ -516,15 +790,20 @@ def listen(addr, handler):
 
 
 def main():
-    engine = NotificationEngine(os.environ.get("BRIDGE_STATE_FILE", "/state/notifications.json"))
+    engine = NotificationEngine(
+        os.environ.get("BRIDGE_STATE_FILE", "/state/notifications.json"),
+        ack_store=AckStore(os.environ.get("BRIDGE_ACK_FILE", "/state/acks.json")))
     log({"source": "bridge", "event": "start", "ntfy": configured(),
-         "bugsink_bridge": bool(BUGSINK_BRIDGE_TOKEN)})
+         "bugsink_bridge": bool(BUGSINK_BRIDGE_TOKEN),
+         "ack": bool(ACK_TOKEN)})
     if BUGSINK_BRIDGE_TOKEN:
         bugsink = listen(BUGSINK_BRIDGE_LISTEN, BugsinkHandler)
         bugsink.engine = engine
+        bugsink.ack_store = engine.ack_store
         threading.Thread(target=bugsink.serve_forever, daemon=True).start()
     server = listen(ALERTMANAGER_LISTEN, AlertmanagerHandler)
     server.engine = engine
+    server.ack_store = engine.ack_store
     server.serve_forever()
 
 

@@ -76,6 +76,10 @@ spec:
               value: "1"
             - name: BRIDGE_STATE_FILE
               value: /state/notifications.json
+            - name: BRIDGE_ACK_FILE
+              value: /state/acks.json
+            - name: ACK_ENDPOINT
+              value: "https://ack.apikv.com"
             - name: ALERTMANAGER_LISTEN
               value: "0.0.0.0:9099"
             - name: BUGSINK_BRIDGE_LISTEN
