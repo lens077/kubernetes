@@ -68,7 +68,7 @@ tests:
       - expr: 'count(host:expected_info)'
         eval_time: 4m
         exp_samples:
-          - {labels: '{}', value: 8}
+          - {labels: '{}', value: 7}
       - expr: 'host:signal_present{host="node3",signal="memory"} + 0'
         eval_time: 4m
         exp_samples:
@@ -149,39 +149,39 @@ tests:
   - name: only memory scraper stops, host stays alive and memory coverage drops
     interval: 1m
     input_series:
-      - series: 'system_memory_utilization_ratio{host_name="node0",host_group="cloud",state="used"}'
+      - series: 'system_memory_utilization_ratio{host_name="node2",host_group="cloud",state="used"}'
         values: '0.5 0.5 _x12'
-      - series: 'system_cpu_utilization_ratio{host_name="node0",host_group="cloud",state="idle"}'
+      - series: 'system_cpu_utilization_ratio{host_name="node2",host_group="cloud",state="idle"}'
         values: '0.75x13'
-      - series: 'system_cpu_utilization_ratio{host_name="node0",host_group="cloud",state="wait"}'
+      - series: 'system_cpu_utilization_ratio{host_name="node2",host_group="cloud",state="wait"}'
         values: '0x13'
     metricsql_expr_test:
-      - expr: 'host:signal_present{host="node0",signal="memory"} + 0'
+      - expr: 'host:signal_present{host="node2",signal="memory"} + 0'
         eval_time: 7m
         exp_samples:
-          - {labels: '{host="node0",host_kind="cloud",signal="memory"}', value: 0}
-      - expr: 'host:last_seen_timestamp_seconds{host="node0"} + 0'
+          - {labels: '{host="node2",host_kind="cloud",signal="memory"}', value: 0}
+      - expr: 'host:last_seen_timestamp_seconds{host="node2"} + 0'
         eval_time: 7m
         exp_samples:
-          - {labels: '{host="node0",host_kind="cloud"}', value: 946685220}
+          - {labels: '{host="node2",host_kind="cloud"}', value: 946685220}
   - name: stopped collector never gains a fresh heartbeat from recording evaluation
     interval: 1m
     input_series:
-      - series: 'system_memory_utilization_ratio{host_name="node0",host_group="cloud",state="used"}'
+      - series: 'system_memory_utilization_ratio{host_name="node2",host_group="cloud",state="used"}'
         values: '0.5 0.5 _x12'
     metricsql_expr_test:
-      - expr: 'host:signal_present{host="node0",signal="memory"} + 0'
+      - expr: 'host:signal_present{host="node2",signal="memory"} + 0'
         eval_time: 7m
         exp_samples:
-          - {labels: '{host="node0",host_kind="cloud",signal="memory"}', value: 0}
-      - expr: 'host:last_seen_timestamp_seconds{host="node0"} + 0'
+          - {labels: '{host="node2",host_kind="cloud",signal="memory"}', value: 0}
+      - expr: 'host:last_seen_timestamp_seconds{host="node2"} + 0'
         eval_time: 7m
         exp_samples:
-          - {labels: '{host="node0",host_kind="cloud"}', value: 946684860}
+          - {labels: '{host="node2",host_kind="cloud"}', value: 946684860}
       - expr: 'host:last_seen_timestamp_seconds{host="node1"} + 0'
         eval_time: 7m
         exp_samples: []
       - expr: 'count(host:expected_info)'
         eval_time: 7m
         exp_samples:
-          - {labels: '{}', value: 8}
+          - {labels: '{}', value: 7}

@@ -3,11 +3,6 @@
     "children": {
       "host_otel": {
         "hosts": {
-          "node0": {
-            "host_label": "node0",
-            "cloud_provider": "tencent",
-            "host_watchdog": true
-          },
           "node1": {
             "host_label": "node1",
             "cloud_provider": "tencent",
