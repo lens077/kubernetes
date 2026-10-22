@@ -83,7 +83,7 @@ git diff --check -- components/alert-bridge
 - 运维端点（同 9099 端口）：`GET /ack?...`（回执，校验签名后记录静音）、`GET /acks`（`Authorization: Bearer <ACK_TOKEN>`，列出活跃静音）、`POST /unack?scope=&target=`（同 Bearer，清除）。按客户端 IP 限流 30/60s。
 - 指标新增 `alert_bridge_notifications_total{...,reason="acked"}`（被静音压住的续期）与 `alert_bridge_acks_active`（当前活跃静音数）。`acked` 持续增长说明用户在主动降噪，是预期行为而非错误。
 
-暴露：`components/alert-bridge/manifests/02-ack-route.yaml` 新增 `ack.apikv.com` 的 HTTPRoute（http→https 重定向 + https 路由到 `alert-bridge:9099`）。`*.apikv.com` 真证书在 VPS 边缘（Pangolin/Traefik）终结并隧道进来，网关只路由。
+暴露：`components/alert-bridge/manifests/02-ack-route.yaml` 新增 `ack.apikv.com` 的 HTTPRoute（http→https 重定向 + https 路由到 `alert-bridge:9099`）。`*.apikv.com` 真证书在 VPS 边缘（Pangolin/Traefik）终结并隧道进来，网关只路由。**前置条件（运维动作）**：必须在 Pangolin 面板新增一个站点 `ack.apikv.com`，上游复用与 `silo-api.apikv.com`/`hc.apikv.com` 相同的集群网关目标（即 `cilium-gateway` 外部地址 `10.10.31.240:443`，沿用现有 `apikv.com` 证书），否则公网请求到不了桥。不要手改 `dynamic_config.yml`——它由 Pangolin 从 DB 重写，曾有 `services-lost` 事故。
 
 ### 上线/回滚核对
 
