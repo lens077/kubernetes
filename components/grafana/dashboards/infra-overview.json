@@ -183,7 +183,7 @@
       "description": "",
       "options": {
         "mode": "markdown",
-        "content": "- 云主机 node0–node4 已有 CPU/内存/磁盘/网络指标（host_otel），但容器、systemd 单元与 host-watchdog 巡检结果仍只在 host-watchdog 本机，不进本套指标。\n- 容器实际 CPU/内存、磁盘容量需要对应采集器，requests/limits 不等于实际用量。\n- CNPG Backup / ScheduledBackup 对象状态和恢复演练尚未在本面板自动取证；备份时间为 0 能证明缺少可用备份记录，不能单独区分配置缺失与任务失败。\n- Silo、Redis、Elasticsearch 等应用专属指标未逐一接入；目前只能查其 Kubernetes 对象和已配置的 Gatus 探测。\n- 外部独立 dead-man 与手机送达仍需独立验证。"
+        "content": "- 云主机 node1–node4 已有 CPU/内存/磁盘/网络指标（host_otel），但容器、systemd 单元与 host-watchdog 巡检结果仍只在 host-watchdog 本机，不进本套指标。\n- 容器实际 CPU/内存、磁盘容量需要对应采集器，requests/limits 不等于实际用量。\n- CNPG Backup / ScheduledBackup 对象状态和恢复演练尚未在本面板自动取证；备份时间为 0 能证明缺少可用备份记录，不能单独区分配置缺失与任务失败。\n- Silo、Redis、Elasticsearch 等应用专属指标未逐一接入；目前只能查其 Kubernetes 对象和已配置的 Gatus 探测。\n- 外部独立 dead-man 与手机送达仍需独立验证。"
       }
     }
   ],

@@ -55,7 +55,7 @@
 
 | 面板 | 用途 |
 |---|---|
-| `ops-portal` | 运维控制台：Grafana 面板与公网服务跳转卡片，全部主机（k1–k3 + node0–node4）CPU / 内存 / 根分区概览 |
+| `ops-portal` | 运维控制台：Grafana 面板与公网服务跳转卡片，全部主机（k1–k3 + node1–node4）CPU / 内存 / 根分区概览 |
 | `ntfy-alerting-overview` | 当前问题原文、实例入口、通知发布与降噪 |
 | `alert-instance-detail` | 单实例说明、表达式、实际值、标签与对象链接 |
 | `infra-overview` | 观测能力覆盖与统一入口；缺失来源明确标出 |

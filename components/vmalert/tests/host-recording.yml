@@ -29,9 +29,9 @@ tests:
         values: '0.75x6'
       - series: 'system_cpu_utilization_ratio{k8s_node_name="k1",cpu="1",state="wait"}'
         values: '0x6'
-      - series: 'system_cpu_utilization_ratio{host_name="node0",host_group="cloud",state="idle"}'
+      - series: 'system_cpu_utilization_ratio{host_name="node2",host_group="cloud",state="idle"}'
         values: '0.5x6'
-      - series: 'system_cpu_utilization_ratio{host_name="node0",host_group="cloud",state="wait"}'
+      - series: 'system_cpu_utilization_ratio{host_name="node2",host_group="cloud",state="wait"}'
         values: '0.25x6'
       - series: 'system_cpu_utilization_ratio{host_name="node4",host_group="cloud",state="idle"}'
         values: '1x6'
@@ -53,13 +53,13 @@ tests:
         eval_time: 4m
         exp_samples:
           - {labels: '{host="k1",host_kind="kubernetes"}', value: 0.25}
-          - {labels: '{host="node0",host_kind="cloud"}', value: 0.25}
+          - {labels: '{host="node2",host_kind="cloud"}', value: 0.25}
           - {labels: '{host="node4",host_kind="cloud"}', value: 0}
       - expr: 'host:cpu_iowait_ratio + 0'
         eval_time: 4m
         exp_samples:
           - {labels: '{host="k1",host_kind="kubernetes"}', value: 0.125}
-          - {labels: '{host="node0",host_kind="cloud"}', value: 0.25}
+          - {labels: '{host="node2",host_kind="cloud"}', value: 0.25}
           - {labels: '{host="node4",host_kind="cloud"}', value: 0}
       - expr: 'host:signal_present{host="k2",signal="cpu"} + 0'
         eval_time: 4m
@@ -76,9 +76,9 @@ tests:
   - name: memory zero is data, filesystem excludes reserved, network ignores loopback and survives reset
     interval: 1m
     input_series:
-      - series: 'system_memory_utilization_ratio{host_name="node0",host_group="cloud",state="used",replica="a"}'
+      - series: 'system_memory_utilization_ratio{host_name="node2",host_group="cloud",state="used",replica="a"}'
         values: '0.5x6'
-      - series: 'system_memory_utilization_ratio{host_name="node0",host_group="cloud",state="used",replica="b"}'
+      - series: 'system_memory_utilization_ratio{host_name="node2",host_group="cloud",state="used",replica="b"}'
         values: '0.5x6'
       - series: 'system_memory_utilization_ratio{k8s_node_name="k1",state="used"}'
         values: '0x6'
@@ -98,13 +98,13 @@ tests:
         values: '0 600 1200 1800 2400 3000 3600'
       - series: 'system_network_io_bytes_total{k8s_node_name="k1",device="lo",direction="receive"}'
         values: '0+60000x6'
-      - series: 'system_network_io_bytes_total{host_name="node0",host_group="cloud",device="eth0",direction="transmit"}'
+      - series: 'system_network_io_bytes_total{host_name="node2",host_group="cloud",device="eth0",direction="transmit"}'
         values: '1000 1600 0 600 1200 1800 2400'
     metricsql_expr_test:
       - expr: 'host:memory_used_ratio + 0'
         eval_time: 4m
         exp_samples:
-          - {labels: '{host="node0",host_kind="cloud"}', value: 0.5}
+          - {labels: '{host="node2",host_kind="cloud"}', value: 0.5}
           - {labels: '{host="k1",host_kind="kubernetes"}', value: 0}
       - expr: 'host:filesystem_used_ratio + 0'
         eval_time: 4m
@@ -114,38 +114,38 @@ tests:
         eval_time: 4m
         exp_samples:
           - {labels: '{host="k1",host_kind="kubernetes",direction="receive"}', value: 10}
-      - expr: 'host:network_io_bytes_per_second{host="node0"} >= bool 0'
+      - expr: 'host:network_io_bytes_per_second{host="node2"} >= bool 0'
         eval_time: 4m
         exp_samples:
-          - {labels: '{host="node0",host_kind="cloud",direction="transmit"}', value: 1}
+          - {labels: '{host="node2",host_kind="cloud",direction="transmit"}', value: 1}
   - name: differing replicas pair states before selecting a conservative ratio
     interval: 1m
     input_series:
-      - series: 'system_cpu_utilization_ratio{host_name="node0",host_group="cloud",replica="a",state="idle"}'
+      - series: 'system_cpu_utilization_ratio{host_name="node2",host_group="cloud",replica="a",state="idle"}'
         values: '0.125x6'
-      - series: 'system_cpu_utilization_ratio{host_name="node0",host_group="cloud",replica="a",state="wait"}'
+      - series: 'system_cpu_utilization_ratio{host_name="node2",host_group="cloud",replica="a",state="wait"}'
         values: '0x6'
-      - series: 'system_cpu_utilization_ratio{host_name="node0",host_group="cloud",replica="b",state="idle"}'
+      - series: 'system_cpu_utilization_ratio{host_name="node2",host_group="cloud",replica="b",state="idle"}'
         values: '0x6'
-      - series: 'system_cpu_utilization_ratio{host_name="node0",host_group="cloud",replica="b",state="wait"}'
+      - series: 'system_cpu_utilization_ratio{host_name="node2",host_group="cloud",replica="b",state="wait"}'
         values: '0.125x6'
-      - series: 'system_filesystem_usage_bytes{host_name="node0",host_group="cloud",replica="a",mountpoint="/",device="root",state="used"}'
+      - series: 'system_filesystem_usage_bytes{host_name="node2",host_group="cloud",replica="a",mountpoint="/",device="root",state="used"}'
         values: '96x6'
-      - series: 'system_filesystem_usage_bytes{host_name="node0",host_group="cloud",replica="a",mountpoint="/",device="root",state="free"}'
+      - series: 'system_filesystem_usage_bytes{host_name="node2",host_group="cloud",replica="a",mountpoint="/",device="root",state="free"}'
         values: '4x6'
-      - series: 'system_filesystem_usage_bytes{host_name="node0",host_group="cloud",replica="b",mountpoint="/",device="root",state="used"}'
+      - series: 'system_filesystem_usage_bytes{host_name="node2",host_group="cloud",replica="b",mountpoint="/",device="root",state="used"}'
         values: '40x6'
-      - series: 'system_filesystem_usage_bytes{host_name="node0",host_group="cloud",replica="b",mountpoint="/",device="root",state="free"}'
+      - series: 'system_filesystem_usage_bytes{host_name="node2",host_group="cloud",replica="b",mountpoint="/",device="root",state="free"}'
         values: '60x6'
     metricsql_expr_test:
       - expr: 'host:cpu_busy_ratio + 0'
         eval_time: 4m
         exp_samples:
-          - {labels: '{host="node0",host_kind="cloud"}', value: 0.875}
+          - {labels: '{host="node2",host_kind="cloud"}', value: 0.875}
       - expr: 'host:filesystem_used_ratio + 0'
         eval_time: 4m
         exp_samples:
-          - {labels: '{host="node0",host_kind="cloud",mountpoint="/"}', value: 0.96}
+          - {labels: '{host="node2",host_kind="cloud",mountpoint="/"}', value: 0.96}
   - name: only memory scraper stops, host stays alive and memory coverage drops
     interval: 1m
     input_series:

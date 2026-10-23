@@ -5,11 +5,11 @@ tests:
   - name: never-reported expected host remains missing, not silently healthy
     interval: 1m
     input_series:
-      - series: 'host:expected_info{host="node0",host_kind="cloud",disk_alert_owner="watchdog"}'
+      - series: 'host:expected_info{host="node2",host_kind="cloud",disk_alert_owner="watchdog"}'
         values: '1x35'
       - series: 'host:expected_info{host="node1",host_kind="cloud",disk_alert_owner="watchdog"}'
         values: '1x35'
-      - series: 'host:last_seen_timestamp_seconds{host="node0",host_kind="cloud"}'
+      - series: 'host:last_seen_timestamp_seconds{host="node2",host_kind="cloud"}'
         values: '946684800+60x35'
       - series: 'host:rules_evaluation_timestamp_seconds'
         values: '946684800+60x35'
@@ -31,7 +31,7 @@ tests:
   - name: group outage produces one alert, no per-host or false resource warnings
     interval: 1m
     input_series:
-      - series: 'host:expected_info{host="node0",host_kind="cloud",disk_alert_owner="watchdog"}'
+      - series: 'host:expected_info{host="node2",host_kind="cloud",disk_alert_owner="watchdog"}'
         values: '1x35'
       - series: 'host:expected_info{host="node1",host_kind="cloud",disk_alert_owner="watchdog"}'
         values: '1x35'
@@ -78,33 +78,33 @@ tests:
   - name: absent coverage record still raises a partial-signal alert
     interval: 1m
     input_series:
-      - series: 'host:expected_info{host="node0",host_kind="cloud",disk_alert_owner="watchdog"}'
+      - series: 'host:expected_info{host="node2",host_kind="cloud",disk_alert_owner="watchdog"}'
         values: '1x25'
-      - series: 'host:last_seen_timestamp_seconds{host="node0",host_kind="cloud"}'
+      - series: 'host:last_seen_timestamp_seconds{host="node2",host_kind="cloud"}'
         values: '946684800+60x25'
       - series: 'host:rules_evaluation_timestamp_seconds'
         values: '946684800+60x25'
-      - series: 'host:signal_present{host="node0",host_kind="cloud",signal="cpu"}'
+      - series: 'host:signal_present{host="node2",host_kind="cloud",signal="cpu"}'
         values: '1x25'
-      - series: 'host:signal_present{host="node0",host_kind="cloud",signal="filesystem"}'
+      - series: 'host:signal_present{host="node2",host_kind="cloud",signal="filesystem"}'
         values: '1x25'
-      - series: 'host:signal_present{host="node0",host_kind="cloud",signal="network"}'
+      - series: 'host:signal_present{host="node2",host_kind="cloud",signal="network"}'
         values: '1x25'
     alert_rule_test:
       - eval_time: 16m
         groupname: host-resources
         alertname: HostMetricSignalMissing
         exp_alerts:
-          - exp_labels: {host: node0, host_kind: cloud, signal: memory, disk_alert_owner: watchdog, severity: warning, category: observability}
+          - exp_labels: {host: node2, host_kind: cloud, signal: memory, disk_alert_owner: watchdog, severity: warning, category: observability}
             exp_annotations:
-              summary: '主机 node0 缺少 memory 指标'
+              summary: '主机 node2 缺少 memory 指标'
               description: '主机仍上报但某类必要指标缺失；检查对应 scraper、标签和 host-recording 的 health。缺失不是零使用率。'
               dashboard: 'https://grafana.apikv.com/d/ops-portal'
               runbook_url: 'https://github.com/lens077/kubernetes/blob/main/components/vmalert/README-host-metrics.md'
   - name: stale rule evaluator never invents per-host failures
     interval: 1m
     input_series:
-      - series: 'host:expected_info{host="node0",host_kind="cloud",disk_alert_owner="watchdog"}'
+      - series: 'host:expected_info{host="node2",host_kind="cloud",disk_alert_owner="watchdog"}'
         values: '1x20'
       - series: 'host:rules_evaluation_timestamp_seconds'
         values: '946684800x20'

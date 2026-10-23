@@ -31,7 +31,7 @@
 ## 切片与验收
 
 ### 1. 契约与部署源码归位
-- 将现役采集角色迁至 hosts/observability，固定依赖和二进制校验；主机清单覆盖 k1–k3 / node0–node4。
+- 将现役采集角色迁至 hosts/observability，固定依赖和二进制校验；主机清单覆盖 k1–k3 / node1–node4。
 - 检查旧入口转发、离线渲染与 Ansible 语法；不启动旧 Pigsty 剧本。
 - 文件预计：hosts/observability、根 Makefile、旧目录兼容入口。
 

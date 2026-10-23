@@ -19,7 +19,7 @@ class HostRecordingContractTest(unittest.TestCase):
     def test_expected_hosts_are_independent_of_received_metrics(self):
         module = builder()
         hosts = module.load_hosts()
-        self.assertEqual({"k1", "k2", "k3", "node0", "node1", "node2", "node3", "node4"}, {h["host"] for h in hosts})
+        self.assertEqual({"k1", "k2", "k3", "node1", "node2", "node3", "node4"}, {h["host"] for h in hosts})
         rules = {r["record"]: r for r in module.document(hosts)["groups"][0]["rules"]}
         self.assertNotIn("system_", rules["host:expected_info"]["expr"])
         for h in hosts:
@@ -52,8 +52,8 @@ class HostRecordingContractTest(unittest.TestCase):
         module = builder()
         data = module.cloud_inventory(module.load_hosts())
         targets = data["all"]["children"]["host_otel"]["hosts"]
-        self.assertEqual({"node0", "node1", "node2", "node3", "node4"}, set(targets))
-        self.assertTrue(targets["node0"]["host_watchdog"])
+        self.assertEqual({"node1", "node2", "node3", "node4"}, set(targets))
+        self.assertTrue(targets["node1"]["host_watchdog"])
         self.assertFalse(targets["node3"]["host_watchdog"])
 
 

@@ -263,7 +263,7 @@ def build_overview():
     p['fieldConfig']['overrides']=[override('当前数据',mappings=mappings({0:('未接入 / 无数据','red'),1:('有指标','green')})),
         override('观测能力',links=[{'title':'打开证据面板','url':'/d/${__data.fields["入口"]}?${__url_time_range}','targetBlank':False}]),override('入口',**{'custom.hidden':True})]
     panels=[p,text(2,'基础设施定位路径','**数据库 / 备份**：可用备份时间、恢复点、WAL、连接与复制。\n\n**Kubernetes**：节点 Ready、Deployment/StatefulSet、运行容器与重启。\n\n**Kafka / CDC**：task、源库连接、复制槽、lag 和对账。\n\n**采集 / 网络**：OTel 队列、Hubble 丢弃、Gatus 与通知链。\n\n当前告警的「查看证据」会携带对象筛选；每页顶部可返回问题工作台。',10,7),
-      text(3,'仍需补齐的观测，不以空白冒充健康','- 云主机 node0–node4 已有 CPU/内存/磁盘/网络指标（host_otel），但容器、systemd 单元与 host-watchdog 巡检结果仍只在 host-watchdog 本机，不进本套指标。\n- 容器实际 CPU/内存、磁盘容量需要对应采集器，requests/limits 不等于实际用量。\n- CNPG Backup / ScheduledBackup 对象状态和恢复演练尚未在本面板自动取证；备份时间为 0 能证明缺少可用备份记录，不能单独区分配置缺失与任务失败。\n- Silo、Redis、Elasticsearch 等应用专属指标未逐一接入；目前只能查其 Kubernetes 对象和已配置的 Gatus 探测。\n- 外部独立 dead-man 与手机送达仍需独立验证。',17,8)]
+      text(3,'仍需补齐的观测，不以空白冒充健康','- 云主机 node1–node4 已有 CPU/内存/磁盘/网络指标（host_otel），但容器、systemd 单元与 host-watchdog 巡检结果仍只在 host-watchdog 本机，不进本套指标。\n- 容器实际 CPU/内存、磁盘容量需要对应采集器，requests/limits 不等于实际用量。\n- CNPG Backup / ScheduledBackup 对象状态和恢复演练尚未在本面板自动取证；备份时间为 0 能证明缺少可用备份记录，不能单独区分配置缺失与任务失败。\n- Silo、Redis、Elasticsearch 等应用专属指标未逐一接入；目前只能查其 Kubernetes 对象和已配置的 Gatus 探测。\n- 外部独立 dead-man 与手机送达仍需独立验证。',17,8)]
     return dashboard('infra-overview','基础设施 · 观测覆盖与定位入口',panels)
 
 

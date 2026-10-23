@@ -3,7 +3,7 @@
 ## 来源与范围
 
 本契约统一 Grafana `ops-portal`、control-tower System 页、`d.apikv.com` 总控制台和主机资源告警。
-`hosts/observability/hosts.json` 是预期主机与磁盘告警归属的唯一清单；当前为 k1–k3、node0–node4。
+`hosts/observability/hosts.json` 是预期主机与磁盘告警归属的唯一清单；当前为 k1–k3、node1–node4。
 云主机采集部署也从该清单生成，不再依赖未版本化的 observability 目录。
 
 原始 `system_*` 指标保持不变。共享指标由 `build-host-recording.py` 生成 `rules/host-recording.yml`，
