@@ -24,6 +24,22 @@ CLI_HOSTNAME=${CLI_HOSTNAME:-argocd-api.dev.test}
 GW=argo-passthrough-gateway
 DRY=0; [[ ${1:-} == --dry-run ]] && DRY=1
 
+# --insecure 是写死在 Deployment args 里的（不在 cmd-params-cm 里）。2026-10-25 实测：
+# 只把 cm 的 server.insecure 改成 false 完全无效——命令行 flag 优先，8080 仍是明文，
+# HTTPS 探针直接被 reset，新 Pod CrashLoop。所以必须改 args，用 jq 定位下标，
+# 上游调整参数顺序时也不会失效。
+insecure_patch() {  # insecure_patch <add|remove>  → 输出 JSON patch（无变化时输出 []）
+  local want=$1 cur idx
+  cur=$(kctl -n "$NAMESPACE" get deploy argocd-server -o json | jq -c '.spec.template.spec.containers[0].args // []')
+  idx=$(jq -r --arg a "--insecure" 'to_entries[] | select(.value==$a) | .key' <<<"$cur" | head -1)
+  case $want in
+    remove) [[ -n $idx ]] || { echo "[]"; return; }
+            echo "[{\"op\":\"remove\",\"path\":\"/spec/template/spec/containers/0/args/$idx\"}]" ;;
+    add)    [[ -z $idx ]] || { echo "[]"; return; }
+            echo '[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--insecure"}]' ;;
+  esac
+}
+
 log_step "ArgoCD → TLS 模式（SNI: $HOSTNAME / $CLI_HOSTNAME）"
 
 # 1) passthrough 入口：新 Gateway 自己去 LB 池领 VIP，不碰共享网关。
@@ -38,16 +54,19 @@ fi
 kctl apply -f "$out/tlsroute.yaml"
 rm -rf "$out"
 
-# 2) argocd-server 出 TLS。两处必须一起改，否则 Pod 起不来：
-#    a) server.insecure=false  ← 让 8080 出 TLS
+# 2) argocd-server 出 TLS。三处必须一起改，否则 Pod 起不来：
+#    a) args 去掉 --insecure ← 真正决定 TLS 的是这里（cm 里的同名键对硬编码 flag 无效）
 #    b) 探针 scheme HTTP→HTTPS ← kubelet 的 HTTPS 探针不校验证书，自签不影响；
-#       只改 a 不改 b，探针会拿明文打 TLS 端口，3×10s 后 liveness 杀掉 Pod。
+#       只改 a 不改 b，探针会拿明文打 TLS 端口，3×10s 后 liveness 杀掉 Pod
+#    c) 删掉 cm 里的 server.insecure，避免和 args 出现两个真相源
+args_patch=$(insecure_patch remove)
+[[ $args_patch == "[]" ]] || kctl -n "$NAMESPACE" patch deploy argocd-server --type=json -p "$args_patch"
 kctl -n "$NAMESPACE" patch deploy argocd-server --type=json -p '[
   {"op":"replace","path":"/spec/template/spec/containers/0/livenessProbe/httpGet/scheme","value":"HTTPS"},
   {"op":"replace","path":"/spec/template/spec/containers/0/readinessProbe/httpGet/scheme","value":"HTTPS"}
 ]' >/dev/null
-kctl -n "$NAMESPACE" patch cm argocd-cmd-params-cm --type merge \
-  -p '{"data":{"server.insecure":"false"}}'
+kctl -n "$NAMESPACE" patch cm argocd-cmd-params-cm --type=merge \
+  -p '{"data":{"server.insecure":null}}' >/dev/null
 kctl -n "$NAMESPACE" rollout restart deploy argocd-server >/dev/null
 kctl -n "$NAMESPACE" rollout status deploy argocd-server --timeout=180s
 

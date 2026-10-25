@@ -19,6 +19,20 @@ CLI_HOSTNAME=${CLI_HOSTNAME:-argocd-api.dev.test}
 GW=argo-passthrough-gateway
 DRY=0; [[ ${1:-} == --dry-run ]] && DRY=1
 
+# 与 mode-tls.sh 同一份逻辑：--insecure 只能靠改 Deployment args 来加/删，
+# cmd-params-cm 里的 server.insecure 对写死的命令行 flag 无效（2026-10-25 实测）。
+insecure_patch() {  # insecure_patch <add|remove>  → 输出 JSON patch（无变化时输出 []）
+  local want=$1 cur idx
+  cur=$(kctl -n "$NAMESPACE" get deploy argocd-server -o json | jq -c '.spec.template.spec.containers[0].args // []')
+  idx=$(jq -r --arg a "--insecure" 'to_entries[] | select(.value==$a) | .key' <<<"$cur" | head -1)
+  case $want in
+    remove) [[ -n $idx ]] || { echo "[]"; return; }
+            echo "[{\"op\":\"remove\",\"path\":\"/spec/template/spec/containers/0/args/$idx\"}]" ;;
+    add)    [[ -z $idx ]] || { echo "[]"; return; }
+            echo '[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--insecure"}]' ;;
+  esac
+}
+
 log_step "ArgoCD → HTTP 模式（共享网关终结 TLS）"
 
 # 0) 先渲染，--dry-run 到此为止（不写集群、不重启）
@@ -37,12 +51,14 @@ kctl -n "$NAMESPACE" delete gateway "$GW" --ignore-not-found >/dev/null
 
 # 2) server 回到明文（网关解密后必须以明文回源，否则重定向死循环）
 #    探针 scheme 也要一起改回 HTTP，理由见 mode-tls.sh。
+args_patch=$(insecure_patch add)
+[[ $args_patch == "[]" ]] || kctl -n "$NAMESPACE" patch deploy argocd-server --type=json -p "$args_patch"
 kctl -n "$NAMESPACE" patch deploy argocd-server --type=json -p '[
   {"op":"replace","path":"/spec/template/spec/containers/0/livenessProbe/httpGet/scheme","value":"HTTP"},
   {"op":"replace","path":"/spec/template/spec/containers/0/readinessProbe/httpGet/scheme","value":"HTTP"}
 ]' >/dev/null
-kctl -n "$NAMESPACE" patch cm argocd-cmd-params-cm --type merge \
-  -p '{"data":{"server.insecure":"true"}}'
+kctl -n "$NAMESPACE" patch cm argocd-cmd-params-cm --type=merge \
+  -p '{"data":{"server.insecure":null}}' >/dev/null
 kctl -n "$NAMESPACE" rollout restart deploy argocd-server >/dev/null
 kctl -n "$NAMESPACE" rollout status deploy argocd-server --timeout=180s
 

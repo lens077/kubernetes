@@ -106,5 +106,14 @@ curl -sk -o /dev/null -w "%{http_code}\n" https://argocd.dev.test/ --resolve arg
   打 TLS 端口，3×10s 后 liveness 杀掉 Pod。两个 `mode-*.sh` 都会同步改探针；但**重跑
   `install.sh` 会先 apply 上游清单把探针改回 HTTP**，所以重装时务必用同一个
   `ARGOCD_SERVER_MODE`（默认 http），别在 tls 模式下裸跑 install。
+- **`--insecure` 写死在 Deployment 的 `args` 里，改 cmd-params-cm 没用**（2026-10-25 实测：
+  cm 设 `server.insecure=false` 后 8080 仍是明文，新 Pod 因为 HTTPS 探针被 reset 而 CrashLoop）。
+  `mode-*.sh` 都用 jq 定位 `args` 下标增删 `--insecure`；cm 里不再保留同名键，避免两个真相源。
+- **TLS 模式也拿不到原生 gRPC：ArgoCD 不广播 ALPN h2**（同日实测）。`curl --http2` 对
+  `argocd-server:443` 的协商结果是 `server accepted http/1.1`；ArgoCD 用 cmux 嗅探，
+  只有客户端**直接**发 HTTP/2 preface 才走 gRPC。而 Traefik 作为 HTTP 反向代理必须靠 ALPN
+  判断后端协议，拿不到 h2 就只能按 h1 转发，gRPC 流因此断开（CLI 回退 grpc-web）。
+  结论：**经过任何 L7 代理时，原生 gRPC 都不可达**；要原生 gRPC 只能做 L4 透传
+  （Pangolin raw TCP / Cilium TCPRoute），让客户端 TLS 直达 argocd-server。
 - **VIP 会漂移**：独立 Gateway 的地址由 LB 池分配，换集群/重建后要重新查
   `kubectl get gateway -o wide`，同步改 Pangolin target 与 `argocd.dev.test` 的解析。
