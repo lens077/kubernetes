@@ -1,4 +1,10 @@
+# ArgoCD 的明文入口（mode-http.sh 专用，mode-tls.sh 会删掉它）。
+#
+# 本集群原状：argocd-server 跑 --insecure（8080 只说 HTTP/1.1），
+# TLS 由共享网关 cilium-gateway 终结，然后以明文回源到 Service 的 port 80。
+# 这条路径下原生 gRPC 用不了（没有 h2），CLI 必须 --grpc-web。
 ---
+# 80 端口统一 301 到 https，避免明文入口被误用。
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
@@ -11,6 +17,7 @@ spec:
       sectionName: http
   hostnames:
     - "${HOSTNAME}"
+    - "${CLI_HOSTNAME}"
   rules:
     - filters:
         - type: RequestRedirect
@@ -31,6 +38,7 @@ spec:
       sectionName: https
   hostnames:
     - "${HOSTNAME}"
+    - "${CLI_HOSTNAME}"
   rules:
     - matches:
         - path:

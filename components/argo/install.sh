@@ -23,10 +23,15 @@ mkdir -p "$(dirname "$manifest")"
 # CRD 体积超 client-side apply 的注解上限(同 strimzi 的坑), 必须 server-side
 kctl apply -n "$NAMESPACE" --server-side --force-conflicts -f "$manifest"
 
-# 网关终结 TLS: server 走明文, 否则会出现"网关已解密、server 又要求 HTTPS"的重定向死循环
-kctl -n "$NAMESPACE" patch configmap argocd-cmd-params-cm --type merge \
-  -p '{"data":{"server.insecure":"true"}}'
-kctl -n "$NAMESPACE" rollout restart deploy argocd-server >/dev/null
+# 暴露模式二选一，统一交给独立脚本，install.sh 不再自己写 server.insecure：
+#   http（默认）= 共享网关终结 TLS，server 走明文（本集群原状）
+#   tls          = server 自出 TLS，网关只做 SNI passthrough（原生 gRPC 可用）
+# 两条路径互斥且都可重入，切换用 components/argo/mode-{http,tls}.sh。
+MODE=${ARGOCD_SERVER_MODE:-http}
+case $MODE in
+  http|tls) ;;
+  *) die "ARGOCD_SERVER_MODE 只能是 http 或 tls（当前: $MODE）" ;;
+esac
+bash "$DIR/mode-$MODE.sh"
 
-routes_apply "$DIR"
-log_ok "$ID 安装完成(https://$HOSTNAME; 初始密码见 summary 或 argocd-initial-admin-secret)"
+log_ok "$ID 安装完成(https://$HOSTNAME, 模式 $MODE; 初始密码见 summary 或 argocd-initial-admin-secret)"

@@ -1,0 +1,67 @@
+# ArgoCD 的 TLS Passthrough 入口（mode-tls.sh 专用，mode-http.sh 会删掉它）。
+#
+# 为什么单独一个 Gateway：
+#   共享网关 cilium-gateway 的 443 已经给了 HTTPS/Terminate，同一 Gateway 里再放一个
+#   TLS/Passthrough listener 抢同一个端口是非法组合，Gateway 会 Programmed=False
+#   （components/gateway/README.md 与 01-shared-gateway.yaml 都记过这个坑）。
+#   所以 L4 透传场景各自带 Gateway：postgres 走 5432，Argo 这里走 443。
+#
+# 网关不解密：证书由 argocd-server 自己出，SNI 决定路由到哪个后端。
+# 客户端（Pangolin）必须发 SNI，且因为 Argo 是自签证书，Pangolin 那边靠
+# serversTransport 的 insecureSkipVerify 放行（面板上就是「启用 TLS + TLS 服务器名称」）。
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: argo-passthrough-gateway
+  namespace: ${NAMESPACE}
+spec:
+  gatewayClassName: cilium
+  # 不写 addresses：VIP 由 Cilium 从 LB 池自动分配，kubectl get gateway -o wide 查看。
+  # 改了 VIP 就要同步改 Pangolin 的 target 和 argocd.dev.test 的解析。
+  listeners:
+    - name: argo-tls
+      port: 443
+      protocol: TLS        # 必须是 TLS，不是 TCP/HTTPS
+      tls:
+        mode: Passthrough  # 网关不解密，原样透传给 argocd-server
+      allowedRoutes:
+        kinds:
+          - kind: TLSRoute
+        namespaces:
+          from: Same
+---
+# 浏览器/UI 入口。argocd-server 的 Service 443 与 80 都指向容器的 8080，
+# 区别只在「进程有没有开 TLS」，所以这里显式写 443 表明协议意图。
+apiVersion: gateway.networking.k8s.io/v1   # ⚠️ 必须是 v1：本集群 TLSRoute CRD 只 served v1
+kind: TLSRoute
+metadata:
+  name: ${RELEASE}-ui
+  namespace: ${NAMESPACE}
+spec:
+  parentRefs:
+    - name: argo-passthrough-gateway
+      sectionName: argo-tls
+  hostnames:
+    - "${HOSTNAME}"
+  rules:
+    - backendRefs:
+        - name: argocd-server
+          port: 443
+---
+# ArgoCD CLI / 原生 gRPC 入口（Pangolin 资源 argocd-api 的 SNI）。
+apiVersion: gateway.networking.k8s.io/v1
+kind: TLSRoute
+metadata:
+  name: ${RELEASE}-api
+  namespace: ${NAMESPACE}
+spec:
+  parentRefs:
+    - name: argo-passthrough-gateway
+      sectionName: argo-tls
+  hostnames:
+    - "${CLI_HOSTNAME}"
+  rules:
+    - backendRefs:
+        - name: argocd-server
+          port: 443
