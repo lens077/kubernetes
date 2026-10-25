@@ -1,0 +1,27 @@
+# Environment declaration consumed by tools/config-center-environment-ensure.sh.
+# This file is non-secret; credentials stay in OpenBao/ESO and Config Center.
+#
+# prod 与 pre 共用同一套集群内地址（PG/Redis/ES/Consul/Casdoor 都在集群里），
+# 所以 strategy 用 pre（集群内 DNS），不是 remote-dev/pangolin。
+# operator token 由管理员 JWT 签发后落在 config-center/config-center-operator-prod，
+# 本声明只描述它，ensure 脚本不会替你创建（见脚本头注释）。
+environment: prod
+strategy: pre
+services:
+  - address
+  - behavior
+  - cart
+  - inventory
+  - merchant
+  - order
+  - payment
+  - product
+  - search
+  - user
+operator:
+  service_name: harvest
+  allowed_namespaces:
+    - "*"
+delivery:
+  namespace: ecommerce
+  selector_secret: ecommerce-config-source-prod
