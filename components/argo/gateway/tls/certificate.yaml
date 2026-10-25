@@ -1,0 +1,42 @@
+# ArgoCD 服务端证书（mode-tls.sh 应用）。
+#
+# 为什么用独立 Secret 而不是往 argocd-secret 里塞：
+#   argocd-secret 里还有 admin.password / server.secretkey / webhook secret，
+#   让 cert-manager 接管它会把这些一起覆盖掉。ArgoCD 支持专用 Secret
+#   `argocd-server-tls`（二进制里引用该名字），cert-manager 可以独占它并自动续期。
+#
+# ⚠️ 证书只在 argocd-server 启动时读取：续期后要 rollout restart 才会生效。
+#
+# 根 CA 是 cert-manager/global-root-ca-secret（CN=my-global-root-ca，2036 到期）。
+# 客户端要免掉 --insecure 就得信任这张根 CA（浏览器导入 / Go 的 SSL_CERT_FILE）。
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: argocd-server-tls
+  namespace: ${NAMESPACE}
+spec:
+  secretName: argocd-server-tls
+  duration: 2160h      # 90 天
+  renewBefore: 1440h   # 提前 60 天续期，留出一次重启窗口
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+    rotationPolicy: Always
+  usages:
+    - server auth
+  dnsNames:
+    # 内部（网关 passthrough 的 SNI）
+    - "${HOSTNAME}"
+    - "${CLI_HOSTNAME}"
+    # Service DNS（Pangolin newt 直连、Registry 探针）
+    - "argocd-server"
+    - "argocd-server.${NAMESPACE}.svc"
+    - "argocd-server.${NAMESPACE}.svc.cluster.local"
+    # 公网入口（Pangolin 转发与 Raw TCP 30002 的 SNI；由私签 CA 签发，
+    # 公开客户端不会信任它，只用于免主机名不匹配）
+    - "argocd.apikv.com"
+    - "argocd-api.apikv.com"
+  issuerRef:
+    name: global-ca-issuer
+    kind: ClusterIssuer

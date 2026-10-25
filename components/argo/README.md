@@ -80,6 +80,33 @@ argocd login argocd-api.apikv.com:30002 --username admin --insecure
 
 443 那条（`argocd-api.apikv.com` 的 HTTP 资源）继续保留：REST 与 grpc-web 都走它。
 
+### 服务端证书（cert-manager）
+
+`gateway/tls/certificate.yaml` 由 `global-ca-issuer` 签发到 Secret **`argocd-server-tls`**，
+`mode-tls.sh` 会先等 Certificate `Ready` 再重启 server。
+
+- **为什么不用 `argocd-secret`**：那个 Secret 里还有 `admin.password`、`server.secretkey`、
+  webhook secret，让 cert-manager 接管会被整份覆盖。ArgoCD 支持专用 Secret
+  `argocd-server-tls`（二进制里有该名字，2026-10-25 实测生效）。
+- 集群没装 cert-manager 时脚本会跳过，argocd-server 退回自签证书，客户端仍需 `--insecure`。
+- SAN 覆盖：`argocd.dev.test`、`argocd-api.dev.test`、`argocd-server`、两个 Service DNS、
+  `argocd.apikv.com`、`argocd-api.apikv.com`。
+- 严格校验实测（带 `ca.crt`）：`argocd-server.argocd.svc.cluster.local` 与网关
+  `argocd.dev.test:443` 都是 200。
+
+**续期**：`duration 90d / renewBefore 60d`，cert-manager 会自动轮换 Secret，但
+argocd-server **只在启动时读证书** → 续期后必须
+`kubectl -n argocd rollout restart deploy/argocd-server`。提前 60 天续期就是为这个重启留窗口。
+
+**客户端信任**（想免掉 `--insecure`）：
+
+```bash
+kubectl -n cert-manager get secret global-root-ca-secret -o jsonpath='{.data.tls\.crt}' | base64 -d > my-global-root-ca.crt
+# macOS：Go 在 darwin 上不读 SSL_CERT_FILE，只认钥匙串（实测）
+sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain my-global-root-ca.crt
+# Linux：SSL_CERT_FILE=./my-global-root-ca.crt argocd login ...
+```
+
 ### 切到 TLS 之后要同步的三件事
 
 1. **Pangolin 资源改目标**：`argocd`（UI）指到新 Gateway 的 `https://<VIP>` + 端口 `443`，

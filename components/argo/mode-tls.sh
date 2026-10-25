@@ -45,14 +45,29 @@ log_step "ArgoCD → TLS 模式（SNI: $HOSTNAME / $CLI_HOSTNAME）"
 # 1) passthrough 入口：新 Gateway 自己去 LB 池领 VIP，不碰共享网关。
 out=$(mktemp -d)
 render_tpl "$DIR/gateway/tls/tlsroute.yaml" "$out/tlsroute.yaml" CLI_HOSTNAME
+HAVE_CERTMANAGER=0
+if kctl get crd certificates.cert-manager.io >/dev/null 2>&1; then
+  HAVE_CERTMANAGER=1
+  render_tpl "$DIR/gateway/tls/certificate.yaml" "$out/certificate.yaml" CLI_HOSTNAME
+fi
 if [[ $DRY == 1 ]]; then
   cat "$out/tlsroute.yaml"
+  [[ $HAVE_CERTMANAGER == 1 ]] && cat "$out/certificate.yaml"
   rm -rf "$out"
   log_skip "--dry-run：未改集群"
   exit 0
 fi
 kctl apply -f "$out/tlsroute.yaml"
+if [[ $HAVE_CERTMANAGER == 1 ]]; then
+  kctl apply -f "$out/certificate.yaml"
+else
+  log_warn "集群没有 cert-manager，跳过服务端证书：argocd-server 会退回自签，客户端需 --insecure"
+fi
 rm -rf "$out"
+
+# 证书必须先 Ready 再重启：Secret 不存在时 argocd-server 会退回自签证书。
+[[ $HAVE_CERTMANAGER == 0 ]] || kctl -n "$NAMESPACE" wait --for=condition=Ready \
+  certificate/argocd-server-tls --timeout=120s
 
 # 2) argocd-server 出 TLS。三处必须一起改，否则 Pod 起不来：
 #    a) args 去掉 --insecure ← 真正决定 TLS 的是这里（cm 里的同名键对硬编码 flag 无效）
