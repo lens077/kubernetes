@@ -52,11 +52,40 @@
 | `argocd.dev.test`（`HOSTNAME`） | 浏览器 / UI |
 | `argocd-api.dev.test`（`CLI_HOSTNAME`） | ArgoCD CLI 的 gRPC |
 
+### 原生 gRPC：L4 透传（30002）
+
+ArgoCD 的 TLS 服务端**不广播 ALPN h2**（它用 cmux 嗅探，只在客户端直接发 HTTP/2 preface 时才走
+gRPC）。所以链路上只要有一个 L7 代理（Pangolin 的 Traefik），gRPC 必然被降级成 HTTP/1.1——
+跟开不开 TLS 无关。原生 gRPC 只能走裸 TCP：
+
+| 项 | 值 |
+|---|---|
+| Pangolin 资源 | `argocd-grpc`，mode=TCP，proxyPort=**30002** |
+| 目标 | site `k8s-cluster` → `argocd-server.argocd.svc.cluster.local`，端口 **443** |
+| 链路 | client TLS → Traefik TCP router(`HostSNI(*)`) → newt → argocd-server:443 |
+
+30002 是 Pangolin 预置的 raw TCP 端口（compose 已发布、安全组已放行、`tcp-30002`
+entryPoint 已定义），不需要再改三处。
+
+```bash
+argocd login argocd-api.apikv.com:30002 --username admin --insecure
+```
+
+三个坑（都踩过）：
+
+- 位置参数是 `host:port`，**不能写 `https://`**，否则报 `too many colons in address`。
+- 必须 `--insecure`：裸 TCP 没有 Pangolin 的 `serversTransport` 帮忙跳过自签证书。
+- 面板的「目标地址」只填主机名，端口填在右侧端口框；把 `host:443` 一起写进去会被存成
+  `host443`，newt 直接连不上（2026-10-25 实测）。
+
+443 那条（`argocd-api.apikv.com` 的 HTTP 资源）继续保留：REST 与 grpc-web 都走它。
+
 ### 切到 TLS 之后要同步的三件事
 
-1. **Pangolin 两个资源都改目标**：`argocd` 与 `argocd-api` 都指到新 Gateway 的
-   `https://<VIP>` + 端口 `443`，勾「启用 TLS」，`TLS 服务器名称` 分别填
-   `argocd.dev.test` / `argocd-api.dev.test`。填了 SNI 后 Pangolin 自动生成
+1. **Pangolin 资源改目标**：`argocd`（UI）指到新 Gateway 的 `https://<VIP>` + 端口 `443`，
+   勾「启用 TLS」，`TLS 服务器名称` 填 `argocd.dev.test`；`argocd-api`（CLI）可直接指
+   `https://argocd-server.argocd.svc.cluster.local` + 端口 `443`，SNI 填 `argocd-api.dev.test`
+   （少一跳网关）。填了 SNI 后 Pangolin 自动生成
    `serversTransport{serverName, insecureSkipVerify:true}`，Argo 的自签证书不用配 CA。
 2. **`argocd.dev.test` 的解析**：它现在指向旧共享网关 `10.10.31.240`，要改指新 VIP
    （DNS 或 hosts）。解析不在本仓库管理。
