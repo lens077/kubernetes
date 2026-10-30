@@ -38,8 +38,11 @@ spec:
           # (老版本没有 -endpoint 这个 flag, 解析失败后打帮助然后退出, 而 restartPolicy
           #  让它一直重启, kubectl get pod 看着一切正常 —— 实测踩过)。
           # 2026-10-14: 随 Pangolin 客户端统一升级，拉到 1.18.1（node0 已转二进制，node2/k1/k2/k3/Mac 同步）。
+          # 2026-10-24: 随 Pangolin 服务端升到 1.25.3，客户端同步到 1.19.0（newt 的版本线与服务端独立；
+          #           1.19.0 是当前 newt 最新版，与服务端 1.25.x 配套）。
+          #           主机级 newt（node2/k1/k2/k3 的 /usr/local/bin/newt + systemd）已先升到 1.19.0。
           # newt 启动时会打印一行 `Server version: <服务端版本>`，版本对不上先看它。
-          image: docker.io/fosrl/newt:1.18.1
+          image: docker.io/fosrl/newt:1.19.0
           imagePullPolicy: IfNotPresent
           securityContext:
             allowPrivilegeEscalation: false

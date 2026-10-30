@@ -258,7 +258,9 @@ render_tpl() {  # render_tpl <模板> <输出> [额外变量名...]
               VT_STORAGE_SIZE VT_RETENTION VT_DISK_CAP ALERTMANAGER_STORAGE_SIZE
               GATUS_STORAGE_SIZE HEALTHCHECKS_STORAGE_SIZE BUGSINK_STORAGE_SIZE BUGSINK_EVENT_RETENTION_DAYS
               # 2026-09-17 umami(网站分析; 库在集群外 node3 Pigsty, 故是 ENDPOINT 而非 STORAGE_SIZE)
-              UMAMI_IMAGE UMAMI_DB_ENDPOINT UMAMI_TRACKER_SCRIPT_NAME "$@")
+              UMAMI_IMAGE UMAMI_DB_ENDPOINT UMAMI_TRACKER_SCRIPT_NAME
+              # 2026-10-28 静态站迁集群(mcm-site/homepage, node1 docker → sites ns)
+              MCM_IMAGE HOMEPAGE_IMAGE "$@")
   local sed_args=() v
   for v in "${vars[@]}"; do sed_args+=(-e "s|\${$v}|${!v-}|g"); done
   sed "${sed_args[@]}" "$src" > "$out"

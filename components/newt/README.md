@@ -92,6 +92,39 @@ curl -s -b <cookie> https://pangolin.apikv.com/api/v1/org/main/sites \
 > **实测结论（2026-08-19）**：newt 1.15.0 在本集群建立隧道成功，
 > 面板站点 `k8s-cluster` `online=true`。
 
+> **实测结论（2026-10-24）**：newt 1.19.0（当前最新）+ Pangolin 服务端 1.25.3（当前最新）配套运行正常，
+> `k8s-cluster` / `k1` / `k2` / `k3` / `node2` 站点全部 `online=true`。
+> 客户端启动日志同时打印 `Newt version 1.19.0` 与 `Server version: 1.25.3`，两者都对才算版本配平。
+
+## 5.1 版本线对照（2026-10-24 复核）
+
+**Pangolin 服务端与 newt 客户端是两个独立的版本线**，不要把服务端的号套到客户端上：
+
+| 组件 | 上游 | 当前版本 | 说明 |
+|---|---|---|---|
+| Pangolin（服务端控制面） | [fosrl/pangolin](https://github.com/fosrl/pangolin) | **1.25.3** | node1 Docker 版控制面 |
+| Gerbil（隧道数据面） | [fosrl/gerbil](https://github.com/fosrl/gerbil) | 1.5.2 | 已是最新，无需动 |
+| Newt（客户端） | [fosrl/newt](https://github.com/fosrl/newt) | **1.19.0** | 客户端版本线独立，1.25.x 服务端配套 1.19.0 |
+
+升级时服务端与客户端要**成对升**：只升服务端不升客户端，服务端日志会出现
+`Newt ping with outdated config version: 2 (current: 0)`；只升客户端不升服务端，
+客户端能连上但用不到新特性。
+
+本集群当前有两套 newt 客户端，升级时**两套都要动**：
+
+| 位置 | 形态 | 站点 | 升级方式 |
+|---|---|---|---|
+| k8s 内（`pangolin` ns） | Deployment，镜像 `fosrl/newt:1.19.0` | `k8s-cluster` | 改本目录 manifest → `bash components/newt/install.sh` |
+| 主机级 | `/usr/local/bin/newt` + systemd `newt.service` | `k1`/`k2`/`k3`/`node2` | 换二进制 → `systemctl restart newt.service` |
+
+主机级 newt 的凭据在 `/home/docker/newt/newt.env`（site k1/k2/k3/node2 各一份），
+装法同 node2；systemd 单元在 `/etc/systemd/system/newt.service`。
+
+> **机房拉镜像**：k1/k2/k3 的 containerd 配了一串国内镜像站，个别站对非公开路径会 401。
+> 实测 `fosrl/newt:1.19.0` 能拉到，但**换版本前先在三台节点上 `crictl pull` 预拉**，
+> 否则 rollout 时可能卡在 `ImagePullBackOff`。
+> GitHub release 下载同理，机房直连不通，走 `https://ghfast.top/https://github.com/...`。
+
 ## 6. 踩坑
 
 - **版本号看着像 1.5 之后就是 1.15**：写成 `1.5.0` 会拉到一个没有 `-endpoint` flag 的老版本，
@@ -107,3 +140,27 @@ curl -s -b <cookie> https://pangolin.apikv.com/api/v1/org/main/sites \
 - **凭据不入库**：`newt-credentials` Secret 由 install.sh 从 creds 生成，manifest 里只有引用。
 - **`auth-daemon must be run as root` 是可忽略的 WARN**：那是 newt 的 SSH 认证附加功能，
   与隧道无关；本组件刻意不给 root。
+- **升服务端时别让 Pangolin 把 Badger 改成 v1.8.0**（2026-10-24 记录）：
+  Pangolin 1.25 起，如果 release 里含 Badger 更新，它会**尝试自动改写 Traefik 配置**里的
+  Badger 版本号。坏消息是上游明确警告 **Badger `v1.8.0` 是坏的**（过不了 Traefik 插件完整性校验，
+  插件会被禁用 → 所有路由 404），要求留在 `v1.7.0`。
+  好消息是这个自动改写**只在 Traefik 配置与默认安装器模板一致时才生效**，
+  改不动就静默失败。本集群 `config/traefik/traefik_config.yml` 已深度定制
+  （vendored `plugins-local` + `localPlugins` + crowdsec/safeline），与默认模板不符，
+  实测升级后指纹不变、Badger 仍是 `v1.7.0`。
+  **但这是"碰巧安全"，不是保证** —— 每次升服务端前都该确认一次：
+
+  ```bash
+  grep -A3 'badger:' /home/docker/pangolin/config/traefik/traefik_config.yml   # 应为 v1.7.0
+  ```
+
+- **升服务端必然断隧道几秒**（2026-10-24 记录）：`docker compose up -d pangolin` 重建控制面时，
+  所有 newt 客户端会连到断掉的后端，报 `failed to get token: ... 502 Bad Gateway. Retrying in 3s...`。
+  客户端自带的重试会在几秒内恢复，日志随后出现 `Server version: <新版本>`。
+  **看到 502 不要手动去重启客户端** —— 重启反而会多一次断连。
+  判据是最终出现 `Tunnel connection to server established successfully!`。
+- **SQLite 迁移前 Pangolin 会自动备份**（2026-10-24 记录）：迁移脚本会把 DB 快照写到
+  `config/db/backups/db_<时间戳>_v<版本>.sqlite`。但**别依赖它**——
+  官方文档明说「downgrade is sometimes impossible and is not recommended」，
+  schema 变了旧版本可能读不了。升级前自己另存一份（`sqlite3` 的 `.backup` 或 `cp`）才是稳的。
+
