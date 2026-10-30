@@ -35,7 +35,9 @@ spec:
   postgresql:
     parameters:
       shared_buffers: 256MB          # 官方起点 = 容器内存的 25%; 改它会滚动重启, 单实例即停机窗口
-      max_connections: "200"
+      max_connections: "500"         # 2026-10-30 事故 200→500: 多租户集体重连曾打满 200(根治见 PgBouncer 规划, 未做)
+      superuser_reserved_connections: "20"  # 2026-10-30: 连接风暴时给 CNPG 管理器/监控/备份保留入口(改它滚动重启)
+      io_method: "sync"              # 2026-10-30: PG18 io worker 崩溃恢复后认证阶段死锁的 workaround, upstream 修复后可摘
       random_page_cost: "1.1"        # SSD/NVMe
       effective_io_concurrency: "200"
   # CNPG 默认给实例签发自己的 TLS 证书（服务端证书 + 客户端 CA），

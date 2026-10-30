@@ -102,3 +102,72 @@ PGPASSWORD=xxx psql "host=pg.dev.test hostaddr=$VIP user=app dbname=ecommerce \
      去掉它们 WAL 归档必失败。
 - **备份落点仍是集群内 MinIO**：与数据库共用同一批本地盘，挡得住误删/数据损坏/PITR，
   挡不住主机或 LVM VG 整体损毁。要真容灾需再加一路集群外对象存储。
+
+- **参数改了却不自动生效（2026-10-30/31 连接耗尽事故的复盘，CNPG 1.30）**：
+  1. **字段名先对上**。CNPG 1.30 的 CRD 是 `spec.postgresql.parameters`；
+     老记忆里的 `spec.postgresConfiguration` 不存在，`kubectl patch` 会报
+     `unknown field "spec.postgresConfiguration"` 但 **patch 命令整体返回成功**——
+     看起来"打了"，实际什么都没改。改完用
+     `kubectl -n postgresql get cluster pg-main -o jsonpath='{.spec.postgresql.parameters.max_connections}'`
+     回读确认。
+  2. **官方承诺与实测的差距**：文档称改需重启的参数会自动滚动重启
+     （1.30 原文："If the change involves a parameter requiring a restart, the
+     operator will perform a rolling upgrade."），但 2026-10-31 实测：集群
+     **healthy、无 Extraction Error** 的状态下 patch
+     `superuser_reserved_connections`，operator 观察 10 分钟以上未动作，
+     手动删 Pod 才生效（疑似单实例主库的保守策略）。**别只等自动重启**：
+     patch 5 分钟后连库查 `pg_settings.pending_restart` / 直接 `show <参数>`，
+     没生效就 `kubectl delete pod --grace-period=90`（**勿 --force**，见 4.e）。
+  3. **死锁形态**：当实例 manager 因连接耗尽不可用时（连接被租户打满，
+     manager 自己也拿不到槽位），集群 phase 变成
+     `Instance Status Extraction Error: HTTP communication issue`——
+     **operator 无法读取实例状态，就不会调度重启**，spec 变更无限期挂起；
+     同时 manager 的 liveness 也可能连不上，kubelet 反复杀容器，形成
+     "改了参数 → 不生效 → 手动删 Pod → 新实例照样 53300 → 循环"的僵局。
+     2026-10-31 恢复时 `max_connections` 200→300→500 三次 patch 全部
+     挂在这个状态里，最后一次干净重启才生效。
+  4. **runbook**：
+     a. 先看 phase：`kubectl -n postgresql get cluster pg-main -o jsonpath='{.status.phase}'`。
+        正常应是 `Cluster in healthy state`；若是 Extraction Error，先解决连接耗尽
+        （缩容客户端 / 找占用者），**别指望 patch 自己生效**。
+     b. 不用连库就能读配置：`kubectl exec ... -- postgres -C max_connections -D $PGDATA`
+        （这是"下次启动会用的值"）；运行中的实际值必须连库 `show max_connections`。
+     c. 找占用者时连不上库的死循环可绕：`/proc/net/tcp` 按 local port 5432 统计
+        已建立连接的来源 IP（注意过滤的是**本地**端口），或让各租户逐个缩容。
+     d. `max_connections` 从文件到生效**必须重启**进程：`postgresql.conf`（100）→
+        `custom.conf`（operator 写，当前 500）不一致时以 custom.conf 为准，
+        但运行中进程还是旧值。
+     e. **强删 Pod 的后遗症**：`--force --grace-period=0` 会跳过卷卸载，新 Pod 在
+        同节点会 `FailedMount: device already mounted`——到该节点
+        `umount /var/lib/kubelet/pods/<旧pod>/volumes/kubernetes.io~csi/<pvc>/mount`
+        后自动恢复。非必要不 force；正常 delete 会走 smart shutdown，
+        如果它卡住，多半又是上面的连接僵局。
+
+## 连接容量与租户口径（2026-10-31 连接耗尽事故的 P2 结论）
+
+**各租户池上限（prod 实值 = 仓库值，来自 Config Center `config.entry`，2026-10-31 核对）**
+
+| 租户 | 口径 | max_conns |
+|---|---|---|
+| ecommerce 10 个业务服务（address/behavior/cart/inventory/merchant/order/payment/product/search/user） | 每服务 **×2 副本**，Config Center 热改键 `data.database.pool.max_conns` | 20（min 5） |
+| openfga | `components/openfga/values.yaml` | 10 |
+| libra-dl | `main.go` SetMaxOpenConns | 8 |
+| umami | Prisma 默认 = num_cpus×2+1（External Secret 无 connection_limit） | ~5-9 |
+| scorpius | **不在口径内**：SQLite，不连 pg-main | — |
+
+**峰值必须按 Pod 算**：10×2×20 + openfga 10 + umami ~9 + libra-dl 8 ≈ **430+**；
+崩溃循环时旧进程池未释放、新进程池再爬坡，瞬时更高。2026-10-30 打满 200
+（当时上限）即此形态。当前稳态实测 ~60 连接，对照 480 可用（500−20 保留）余量充足。
+
+**四层防线（已就位）**：max_connections=500、superuser_reserved_connections=20、
+`PostgresConnUsageHigh`(80%) 告警、Config Center 可热改各租户 max_conns。
+
+**PgBouncer：搁置**。触发条件（满足其一再启）：租户峰值按 Pod 算接近 300；
+或 PG 升多实例需要跨实例池化。届时用 CNPG `Pooler` CR（transaction 模式），
+前置条件是各服务确认无 session 级特性（prepared statements 需
+`default_query_exec_mode=exec`、advisory lock、LISTEN/NOTIFY）。
+
+**两个待办（Config Center 热改，无发版成本，下次顺手）**：
+1. 各服务 DSN 加 `application_name=<服务名>`——pgx 默认不设，`pg_stat_activity`
+   里只能看 IP 猜服务（2026-10-31 排障实证的窘境）；
+2. `min_conns` 5→2：10×2×5=100 个常驻 idle 连接是纯内存负担。
