@@ -10,7 +10,12 @@ spec:
   template:
     metadata: {labels: {app: elasticsearch}}
     spec:
-      securityContext: {fsGroup: 1000}
+      securityContext:
+        fsGroup: 1000
+        # Unconfined(2026-10-30): k8s 1.36 起未声明 appArmorProfile 的容器默认 RuntimeDefault,
+        # 拒绝 ptrace → ES 9 entitlement agent 启动时 JVM 自附加失败(sendQuitTo EPERM), 无法启动。
+        # JVM Attach API 是 ES 的硬依赖, 只能给该负载单独放行(见 blog: k8s 1.36 AppArmor 升级事件)。
+        appArmorProfile: {type: Unconfined}
       initContainers:
       - name: install-analysis-ik
         image: docker.elastic.co/elasticsearch/elasticsearch:9.4.5

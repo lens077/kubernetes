@@ -45,7 +45,12 @@ helm upgrade --install dragonfly "$chart" \
   --set storage.enabled=true \
   --set storage.storageClassName="$SC_NAME" \
   --set storage.requests=2Gi \
-  --set 'extraArgs[0]=--force_epoll'
+  --set 'extraArgs[0]=--force_epoll' \
+  --set 'env[0].name=HEALTHCHECK_PORT' \
+  --set-string 'env[0].value=6379'
+  # HEALTHCHECK_PORT(2026-10-30): 镜像 v1.39.0 的 healthcheck.sh 未设该变量时回退 netstat -tlnp 探测端口,
+  # 以 uid 999 运行会被拒(root-only), 探针必失败 → liveness kill → tini 转发信号再被 AppArmor
+  # RuntimeDefault 拒绝, 形成 CrashLoop(见 blog: k8s 1.36 AppArmor 升级事件)
 
 kctl apply -f "$DIR/manifests/01-tcp-route.yaml"
 kctl -n "$NAMESPACE" rollout status statefulset/dragonfly --timeout=300s
