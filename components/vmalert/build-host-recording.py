@@ -115,6 +115,8 @@ def document(hosts):
     record("network_io_bytes_per_second", network)
     record("cpu_count", f'max by ({KEY}) ({normalized("system_cpu_logical_count")})')
     record("load1", f'max by ({KEY}) ({normalized("system_cpu_load_average_1m")})')
+    # 系统信息（OS/架构）来自采集器的 resourcedetection 标签，缺标签的主机（如 k8s 节点）出空列
+    record("os_info", f'max by ({KEY}, os_type, os_version, host_arch) ({normalized("system_memory_usage_bytes")})')
     # A single failed scraper must not classify a still-reporting host as offline.
     # Each signal has independent coverage; host liveness is the latest raw sample
     # across all four families, never the timestamp of a rewritten recording result.

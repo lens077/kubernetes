@@ -115,10 +115,12 @@ curl -s -b <cookie> https://pangolin.apikv.com/api/v1/org/main/sites \
 | 位置 | 形态 | 站点 | 升级方式 |
 |---|---|---|---|
 | k8s 内（`pangolin` ns） | Deployment，镜像 `fosrl/newt:1.19.0` | `k8s-cluster` | 改本目录 manifest → `bash components/newt/install.sh` |
-| 主机级 | `/usr/local/bin/newt` + systemd `newt.service` | `k1`/`k2`/`k3`/`node2` | 换二进制 → `systemctl restart newt.service` |
+| 主机级 | `/usr/local/bin/newt` + systemd `newt.service` | `k1`/`k2`/`k3`/`node2` + 云机 `node3`/`node4`/`node5`/`node6`（2026-11-03 新增，siteId 15–18） | 换二进制 → `systemctl restart newt.service` |
 
-主机级 newt 的凭据在 `/home/docker/newt/newt.env`（site k1/k2/k3/node2 各一份），
-装法同 node2；systemd 单元在 `/etc/systemd/system/newt.service`。
+主机级 newt 的凭据在 `/home/docker/newt/newt.env`（每台一份），
+装法同 node2；systemd 单元在 `/etc/systemd/system/newt.service`（模板：`newt.service.template`）。
+云机的加/移除/巡检用 `./newt-host.sh add|remove <ssh-alias> | list`（面板凭据放 `~/.pangolin-admin.env`，不入库）；
+secret 只在站点创建那一刻回显一次，凭据丢失只能在面板删站重建。
 
 > **机房拉镜像**：k1/k2/k3 的 containerd 配了一串国内镜像站，个别站对非公开路径会 401。
 > 实测 `fosrl/newt:1.19.0` 能拉到，但**换版本前先在三台节点上 `crictl pull` 预拉**，

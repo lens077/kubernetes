@@ -1,0 +1,17 @@
+[Unit]
+Description=Newt tunnel client for Pangolin (site: @SITE@, siteId @SITEID@)
+Documentation=https://github.com/fosrl/newt
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/home/docker/newt/newt.env
+# --disable-clients: Pangolin 下发的 clients 网段 100.90.128.1 不带掩码,
+# newt 解析失败并刷 ERROR。站点资源转发不依赖它,显式关掉保持日志干净。
+ExecStart=/usr/local/bin/newt --id ${NEWT_ID} --secret ${NEWT_SECRET} --endpoint ${PANGOLIN_ENDPOINT} --disable-clients --log-level INFO
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

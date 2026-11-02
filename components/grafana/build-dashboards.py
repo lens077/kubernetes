@@ -373,6 +373,9 @@ def build_portal():
     age['fieldConfig']['overrides'] = [override('距今', unit='s', decimals=0, noValue='从未上报 / 无数据', mappings=mappings({-1:('从未上报 / 无数据','gray')}))]
     for p in (coverage, age):
         p['options'].update(enablePagination=False, cellHeight='sm')
+    osinfo = table(13, '系统信息 · OS / 架构（不登录机器）', 'host:os_info', 0, 53, 24, 8,
+                   fields={'host':'主机','host_kind':'类型','os_type':'OS','os_version':'版本','host_arch':'架构'})
+    osinfo['options'].update(enablePagination=False, cellHeight='sm')
     panels = [
         links,
         bargauge(2, 'CPU 忙碌率', expected_or_missing(cpu), 0, 11, w=6, description='共享 host:cpu_busy_ratio；跨核平均，不包含 idle 与 iowait。'),

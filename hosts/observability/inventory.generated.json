@@ -22,6 +22,16 @@
             "host_label": "node4",
             "cloud_provider": "tencent",
             "host_watchdog": false
+          },
+          "node5": {
+            "host_label": "node5",
+            "cloud_provider": "tencent",
+            "host_watchdog": false
+          },
+          "node6": {
+            "host_label": "node6",
+            "cloud_provider": "tencent",
+            "host_watchdog": false
           }
         },
         "vars": {

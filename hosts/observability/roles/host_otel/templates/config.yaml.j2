@@ -101,6 +101,19 @@ processors:
     check_interval: 1s
     limit_mib: {{ otelcol_limit_mib }}
     spike_limit_mib: {{ otelcol_spike_mib }}
+  # 系统信息（OS 类型/版本/架构）随每条数据出库，Grafana 不登录机器即可看 OS；
+  # host.name/host.id 关掉：host.name 由 resource/host 按清单 upsert，host.id 各机随机串无运维价值
+  resourcedetection/os:
+    detectors: [system]
+    timeout: 2s
+    override: false
+    system:
+      resource_attributes:
+        host.name: { enabled: false }
+        host.id: { enabled: false }
+        os.type: { enabled: true }
+        os.version: { enabled: true }
+        host.arch: { enabled: true }
   resource/host:
     attributes:
       - { key: host.name,      value: "{{ host_label }}",     action: upsert }
@@ -182,15 +195,15 @@ service:
   pipelines:
     metrics:
       receivers: [host_metrics, prometheus/self{% if otelcol_docker %}, docker_stats{% endif %}]
-      processors: [memory_limiter, resource/host, batch]
+      processors: [memory_limiter, resourcedetection/os, resource/host, batch]
       exporters: [otlp_http]
     logs/journald:
       receivers: [journald]
-      processors: [memory_limiter, transform/journald, resource/host, resource/journald, batch]
+      processors: [memory_limiter, transform/journald, resourcedetection/os, resource/host, resource/journald, batch]
       exporters: [otlp_http]
 {% if otelcol_docker %}
     logs/docker:
       receivers: [receiver_creator/docker_logs]
-      processors: [memory_limiter, transform/docker, resource/host, resource/docker, batch]
+      processors: [memory_limiter, transform/docker, resourcedetection/os, resource/host, resource/docker, batch]
       exporters: [otlp_http]
 {% endif %}
