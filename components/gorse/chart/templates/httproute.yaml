@@ -17,5 +17,5 @@ spec:
         - path: { type: PathPrefix, value: / }
       backendRefs:
         - name: {{ include "gorse.name" . }}
-          port: {{ .Values.service.port }}
+          port: 80   # Service 稳定端口; targetPort 指向 master 8088
 {{- end }}
