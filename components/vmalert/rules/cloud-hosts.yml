@@ -163,3 +163,56 @@ groups:
         annotations:
           summary: '云主机 {{ $labels.host_name }} 1 小时没有采到 journald 日志'
           description: systemctl restart otelcol 通常即可恢复；仍不行就删 /var/lib/otelcol/receiver_journald_* 后重启（会从当前位置重新开始，中间的日志不补）。
+
+  # ---- 云主机容器（2026-11-03 新增）----
+  # 数据来自 docker_stats（otelcol 采集，node1/2/4/6 有 docker；node3/5 无 docker 天然不触发）。
+  # 只做「整台容器的容器遥测消失」与「单容器反复重启」两条，不逐容器报存活：
+  # 定时任务型容器（如 licensed-backup）会周期性退出，逐容器存活规则会误报；
+  # node1/node2 的逐容器与 systemd 巡检由 host-watchdog 负责，两层不重复。
+  # 主机整体失联由 HostMetricsMissing 报；这里用 host:last_seen 保证只在主机仍存活时判容器问题。
+  - name: cloud-hosts-containers
+    interval: 1m
+    rules:
+      - alert: CloudHostContainerInventoryLost
+        # 过去 1 天有过容器、现在一条新鲜容器样本都没有，且主机本身还活着。
+        expr: >-
+          (count by (host_name) (tlast_over_time(container_uptime_seconds{host_group="cloud"}[1d])) > 0)
+          unless on (host_name)
+          (count by (host_name) (
+            container_uptime_seconds{host_group="cloud"}
+            and (time() - timestamp(container_uptime_seconds{host_group="cloud"}) < 180)
+          ) > 0)
+          and on (host_name)
+          label_replace(
+            ((time() - host:last_seen_timestamp_seconds < 300) and on (host,host_kind) host:expected_info{host_kind="cloud"}),
+            "host_name", "$1", "host", "(.+)"
+          )
+        for: 15m
+        labels: { severity: warning, category: host }
+        annotations:
+          summary: '云主机 {{ $labels.host_name }} 容器全部消失或 docker_stats 停止采集'
+          description: >-
+            该主机过去 1 天有容器在跑，现在没有任何新鲜容器样本：要么 docker 起不来/容器全挂，要么 otelcol 的 docker 采集断了。
+            先 docker ps 对比；docker 正常则查 journalctl -u otelcol 里 docker_stats/docker_observer 的报错（宿主升级 Docker 后 socket 权限变化是常见原因）。
+          dashboard: *host_dashboard
+          runbook_url: *host_runbook
+
+      - alert: CloudHostContainerRestartStorm
+        # docker_stats 的 container_restarts_total 是 Docker 的 RestartCount；30 分钟内涨 3 次以上才算风暴，
+        # 避免每次 `docker restart` 都报。主机失联时的缺席由 HostMetricsMissing 负责。
+        expr: >-
+          sum by (host_name, container_name) (increase(container_restarts_total{host_group="cloud"}[30m])) > 3
+          and on (host_name)
+          label_replace(
+            ((time() - host:last_seen_timestamp_seconds < 300) and on (host,host_kind) host:expected_info{host_kind="cloud"}),
+            "host_name", "$1", "host", "(.+)"
+          )
+        for: 10m
+        labels: { severity: warning, category: host }
+        annotations:
+          summary: '云主机 {{ $labels.host_name }} 容器 {{ $labels.container_name }} 30 分钟内重启 {{ $value | humanize }} 次'
+          description: >-
+            重启风暴通常是崩溃循环（OOM、配置错误、依赖不可达）。先 docker inspect 看 RestartCount 与退出码，
+            journalctl -u docker 或容器日志找崩溃原因；指数退避的重启策略会让现象间歇化，别被 Running 状态骗了。
+          dashboard: *host_dashboard
+          runbook_url: *host_runbook
