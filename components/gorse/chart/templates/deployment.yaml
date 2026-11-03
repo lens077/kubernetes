@@ -54,11 +54,11 @@ spec:
             - { name: http,      containerPort: 8088 }
             - { name: grpc,      containerPort: 8086 }
           readinessProbe:
-            httpGet: { path: /api/health, port: http }
+            httpGet: { path: /login, port: http }   # gorse 无 /api/health(404)；/login 恒 200（dashboard 登录页）
             initialDelaySeconds: 15
             periodSeconds: 10
           livenessProbe:
-            httpGet: { path: /api/health, port: http }
+            httpGet: { path: /login, port: http }   # gorse 无 /api/health(404)；/login 恒 200（dashboard 登录页）
             initialDelaySeconds: 60
             periodSeconds: 30
           resources:

@@ -56,6 +56,8 @@ bash components/gorse/install.sh                 # 建库/Secret → apply ArgoC
 bash components/gorse/install.sh --migrate node1 # 一次性：node1 pg gorse 库 → CNPG（2026-11-03 已做过）
 ```
 
+已知降级（非致命）：Dragonfly 没有 RedisTimeSeries 模块，启动后每轮刷一条 `TS.ADD` error 日志——gorse 用它做监控时序，缺了只影响内部指标，不影响推荐主流程（原 node1 裸 Redis 同样如此）。
+
 验证：
 
 ```bash
