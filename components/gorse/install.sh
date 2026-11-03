@@ -61,6 +61,15 @@ if [[ "${1:-}" == "--migrate" ]]; then
 fi
 
 # ---- 4. ArgoCD Application（chart 即本目录 ./chart） -------------------------
+# 仓库注册：GitLab 镜像 public，与其他 repo-gitlab-* 同款无凭据 Secret（机房拉 GitHub 超时，不用 GitHub 源）
+if ! kctl -n argocd get secret repo-gitlab-kubernetes >/dev/null 2>&1; then
+  kctl -n argocd create secret generic repo-gitlab-kubernetes \
+    --from-literal=name=kubernetes \
+    --from-literal=project=default \
+    --from-literal=type=git \
+    --from-literal=url="$ARGO_REPO_URL"
+  kctl -n argocd label secret repo-gitlab-kubernetes argocd.argoproj.io/secret-type=repository
+fi
 kctl apply -f "$DIR/argocd/application.yaml"
 log_ok "Application gorse 已提交, 等待 ArgoCD sync..."
 sleep 10

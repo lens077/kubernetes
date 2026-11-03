@@ -10,7 +10,7 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: https://github.com/lens077/kubernetes.git
+    repoURL: https://gitlab.com/sumery/kubernetes.git
     targetRevision: main
     path: components/gorse/chart
     helm:

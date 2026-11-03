@@ -24,6 +24,17 @@ gorse ──cache──> Dragonfly  dragonfly.dragonfly.svc:6379/0  (TLS+AUTH, �
 | `zhenghaoz/gorse-in-one:latest` | **钉 `0.5.11`**（上游最新 release） | latest 漂移 |
 | config.toml 里明文 DSN/api_key | **config.toml.tpl 占位符 + init 容器渲染**，值来自 Secret `gorse-store` | 凭据不入仓不入 ConfigMap |
 
+### GitOps 源：GitLab 镜像（不是 GitHub）
+
+机房 ArgoCD 拉 `github.com` 长期超时（`context deadline exceeded`，实测重试 3 次都挂），
+所以 Application 的 `repoURL` 用 **GitLab 镜像** `https://gitlab.com/sumery/kubernetes.git`
+（public，无凭据 Secret，与其他 10 个 repo-gitlab-* 同款）。本仓主 remote 仍是 GitHub，
+推镜像固定两步：
+
+```bash
+git push && git push gitlab   # gitlab remote 已配置；漏 push gitlab ArgoCD 就不更新
+```
+
 ## 3. 凭据与信任链（Secret `gorse-store`，install.sh 现取物化）
 
 | 键 | 内容 | 来源 |
