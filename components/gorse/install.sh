@@ -40,6 +40,15 @@ else
   log_ok "Secret gorse-store 已存在, 跳过(轮换请手工改)"
 fi
 
+# ---- 2.5 CA 复制（Secret 不能跨 ns 挂载）------------------------------------
+# dragonfly 证书(global-ca-issuer 签)验签用集群根 CA；CNPG 服务端证书校验用 pg-main-ca。
+# 各取所需公钥部分合成同 ns 的 gorse-ca，chart 只挂本 Secret。
+kctl -n "$NAMESPACE" create secret generic gorse-ca \
+  --from-literal=root-ca.crt="$(kctl -n cert-manager get secret global-root-ca-secret -o jsonpath='{.data.ca\.crt}' | base64 -d)" \
+  --from-literal=pg-ca.crt="$(kctl -n postgresql get secret pg-main-ca -o jsonpath='{.data.ca\.crt}' | base64 -d)" \
+  --dry-run=client -o yaml | kctl apply -f -
+log_ok "CA Secret gorse-ca 已就绪"
+
 # ---- 3. 一次性数据迁移入口（node1 pg → CNPG） --------------------------------
 # 迁移后此步是空操作（源库只为文档保留）。用法: bash components/gorse/install.sh --migrate <ssh_alias=pg所在的宿主>
 # node1 侧: docker exec postgres pg_dump -h 127.0.0.1 -U root -d gorse

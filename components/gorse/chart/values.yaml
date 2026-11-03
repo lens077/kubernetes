@@ -18,10 +18,12 @@ resources:
 # DSN 与 api_key 不进 chart（凭据不入库）：install.sh 先建 Secret，deployment 从这里引用
 storeSecret: gorse-store
 
-# 出站 TLS 的信任锚（dragonfly 证书由 global-ca-issuer 签发；CNPG 服务端证书校验用 pg-main-ca）
+# 出站 TLS 的信任锚（dragonfly 证书由 global-ca-issuer 签发；CNPG 服务端证书校验用 pg-main-ca）。
+# Secret 不能跨 ns 挂载：install.sh 把 cert-manager/postgresql 里的 CA 复制成同 ns 的 gorse-ca。
 caSecrets:
-  root: { name: global-root-ca-secret, namespace: cert-manager, key: ca.crt }
-  pg:   { name: pg-main-ca,            namespace: postgresql,  key: ca.crt }
+  name: gorse-ca
+  rootKey: root-ca.crt
+  pgKey: pg-ca.crt
 
 httpRoute:
   enabled: true

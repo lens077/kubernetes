@@ -76,6 +76,6 @@ spec:
         - name: varlib
           emptyDir: {}   # vector.db(sqlite) + blob 可重建；真相在 data_store(CNPG)
         - name: ca-root
-          secret: { secretName: {{ .Values.caSecrets.root.name }}, items: [{ key: {{ .Values.caSecrets.root.key }}, path: ca.crt }] }
+          secret: { secretName: {{ .Values.caSecrets.name }}, items: [{ key: {{ .Values.caSecrets.rootKey }}, path: ca.crt }] }
         - name: ca-pg
-          secret: { secretName: {{ .Values.caSecrets.pg.name }}, items: [{ key: {{ .Values.caSecrets.pg.key }}, path: ca.crt }] }
+          secret: { secretName: {{ .Values.caSecrets.name }}, items: [{ key: {{ .Values.caSecrets.pgKey }}, path: ca.crt }] }
