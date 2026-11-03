@@ -24,10 +24,12 @@ spec:
           command: [sh, -c]
           args:
             - |
-              sed -e "s/__GORSE_CACHE_STORE__/$(cat /secrets/cache-store)/" \
-                  -e "s/__GORSE_DATA_STORE__/$(cat /secrets/data-store)/" \
-                  -e "s/__GORSE_API_KEY__/$(cat /secrets/api-key)/" \
-                  -e "s/__GORSE_ADMIN_API_KEY__/$(cat /secrets/admin-api-key)/" \
+              # DSN 里有 / 和 &，替换前先转义 sed 特殊字符(& \ |)，换分隔符 |
+              esc() { sed 's/[&\|]/\\&/g' "$1"; }
+              sed -e "s|__GORSE_CACHE_STORE__|$(esc /secrets/cache-store)|" \
+                  -e "s|__GORSE_DATA_STORE__|$(esc /secrets/data-store)|" \
+                  -e "s|__GORSE_API_KEY__|$(esc /secrets/api-key)|" \
+                  -e "s|__GORSE_ADMIN_API_KEY__|$(esc /secrets/admin-api-key)|" \
                   /config-src/config.toml.tpl > /config/config.toml
           volumeMounts:
             - { name: config-src, mountPath: /config-src }
