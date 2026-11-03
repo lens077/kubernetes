@@ -1,45 +1,36 @@
+# master：Dashboard(/login) + master 管理 API(/api/dashboard/*) + gRPC 8086（server/worker 连这里）。
+# gorse-in-one/gorse-master 都只跑 master 角色（源码 cmd/gorse-in-one 只 m.Serve()）；
+# RESTful 推荐 API 在 gorse-server，见 server.yaml。
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "gorse.name" . }}
+  name: {{ include "gorse.name" . }}-master
   labels:
     {{- include "gorse.labels" . | nindent 4 }}
+    app.kubernetes.io/component: master
 spec:
-  replicas: {{ .Values.replicaCount }}
-  strategy: { type: Recreate }   # vector.db/blob 在 emptyDir，滚动双副本会写两份且互相顶替缓存
+  replicas: 1
+  strategy: { type: Recreate }
   selector:
     matchLabels:
       app.kubernetes.io/name: {{ include "gorse.name" . }}
       app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: master
   template:
     metadata:
       labels:
         {{- include "gorse.labels" . | nindent 8 }}
+        app.kubernetes.io/component: master
     spec:
-      # 凭据只从 Secret 注入；config.toml.tpl 里的占位符在 init 容器里用 Secret 值渲染
-      securityContext: { runAsNonRoot: false }   # gorse-in-one 官方镜像以 root 跑，/var/lib/gorse 需要写
       initContainers:
         - name: render-config
           image: busybox:1.37
           command: [sh, -c]
-          args:
-            - |
-              # DSN 里有 / 和 &，替换前先转义 sed 特殊字符(& \ |)，换分隔符 |
-              esc() { sed 's/[&\|]/\\&/g' "$1"; }
-              sed -e "s|__GORSE_CACHE_STORE__|$(esc /secrets/cache-store)|" \
-                  -e "s|__GORSE_DATA_STORE__|$(esc /secrets/data-store)|" \
-                  -e "s|__GORSE_API_KEY__|$(esc /secrets/api-key)|" \
-                  -e "s|__GORSE_ADMIN_API_KEY__|$(esc /secrets/admin-api-key)|" \
-                  /config-src/config.toml.tpl > /config/config.toml
-          volumeMounts:
-            - { name: config-src, mountPath: /config-src }
-            - { name: config,     mountPath: /config }
-            - { name: store-secret, mountPath: /secrets, readOnly: true }
+{{- include "gorse.initContainer" . | nindent 10 }}
       containers:
-        - name: gorse
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+        - name: gorse-master
+          image: "{{ .Values.image.master }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
-          # 官方镜像 entrypoint; 数据/缓存连接串经环境变量覆盖 config.toml（gorse 约定, node2 同法）
           env:
             - name: GORSE_CACHE_STORE
               valueFrom: { secretKeyRef: { name: {{ .Values.storeSecret }}, key: cache-store } }
@@ -47,22 +38,21 @@ spec:
               valueFrom: { secretKeyRef: { name: {{ .Values.storeSecret }}, key: data-store } }
             - name: GORSE_BLOB_URI
               value: /var/lib/gorse/blob
-            # go-redis 的 rediss:// 校验链用系统根；把集群根 CA 喂给 Go 的 SSL_CERT_FILE
             - name: SSL_CERT_FILE
               value: /etc/gorse/ca/root/ca.crt
           ports:
-            - { name: http,      containerPort: 8088 }
-            - { name: grpc,      containerPort: 8086 }
+            - { name: http, containerPort: 8088 }
+            - { name: grpc, containerPort: 8086 }
           readinessProbe:
             httpGet: { path: /login, port: http }   # gorse 无 /api/health(404)；/login 恒 200（dashboard 登录页）
-            initialDelaySeconds: 15
+            initialDelaySeconds: 20
             periodSeconds: 10
           livenessProbe:
-            httpGet: { path: /login, port: http }   # gorse 无 /api/health(404)；/login 恒 200（dashboard 登录页）
-            initialDelaySeconds: 60
+            httpGet: { path: /login, port: http }
+            initialDelaySeconds: 90   # 首启要建表/训练，60s 内探不动会被杀进 CrashLoop（实测踩过）
             periodSeconds: 30
           resources:
-            {{- toYaml .Values.resources | nindent 12 }}
+            {{- toYaml .Values.resources.master | nindent 12 }}
           volumeMounts:
             - { name: config,  mountPath: /etc/gorse }
             - { name: varlib,  mountPath: /var/lib/gorse }

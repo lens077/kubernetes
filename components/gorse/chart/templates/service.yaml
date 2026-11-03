@@ -1,7 +1,7 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "gorse.name" . }}
+  name: {{ include "gorse.name" . }}   # master Dashboard(8088)，HTTPRoute 挂这个
   labels:
     {{- include "gorse.labels" . | nindent 4 }}
 spec:
@@ -9,6 +9,7 @@ spec:
   selector:
     app.kubernetes.io/name: {{ include "gorse.name" . }}
     app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: master
   ports:
     - name: http
       port: 80
@@ -16,3 +17,20 @@ spec:
     - name: grpc
       port: 8086
       targetPort: grpc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "gorse.name" . }}-server   # RESTful 推荐 API(8087)，集群内消费；公网接线未定
+  labels:
+    {{- include "gorse.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: {{ include "gorse.name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: server
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

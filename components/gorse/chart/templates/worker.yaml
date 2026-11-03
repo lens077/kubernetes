@@ -1,0 +1,62 @@
+# worker：离线训练（连 master gRPC，不开监听端口）。训练负载在 CPU 大户，单独限额。
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "gorse.name" . }}-worker
+  labels:
+    {{- include "gorse.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "gorse.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: worker
+  template:
+    metadata:
+      labels:
+        {{- include "gorse.labels" . | nindent 8 }}
+        app.kubernetes.io/component: worker
+    spec:
+      initContainers:
+        - name: render-config
+          image: busybox:1.37
+          command: [sh, -c]
+{{- include "gorse.initContainer" . | nindent 10 }}
+      containers:
+        - name: gorse-worker
+          image: "{{ .Values.image.worker }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - --master-host={{ include "gorse.name" . }}-master
+            - --master-port=8086
+            - --cache-path=/var/lib/gorse/worker
+          env:
+            - name: GORSE_CACHE_STORE
+              valueFrom: { secretKeyRef: { name: {{ .Values.storeSecret }}, key: cache-store } }
+            - name: GORSE_DATA_STORE
+              valueFrom: { secretKeyRef: { name: {{ .Values.storeSecret }}, key: data-store } }
+            - name: SSL_CERT_FILE
+              value: /etc/gorse/ca/root/ca.crt
+          resources:
+            {{- toYaml .Values.resources.worker | nindent 12 }}
+          volumeMounts:
+            - { name: config,  mountPath: /etc/gorse }
+            - { name: varlib,  mountPath: /var/lib/gorse }
+            - { name: ca-root, mountPath: /etc/gorse/ca/root, readOnly: true }
+            - { name: ca-pg,   mountPath: /etc/gorse/ca/pg,   readOnly: true }
+      volumes:
+        - name: config-src
+          configMap: { name: {{ include "gorse.name" . }} }
+        - name: config
+          emptyDir: {}
+        - name: store-secret
+          secret: { secretName: {{ .Values.storeSecret }} }
+        - name: varlib
+          emptyDir: {}
+        - name: ca-root
+          secret: { secretName: {{ .Values.caSecrets.name }}, items: [{ key: {{ .Values.caSecrets.rootKey }}, path: ca.crt }] }
+        - name: ca-pg
+          secret: { secretName: {{ .Values.caSecrets.name }}, items: [{ key: {{ .Values.caSecrets.pgKey }}, path: ca.crt }] }

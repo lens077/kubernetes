@@ -50,13 +50,15 @@ kctl -n "$NAMESPACE" create secret generic gorse-ca \
 log_ok "CA Secret gorse-ca 已就绪"
 
 # ---- 3. 一次性数据迁移入口（node1 pg → CNPG） --------------------------------
-# 迁移后此步是空操作（源库只为文档保留）。用法: bash components/gorse/install.sh --migrate <ssh_alias=pg所在的宿主>
-# node1 侧: docker exec postgres pg_dump -h 127.0.0.1 -U root -d gorse
+# 迁移后此步是空操作（源库只为文档保留）。用法: bash components/gorse/install.sh --migrate <node1-ssh-alias>
+# 只导数据段（COPY..\.）：目标表结构由 gorse 首启自建；pg 密码沿用 node1 postgres 容器注入值。
 if [[ "${1:-}" == "--migrate" ]]; then
   host="${2:?用法: install.sh --migrate <node1-ssh-alias>}"
-  log_ok "从 $host 导出 gorse 库并导入 CNPG..."
-  ssh "$host" 'docker exec postgres pg_dump -h 127.0.0.1 -U root -d gorse' \
-    | kctl -n postgresql exec -i "$PG_POD" -c postgres -- psql -U gorse -d "$PG_DB" -v ON_ERROR_STOP=1
+  log_ok "从 $host 导出 gorse 数据段并导入 CNPG..."
+  ssh "$host" 'PW=$(docker exec postgres printenv POSTGRES_PASSWORD); docker exec -e PGPASSWORD="$PW" postgres pg_dump -h 127.0.0.1 -U root -d gorse' \
+    | awk '/^COPY /,/^\\\.$/' \
+    | kctl -n postgresql exec -i "$PG_POD" -c postgres -- env PGPASSWORD="$(kctl -n "$NAMESPACE" get secret gorse-store -o jsonpath='{.data.data-store}' | base64 -d | sed -n 's|.*gorse:\([^@]*\)@.*|\1|p')" \
+        psql -h 127.0.0.1 -U gorse -d "$PG_DB" -v ON_ERROR_STOP=1
   log_ok "数据迁移完成"
 fi
 

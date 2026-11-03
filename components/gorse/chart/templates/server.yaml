@@ -1,0 +1,71 @@
+# server：RESTful 推荐 API（X-API-Key，config [server].api_key）。8087 只在集群内暴露，
+# 公网接线（ecommerce behavior/product）未完成，届时再议 HTTPRoute/Pangolin（README §4）。
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "gorse.name" . }}-server
+  labels:
+    {{- include "gorse.labels" . | nindent 4 }}
+    app.kubernetes.io/component: server
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "gorse.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: server
+  template:
+    metadata:
+      labels:
+        {{- include "gorse.labels" . | nindent 8 }}
+        app.kubernetes.io/component: server
+    spec:
+      initContainers:
+        - name: render-config
+          image: busybox:1.37
+          command: [sh, -c]
+{{- include "gorse.initContainer" . | nindent 10 }}
+      containers:
+        - name: gorse-server
+          image: "{{ .Values.image.server }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - --master-host={{ include "gorse.name" . }}-master
+            - --master-port=8086
+            - --http-host=0.0.0.0
+            - --http-port=8087
+            - --cache-path=/var/lib/gorse/server
+          env:
+            - name: GORSE_CACHE_STORE
+              valueFrom: { secretKeyRef: { name: {{ .Values.storeSecret }}, key: cache-store } }
+            - name: GORSE_DATA_STORE
+              valueFrom: { secretKeyRef: { name: {{ .Values.storeSecret }}, key: data-store } }
+            - name: SSL_CERT_FILE
+              value: /etc/gorse/ca/root/ca.crt
+          ports:
+            - { name: http, containerPort: 8087 }
+          readinessProbe:
+            tcpSocket: { port: http }
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket: { port: http }
+            initialDelaySeconds: 60
+            periodSeconds: 30
+          resources:
+            {{- toYaml .Values.resources.server | nindent 12 }}
+          volumeMounts:
+            - { name: config,  mountPath: /etc/gorse }
+            - { name: ca-root, mountPath: /etc/gorse/ca/root, readOnly: true }
+            - { name: ca-pg,   mountPath: /etc/gorse/ca/pg,   readOnly: true }
+      volumes:
+        - name: config-src
+          configMap: { name: {{ include "gorse.name" . }} }
+        - name: config
+          emptyDir: {}
+        - name: store-secret
+          secret: { secretName: {{ .Values.storeSecret }} }
+        - name: ca-root
+          secret: { secretName: {{ .Values.caSecrets.name }}, items: [{ key: {{ .Values.caSecrets.rootKey }}, path: ca.crt }] }
+        - name: ca-pg
+          secret: { secretName: {{ .Values.caSecrets.name }}, items: [{ key: {{ .Values.caSecrets.pgKey }}, path: ca.crt }] }
