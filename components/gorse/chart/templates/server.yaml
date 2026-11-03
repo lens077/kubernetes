@@ -30,7 +30,7 @@ spec:
           image: "{{ .Values.image.server }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           args:
-            - --master-host={{ include "gorse.name" . }}-master
+            - --master-host={{ include "gorse.name" . }}   # gRPC 8086 走 gorse service
             - --master-port=8086
             - --http-host=0.0.0.0
             - --http-port=8087
