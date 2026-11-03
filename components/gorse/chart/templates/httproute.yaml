@@ -1,0 +1,21 @@
+{{- if .Values.httpRoute.enabled }}
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ include "gorse.name" . }}
+  labels:
+    {{- include "gorse.labels" . | nindent 4 }}
+spec:
+  parentRefs:
+    - name: {{ .Values.httpRoute.parentName }}
+      namespace: {{ .Values.httpRoute.parentNamespace }}
+      sectionName: {{ .Values.httpRoute.sectionName }}
+  hostnames:
+    - {{ .Values.hostname }}
+  rules:
+    - matches:
+        - path: { type: PathPrefix, value: / }
+      backendRefs:
+        - name: {{ include "gorse.name" . }}
+          port: {{ .Values.service.port }}
+{{- end }}

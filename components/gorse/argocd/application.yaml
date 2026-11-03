@@ -1,0 +1,29 @@
+# gorse 的 GitOps 入口：ArgoCD 跟踪本仓 public GitHub，chart 即 components/gorse/chart。
+# Secret(gorse-store) 由 install.sh 在 apply 本 Application 之前建好，chart 只引用不创建。
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: gorse
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/lens077/kubernetes.git
+    targetRevision: main
+    path: components/gorse/chart
+    helm:
+      valueFiles: [values.yaml]
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: gorse
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+    retry:
+      limit: 5
+      backoff: { duration: 15s, factor: 2, maxDuration: 5m }

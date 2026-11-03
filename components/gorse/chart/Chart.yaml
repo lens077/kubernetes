@@ -1,0 +1,9 @@
+apiVersion: v2
+name: gorse
+description: >-
+  Gorse 推荐引擎（gorse-in-one 单容器：master+server+worker）。
+  cache_store 走集群内 Dragonfly（TLS+AUTH，独立逻辑 DB），data_store 走集群内 CNPG pg-main。
+  上游没有官方 helm chart（2026-11-03 复核，仓库只有 docker-compose），本 chart 为仓内自维护最小实现。
+type: application
+version: 0.1.0
+appVersion: "0.5.11"

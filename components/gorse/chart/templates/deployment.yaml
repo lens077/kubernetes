@@ -1,0 +1,81 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "gorse.name" . }}
+  labels:
+    {{- include "gorse.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  strategy: { type: Recreate }   # vector.db/blob 在 emptyDir，滚动双副本会写两份且互相顶替缓存
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "gorse.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        {{- include "gorse.labels" . | nindent 8 }}
+    spec:
+      # 凭据只从 Secret 注入；config.toml.tpl 里的占位符在 init 容器里用 Secret 值渲染
+      securityContext: { runAsNonRoot: false }   # gorse-in-one 官方镜像以 root 跑，/var/lib/gorse 需要写
+      initContainers:
+        - name: render-config
+          image: busybox:1.37
+          command: [sh, -c]
+          args:
+            - |
+              sed -e "s/__GORSE_CACHE_STORE__/$(cat /secrets/cache-store)/" \
+                  -e "s/__GORSE_DATA_STORE__/$(cat /secrets/data-store)/" \
+                  -e "s/__GORSE_API_KEY__/$(cat /secrets/api-key)/" \
+                  -e "s/__GORSE_ADMIN_API_KEY__/$(cat /secrets/admin-api-key)/" \
+                  /config-src/config.toml.tpl > /config/config.toml
+          volumeMounts:
+            - { name: config-src, mountPath: /config-src }
+            - { name: config,     mountPath: /config }
+            - { name: store-secret, mountPath: /secrets, readOnly: true }
+      containers:
+        - name: gorse
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          # 官方镜像 entrypoint; 数据/缓存连接串经环境变量覆盖 config.toml（gorse 约定, node2 同法）
+          env:
+            - name: GORSE_CACHE_STORE
+              valueFrom: { secretKeyRef: { name: {{ .Values.storeSecret }}, key: cache-store } }
+            - name: GORSE_DATA_STORE
+              valueFrom: { secretKeyRef: { name: {{ .Values.storeSecret }}, key: data-store } }
+            - name: GORSE_BLOB_URI
+              value: /var/lib/gorse/blob
+            # go-redis 的 rediss:// 校验链用系统根；把集群根 CA 喂给 Go 的 SSL_CERT_FILE
+            - name: SSL_CERT_FILE
+              value: /etc/gorse/ca/root/ca.crt
+          ports:
+            - { name: http,      containerPort: 8088 }
+            - { name: grpc,      containerPort: 8086 }
+          readinessProbe:
+            httpGet: { path: /api/health, port: http }
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /api/health, port: http }
+            initialDelaySeconds: 60
+            periodSeconds: 30
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - { name: config,  mountPath: /etc/gorse }
+            - { name: varlib,  mountPath: /var/lib/gorse }
+            - { name: ca-root, mountPath: /etc/gorse/ca/root, readOnly: true }
+            - { name: ca-pg,   mountPath: /etc/gorse/ca/pg,   readOnly: true }
+      volumes:
+        - name: config-src
+          configMap: { name: {{ include "gorse.name" . }} }
+        - name: config
+          emptyDir: {}
+        - name: store-secret
+          secret: { secretName: {{ .Values.storeSecret }} }
+        - name: varlib
+          emptyDir: {}   # vector.db(sqlite) + blob 可重建；真相在 data_store(CNPG)
+        - name: ca-root
+          secret: { secretName: {{ .Values.caSecrets.root.name }}, items: [{ key: {{ .Values.caSecrets.root.key }}, path: ca.crt }] }
+        - name: ca-pg
+          secret: { secretName: {{ .Values.caSecrets.pg.name }}, items: [{ key: {{ .Values.caSecrets.pg.key }}, path: ca.crt }] }

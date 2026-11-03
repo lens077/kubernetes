@@ -1,0 +1,30 @@
+# gorse-in-one 单副本：master+server+worker 同进程（与 node2 docker 形态等价，2026-11-03 迁移自 node2）
+image:
+  repository: zhenghaoz/gorse-in-one
+  tag: "0.5.11"          # 上游 latest 随 release 漂移，必须钉版本
+  pullPolicy: IfNotPresent
+
+replicaCount: 1           # 同一份凭据/配置只跑一个；gorse 集群化要拆 master/server/worker，现阶段无必要
+
+hostname: gorse.apikv.com
+
+service:
+  port: 8088              # gorse-in-one 的 HTTP 入口（RESTful API + Dashboard 同端口）
+
+resources:
+  requests: { cpu: 100m, memory: 256Mi }
+  limits: { cpu: "1", memory: 512Mi }   # node2 实测常驻 ~100Mi；训练峰值给 512Mi 足够
+
+# DSN 与 api_key 不进 chart（凭据不入库）：install.sh 先建 Secret，deployment 从这里引用
+storeSecret: gorse-store
+
+# 出站 TLS 的信任锚（dragonfly 证书由 global-ca-issuer 签发；CNPG 服务端证书校验用 pg-main-ca）
+caSecrets:
+  root: { name: global-root-ca-secret, namespace: cert-manager, key: ca.crt }
+  pg:   { name: pg-main-ca,            namespace: postgresql,  key: ca.crt }
+
+httpRoute:
+  enabled: true
+  parentName: cilium-gateway
+  parentNamespace: default
+  sectionName: https      # 80 上没有路由（见 components/newt/README.md §4）
