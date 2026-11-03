@@ -63,7 +63,7 @@ CNPG 走 DSN 的 `sslrootcert`。
 ssh node2 'grep -E "^(admin_)?api_key" /home/docker/gorse/config.toml'
 ssh k1 'printf "a6e5d480..." > /var/lib/k8s-installer/creds/gorse-api-key; printf "935c..." > /var/lib/k8s-installer/creds/gorse-admin-api-key; chmod 600 /var/lib/k8s-installer/creds/gorse-*'
 
-bash components/gorse/install.sh                 # 建库/Secret → apply ArgoCD Application → 等 Healthy
+bash components/gorse/install.sh                 # 建库/Secret/CA → apply ArgoCD Application → 等 Healthy
 bash components/gorse/install.sh --migrate node1 # 一次性：node1 pg gorse 库 → CNPG（2026-11-03 已做过）
 ```
 
@@ -73,8 +73,14 @@ bash components/gorse/install.sh --migrate node1 # 一次性：node1 pg gorse �
 
 ```bash
 kubectl -n gorse rollout status deploy/gorse
-curl -s -H "X-API-Key: $(...) https://gorse.apikv.com/api/health   # Pangolin 边缘
-kubectl -n gorse exec deploy/gorse -- wget -qO- http://127.0.0.1:8088/api/health
+# Dashboard: https://gorse.apikv.com（302 → /login；master 无 /api/health，探 /login）
+# RESTful API(8087, 集群内): kubectl -n gorse run --rm -i curl --image=curlimages/curl -- \
+#   curl -s -H "X-API-Key: $(kubectl -n gorse get secret gorse-store -o jsonpath='{.data.api-key}' | base64 -d)" \
+#        http://gorse-server/api/items?n=2   # 匿名 401，带 key 200
+#
+# ⚠️ 新建 HTTPRoute 挂不上 Gateway（parents 空）时先重启 cilium-operator：
+#   2026-11-03 实测 operator 10-31 重启后 gateway 控制器卡死，新路由一律不编程（CEC 不更新），
+#   删 pod 重建后全部恢复。判据：get ciliumenvoyconfig cilium-gateway-cilium-gateway 里有没有新路由的 hostname。
 ```
 
 回退：Pangolin 把 target 切回 node2 site（`127.0.0.1:8088`）即回到旧链路；旧栈在摘除前保留。
@@ -83,6 +89,6 @@ kubectl -n gorse exec deploy/gorse -- wget -qO- http://127.0.0.1:8088/api/health
 ## 6. 摘除记录（2026-11-03）
 
 - node2 `/home/docker/gorse`（compose down，目录保留作回滚）
-- node1 `/home/docker/redis`（redis-gorse 容器 down；redis.apikv.com Pangolin 资源已下线）
+- node1 `/home/docker/redis`（redis-gorse 容器 down；redis.apikv.com 是裸 TLS 直连容器端口、无 Traefik/Pangolin 路由，摘容器即摘端点，61246 实测关闭）
 - node1 postgres 的 `gorse` 库保留只读备查（同日已迁 CNPG）
 - 消费方切换：Config Center 的 gorse 地址不变（仍是 `https://gorse.apikv.com`），业务无需改
