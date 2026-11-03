@@ -12,6 +12,7 @@ spec:
       sectionName: {{ .Values.httpRoute.sectionName }}
   hostnames:
     - {{ .Values.hostname }}
+    - {{ .Values.hostname | replace ".apikv.com" ".dev.test" }}   # Cilium 只挂载 listener 证书(*.dev.test)覆盖的 hostname（与 shop/blog 同款双名）
   rules:
     - matches:
         - path: { type: PathPrefix, value: / }
