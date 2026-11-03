@@ -9,7 +9,7 @@ ecommerce `behavior`/`product` 的推荐引擎（客户端 `backend/pkg/gorse`�
 ```
 Pangolin gorse(rid 17) ──> k8s-cluster site VIP 10.10.31.240:443 ──> HTTPRoute gorse.apikv.com
                                                                         └─> svc gorse:8088 (gorse-in-one)
-gorse ──cache──> Dragonfly  dragonfly.dragonfly.svc:6379/2  (TLS+AUTH, 逻辑 DB 隔离)
+gorse ──cache──> Dragonfly  dragonfly.dragonfly.svc:6379/0  (TLS+AUTH, 与业务缓存共 db0)
        ──data───> CNPG      pg-main-rw.postgresql.svc:5432/gorse (verify-full + pg-main-ca)
 ```
 
@@ -19,7 +19,7 @@ gorse ──cache──> Dragonfly  dragonfly.dragonfly.svc:6379/2  (TLS+AUTH, �
 |---|---|---|
 | docker-compose 部署 | **ArgoCD Application**（`argocd/application.yaml` → `chart/`） | 集群状态进 Git；仓库 public，ArgoCD 免凭据跟踪 |
 | 上游无官方 chart（2026-11-03 复核） | **仓内最小 chart** | 不为它引第三方 chart 仓；4 个模板就够了 |
-| node1 专用 Redis 容器 | **Dragonfly 逻辑 DB 2** | 蜻蜓 db 已是集群缓存标准件；多 DB 实测可用；省一个 StatefulSet 与一套证书/守卫 |
+| node1 专用 Redis 容器 | **Dragonfly（db0 共享）** | 蜻蜓 db 已是集群缓存标准件，业务侧 `product:gorse:*` 本就写 db0；独立逻辑 DB 走不通——Dragonfly 的 RediSearch 索引只允许建在 db0（`ERR Cannot create index on db != 0`，gorse 初始化必须建索引，实测踩过） |
 | node1 postgres 的 gorse 库 | **CNPG pg-main 新建 `gorse` 库 + 独立用户** | 摘掉 node1 依赖；进 CNPG 备份口径 |
 | `zhenghaoz/gorse-in-one:latest` | **钉 `0.5.11`**（上游最新 release） | latest 漂移 |
 | config.toml 里明文 DSN/api_key | **config.toml.tpl 占位符 + init 容器渲染**，值来自 Secret `gorse-store` | 凭据不入仓不入 ConfigMap |
@@ -28,7 +28,7 @@ gorse ──cache──> Dragonfly  dragonfly.dragonfly.svc:6379/2  (TLS+AUTH, �
 
 | 键 | 内容 | 来源 |
 |---|---|---|
-| `cache-store` | `rediss://default:<dragonfly-auth>@dragonfly.dragonfly.svc:6379/2` | Dragonfly 组件 Secret 现取 |
+| `cache-store` | `rediss://default:<dragonfly-auth>@dragonfly.dragonfly.svc:6379/0` | Dragonfly 组件 Secret 现取 |
 | `data-store` | `postgres://gorse:<pw>@pg-main-rw.postgresql.svc:5432/gorse?sslmode=verify-full&sslrootcert=/etc/gorse/ca/pg/ca.crt` | `get_cred gorse-pg-password` 自动生成（k1 creds） |
 | `api-key` | 业务 RESTful API 鉴权 | **沿用 node2 config.toml 现值**（Config Center 同口径），首次部署前灌 `$STATE_DIR/creds/gorse-api-key` |
 | `admin-api-key` | Dashboard/管理 API | 同上 `gorse-admin-api-key` |
