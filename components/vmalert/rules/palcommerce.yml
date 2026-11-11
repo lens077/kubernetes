@@ -1,0 +1,117 @@
+# PalCommerce 商城告警（2026-11-11）。
+#
+# 指标来源：
+#   - cnpg_pal_*：CNPG custom queries（palcommerce/templates/db-metrics.yaml），
+#     由 pg 实例的 9187 暴露、经 otel collector 进 VictoriaMetrics。
+#   - http_server_request_duration_seconds_count{service_name="control-tower-gateway"}：
+#     网关自带的 OTel HTTP 指标，401/403/5xx 都在这里。
+#
+# 阈值口径：pre 环境流量稀疏，计数类告警都给「持续 for + 最小量」两道门槛，
+# 避免单次请求把值班叫醒。所有规则都必须有 for（components/vmalert/install.sh 会校验）。
+groups:
+  - name: palcommerce
+    interval: 30s
+    rules:
+      - alert: PalTopUpPendingBacklog
+        # 回调丢失 / notify 失败 / 支付宝侧异常都会让充值单停在 PENDING。
+        expr: cnpg_pal_topup_pending_total > 2
+        for: 15m
+        labels: { severity: warning, category: application }
+        annotations:
+          summary: '商城有 {{ $value | printf "%.0f" }} 笔充值单停在 PENDING（> 15 分钟）'
+          description: >-
+            先查 shop 日志里的 /alipay/notify 是否收到回调，再核对支付宝交易状态；
+            PENDING 超过 30 分钟基本可判定回调丢失，需要用 alipay.trade.query 反查后人工补单。
+
+      - alert: PalTopUpPendingStale
+        # 比计数更早暴露「有单卡住」：只要最老的一笔超过 30 分钟就报警。
+        expr: cnpg_pal_topup_pending_oldest_seconds > 1800
+        for: 10m
+        labels: { severity: critical, category: application }
+        annotations:
+          summary: '最老的一笔 PENDING 充值单已等待 {{ $value | printf "%.0f" }} 秒'
+          description: >-
+            支付宝异步通知 15 分钟未达即视为丢失。检查 shop 的 /alipay/notify 入口、
+            证书与 ALIPAY_PRIVATE_KEY 是否有效，然后用后台查询接口反查交易状态。
+
+      - alert: PalTopUpPaidButClosed
+        # 钱到账但单被关：退款链路异常或状态机错乱，必须人工核对。
+        expr: cnpg_pal_topup_closed_paid_total > 0
+        for: 5m
+        labels: { severity: critical, category: application }
+        annotations:
+          summary: '发现 {{ $value | printf "%.0f" }} 笔「已支付但 CLOSED」的充值单'
+          description: >-
+            核对支付宝账单：paid_at 非空说明钱已到账，但订单被关单。
+            确认是否已退款（refunded_at），未退款需走 AdminRefundTopUp 或支付宝后台退款。
+
+      - alert: PalDeliveryUnknown
+        # 发货结果未知（PalDefender 超时）：Worker 冻结任务，等人工对账。
+        expr: cnpg_pal_delivery_unknown_total > 0
+        for: 10m
+        labels: { severity: critical, category: application }
+        annotations:
+          summary: '有 {{ $value | printf "%.0f" }} 个发货任务处于 UNKNOWN'
+          description: >-
+            这些任务不会自动重试。用 cmd/reconcile 的 list/inspect 查，
+            确认玩家背包是否有物品后用 resolve 裁决（delivered/failed），裁决会同步账务。
+
+      - alert: PalDeliveryFailureBurst
+        # 最近一小时的失败尝试数；持续非零说明 PalDefender 或网络有问题。
+        expr: cnpg_pal_delivery_failed_1h_total > 5
+        for: 15m
+        labels: { severity: warning, category: application }
+        annotations:
+          summary: '近一小时有 {{ $value | printf "%.0f" }} 次发货尝试失败'
+          description: >-
+            先看 shop_delivery_attempts.response_summary 的错误分类：
+            ErrPlayerOffline 会重排不计次，ErrInvalidToken/ErrMissingPermission 是配置问题，
+            ErrValidation 是整单原子拒绝。PalDefender 的 /give/items 契约见 decision-log P 节。
+
+      - alert: PalGatewayServerErrorRate
+        # 网关是唯一入口，5xx 直接等于用户不可用；有流量门槛防止低样本误报。
+        expr: |
+          (
+            sum(rate(http_server_request_duration_seconds_count{service_name="control-tower-gateway",http_response_status_code=~"5.."}[5m]))
+            /
+            sum(rate(http_server_request_duration_seconds_count{service_name="control-tower-gateway"}[5m]))
+          ) > 0.01
+          and
+          sum(rate(http_server_request_duration_seconds_count{service_name="control-tower-gateway"}[5m])) > 0.05
+        for: 10m
+        labels: { severity: critical, category: application }
+        annotations:
+          summary: 'control-tower 网关 5xx 占比 {{ $value | humanizePercentage }}（> 1%，持续 10 分钟）'
+          description: >-
+            先看网关 Pod 日志与 routes/policies 是否刚热更新；5xx 也可能是上游 shop/qqbot 不可达。
+            用 status_code 分组定位是哪个前缀，再查 ecommerce/control-tower-gateway 的 upstream 字段。
+
+      - alert: PalGatewayAuthRejectedSpike
+        # 401/403 占比异常：可能是 CORS/角色配置改错，也可能是被扫描。
+        expr: |
+          (
+            sum(rate(http_server_request_duration_seconds_count{service_name="control-tower-gateway",http_response_status_code=~"401|403"}[5m]))
+            /
+            sum(rate(http_server_request_duration_seconds_count{service_name="control-tower-gateway"}[5m]))
+          ) > 0.5
+          and
+          sum(increase(http_server_request_duration_seconds_count{service_name="control-tower-gateway"}[5m])) > 60
+        for: 15m
+        labels: { severity: warning, category: application }
+        annotations:
+          summary: '网关 401/403 占比 {{ $value | humanizePercentage }}（持续 15 分钟）'
+          description: >-
+            若是配置问题会同时影响真实用户：检查 policies.csv 的角色行与 CORS 白名单。
+            若是扫描，按来源 IP 与 UA 在 hubble/网关日志里确认后限流。
+
+      - alert: PalBusinessMetricsMissing
+        # 采集断掉时上面几条会永久无 series 且不报错，必须有这条兜底。
+        expr: absent(cnpg_pal_topup_pending_total)
+        for: 15m
+        labels: { severity: warning, category: observability }
+        annotations:
+          summary: '商城业务指标缺失超过 15 分钟（CNPG custom queries 未生效）'
+          description: >-
+            检查 pal-pg 实例的 9187/metrics 是否包含 cnpg_pal_*，
+            再看 instance manager 日志是否有 configMap 读取失败或 permission denied
+            （cnpg_metrics_exporter 需要对这些表的 SELECT 权限）。

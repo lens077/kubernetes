@@ -135,7 +135,9 @@ config:
             kubernetes_sd_configs:
               - role: pod
                 namespaces:
-                  names: [postgresql]
+                  # postgresql 是 ecommerce 的 pg-main；palcommerce 是 PalCommerce 的 pal-pg，
+                  # 后者承载商城业务指标（cnpg_pal_*，见 palcommerce helm 的 db-metrics.yaml）。
+                  names: [postgresql, palcommerce]
             relabel_configs:
               - source_labels: [__meta_kubernetes_pod_label_cnpg_io_podRole]
                 action: keep
