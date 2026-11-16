@@ -77,7 +77,13 @@ fn try_new(id: u32) -> Result<Self, ()> {
 - **替换 lint 实现**：在 CI 里用 pnpm 内部的 `node_modules/.pnpm/node_modules/.bin/oxlint` 直接跑，规则数可在 96（默认）～398（启用所有类别）间选，但会丢掉 vite-plus 的 `prefer-vite-plus-imports` 插件规则，需评估门禁覆盖。
 - **等上游修复**：oxc/vite-plus 在该环境下缺少错误处理，待新版本修复后再恢复。
 
-在解决之前，`frontend-gate` 会持续失败；其余三个 job（`gitleaks`、`backend-gate`、`context-gate`）已在 node5 上验证通过。
+### 临时解法（2026-11-17 已采用）
+
+CI 的 lint 步骤已临时从 `vp lint` 改为直接调 `oxlint`（经 catalog 显式声明 `oxlint@1.93.0` 为直接依赖，新增到 knip 的 `ignoreDependencies`）。链路绕开 tsgolint，node5 上不再 panic；代价是放弃 type-aware 与 `prefer-vite-plus-imports` 规则（96 条默认规则）。
+
+**恢复条件与清理清单已登记在 ecommerce 仓 `TODO.md` 的「待触发 · 恢复 vp lint 的 type-aware 检查」条目**，含上游 issue/PR 跟踪号与逐项回退步骤。上游修复合并并发布后再按该条目恢复。
+
+其余三个 job（`gitleaks`、`backend-gate`、`context-gate`）已在 node5 上验证通过。
 
 ## 参考
 
