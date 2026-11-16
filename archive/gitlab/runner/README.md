@@ -35,9 +35,28 @@ called `Result::unwrap()` on an `Err` value: ()
 
 同一提交 `eeb37dfd` 在旧 k8s runner 上 success，故与代码无关。
 
-### 根因
+### 根因（已用上游源码实证）
 
-vite-plus 1.6.0 的 `bin.js` 会在 lint 前解析并设置 `OXLINT_TSGOLINT_PATH`，让 oxlint 拉起 `oxlint-tsgolint` 独立子进程做类型感知检查。把该变量验证性指向无效路径后 panic 消失（实测），证明 panic 来自 tsgolint 的启动流程：oxc 的固定大小内存池在申请/复用时失败，`unwrap()` 了一个 `Err(())`，整个进程被 SIGABRT。裸 `oxlint` 不设这个变量，在 node5 上连跑 5 次全部正常。
+vite-plus 1.6.0 的 `bin.js` 会在 lint 前设置 `OXLINT_TSGOLINT_PATH`，让 oxlint 拉起 `oxlint-tsgolint` 独立子进程做类型感知检查。panic 来自 oxc 分配器，源码在 `oxc-project/oxc` 的 `crates/oxc_allocator/src/pool/fixed_size.rs`：
+
+```rust
+const BLOCK_SIZE: usize = 2147483632;   // ≈ 2 GiB
+
+pub fn new(thread_count: usize) -> Self {
+    for i in 0..thread_count {
+        let allocator = FixedSizeAllocator::try_new(i as u32).unwrap();  // 第 112 行，panic 点
+    }
+}
+fn try_new(id: u32) -> Result<Self, ()> {
+    let allocator = Allocator::new_fixed_size().ok_or(())?;  // mmap 失败 → Err(())
+}
+```
+
+链条：tsgolint 建 tokio worker 池 → oxc 为**每个 worker 线程预留一块约 2 GiB 的虚拟内存**（`mmap`，非物理内存）→ node5（AMD EPYC / 内核 7.0 / Docker 29）的虚拟地址空间/overcommit 环境拒绝这块预留 → `try_new` 返回 `Err(())` → 第 112 行 `.unwrap()` 把它变成 panic → `panic=abort` → SIGABRT / exit 134。
+
+这是上游 **oxc 的错误处理缺陷**：`try_new` 返回 `Result` 本可被优雅处理，却在生产路径上被 `unwrap()`；源码注释甚至写着 "This should be impossible if thread_count is accurate"。裸 `oxlint` 不设 `OXLINT_TSGOLINT_PATH`、不走到这个分配路径，在 node5 上连跑 5 次全部正常。
+
+这也解释了为何"减少线程数"无效——只要任一 2 GiB 块申请失败就崩；为何"设无效路径"能消 panic 却仍 exit 1——那是压根不启动 tsgolint，但 vp 把 `Failed to find tsgolint executable` 当成 fatal。
 
 ### 已验证无效的方案（不要重复试）
 
