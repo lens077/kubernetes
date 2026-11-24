@@ -1,7 +1,7 @@
 # Kyverno（audit 先行）
 
 **定位**：K8s 准入 policy + 未来镜像验签（TECH-RADAR §11 定稿：verifyImages 承担 cosign 验签，不引 Ratify）。
-**上游**：kyverno/kyverno chart 3.9.1 / app v1.19.1（2026-09-22 升；graduated）。
+**上游**：kyverno/kyverno chart 3.10.0 / app v1.20.0（2026-11-25 升；graduated）。
 **本集群取舍**：4 控制器各 1 副本资源压最小；webhook 排除 kube-system/argocd（防控制面互锁）；**只跑 Audit**——14 天零误报才逐条 Enforce（本集群节点重启史频繁，enforce 前必须先做「签名纪元」处理：存量运行 digest 补签 + 删 pod 强制重建演练，见 ecommerce 对抗第 3 轮 R3-C C1 补丁）。
 
 ## 镜像走 TCR（2026-09-22）
@@ -14,9 +14,9 @@
 
 ```bash
 for c in kyverno kyvernopre background-controller cleanup-controller reports-controller kyverno-cli; do
-  docker pull --platform linux/amd64 reg.kyverno.io/kyverno/$c:v1.19.1
-  docker tag reg.kyverno.io/kyverno/$c:v1.19.1 ccr.ccs.tencentyun.com/sumery/$c:v1.19.1
-  docker push --platform linux/amd64 ccr.ccs.tencentyun.com/sumery/$c:v1.19.1
+  docker pull --platform linux/amd64 reg.kyverno.io/kyverno/$c:v1.20.0
+  docker tag reg.kyverno.io/kyverno/$c:v1.20.0 ccr.ccs.tencentyun.com/sumery/$c:v1.20.0
+  docker push --platform linux/amd64 ccr.ccs.tencentyun.com/sumery/$c:v1.20.0
 done
 ```
 
@@ -40,3 +40,13 @@ bash components/kyverno/examples/smoke.sh
 
 策略本体（`examples/policies-audit.yaml`）由本仓 `install.sh` 装；ecommerce 仓的业务准入策略
 （含未来 `verifyImages`）走 ArgoCD，见 ecommerce 仓 `infrastructure/kyverno/`。
+
+
+## 1.20.0 CEL 迁移（2026-11-25）
+
+Kyverno 1.20 **彻底删除** legacy `kyverno.io` 策略引擎：旧 `ClusterPolicy`/`Policy` 不再被 admission/background/reports 执行。升级前已把 3 条策略迁到 CEL：
+
+- `disallow-latest-tag`、`require-requests-limits` → `policies.kyverno.io/v1 ValidatingPolicy`（见 `examples/policies-audit.yaml`）
+- `ecommerce-image-provenance` → `policies.kyverno.io/v1 NamespacedImageValidatingPolicy`（见 ecommerce 仓 `infrastructure/kyverno/policies/`，ArgoCD 管理）
+
+均保持 Audit 语义（不阻断）；镜像验签保留原 keyless identity + rekor。Helm gate 用 `upgrade.acknowledgeLegacyPoliciesNotEnforced=true` 越过（legacy 对象保留但不执行）。旧 legacy 对象可择机删除。CEL 策略的 `images.*` 变量只用于 image policy，ValidatingPolicy 用 `object.spec.containers`。
