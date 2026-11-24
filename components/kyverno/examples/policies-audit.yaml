@@ -1,36 +1,78 @@
-# 首批 audit 策略(观察 14 天零误报后才逐条转 Enforce)
-apiVersion: kyverno.io/v1
-kind: ClusterPolicy
-metadata: { name: require-requests-limits }
+# CEL (ValidatingPolicy) migration of legacy ClusterPolicy/disallow-latest-tag.
+# Keeps Audit semantics: violations are reported, never blocked.
+apiVersion: policies.kyverno.io/v1
+kind: ValidatingPolicy
+metadata:
+  name: disallow-latest-tag
 spec:
-  validationFailureAction: Audit
+  evaluation:
+    mode: Kubernetes
   failurePolicy: Ignore
-  background: true
-  rules:
-    - name: require-requests-limits
-      match: { any: [ { resources: { kinds: [Pod] } } ] }
-      validate:
-        message: "containers must define CPU/memory requests and limits"
-        pattern:
-          spec:
-            containers:
-              - resources:
-                  requests: { cpu: "?*", memory: "?*" }
-                  limits: { memory: "?*" }
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["pods"]
+  validationActions: [Audit]
+  autogen:
+    podControllers:
+      controllers:
+        - deployments
+        - daemonsets
+        - statefulsets
+        - replicasets
+        - jobs
+        - cronjobs
+        - replicationcontrollers
+  variables:
+    - name: allImages
+      expression: >-
+        (object.spec.?containers.orValue([]) + object.spec.?initContainers.orValue([]) +
+         object.spec.?ephemeralContainers.orValue([])).map(c, c.image)
+  validations:
+    - message: "Container images must not use the ':latest' tag"
+      expression: >-
+        variables.allImages.map(image,
+          !(image.endsWith(':latest') || !image.contains(':'))).all(e, e)
+
 ---
-apiVersion: kyverno.io/v1
-kind: ClusterPolicy
-metadata: { name: disallow-latest-tag }
+# CEL (ValidatingPolicy) migration of legacy ClusterPolicy/require-requests-limits.
+# Original pattern required cpu+memory requests and memory limit (Audit).
+apiVersion: policies.kyverno.io/v1
+kind: ValidatingPolicy
+metadata:
+  name: require-requests-limits
 spec:
-  validationFailureAction: Audit
+  evaluation:
+    mode: Kubernetes
   failurePolicy: Ignore
-  background: true
-  rules:
-    - name: disallow-latest-tag
-      match: { any: [ { resources: { kinds: [Pod] } } ] }
-      validate:
-        message: "latest tag is prohibited"
-        pattern:
-          spec:
-            containers:
-              - image: "!*:latest"
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["pods"]
+  validationActions: [Audit]
+  autogen:
+    podControllers:
+      controllers:
+        - deployments
+        - daemonsets
+        - statefulsets
+        - replicasets
+        - jobs
+        - cronjobs
+        - replicationcontrollers
+  variables:
+    - name: allContainers
+      expression: >-
+        (object.spec.?containers.orValue([]) + object.spec.?initContainers.orValue([]) +
+         object.spec.?ephemeralContainers.orValue([]))
+  validations:
+    - message: "containers must define CPU/memory requests and limits"
+      expression: >-
+        variables.allContainers.all(c,
+          has(c.resources) && has(c.resources.requests) &&
+          has(c.resources.requests.cpu) && has(c.resources.requests.memory) &&
+          has(c.resources.limits) && has(c.resources.limits.memory))
