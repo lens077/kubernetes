@@ -85,6 +85,29 @@ CEL 策略保持 Audit 语义；冒烟测试确认违规 Pod 放行且 PolicyRep
 - 验证：用同一镜像/密钥手工调用 `POST /admin/backup` 返回 `200`，生成 `/data/backups/licenses-20261125-001900.db`（110592 bytes）。
 - 处置：删除失败 Job 历史，并把 `CronJob.status.lastSuccessfulTime` 同步为手工备份成功时间 `2026-11-25T00:19:00Z`；刷新应用后 `scorpius-prod` 为 **Synced / Healthy**。下一次 03:17 定时备份按原计划继续。
 
+### 3.5 追加：全部定时任务落空扫描
+
+集群 5 个 CronJob 与 k1/k2/k3/node3 全部 systemd timer 已全量核对：
+
+| 任务 | 结果 |
+|---|---|
+| `kafka/cdc-reconcile-es`（*/5） | 19:20 UTC（03:20 CST）失败 1 次，00:20 UTC 已成功；**已自行恢复** |
+| `palcommerce/pal-topup-reconcile`（*/5） | 19:20、19:40 UTC 各失败 1 次，00:10/00:15/00:20 连续成功；**已自行恢复**。Job Pod 已被 TTL 清理，日志不可追溯；对应 ArgoCD 应用 Healthy |
+| `postgresql/cnpg-backup-freshness-probe`（*/30） | 00:00 UTC 成功 |
+| `scorpius/scorpius-backup`（每天 03:17） | 见 §3.4，已恢复 |
+| `lyrapass-cloud/lyrapass-cloud-maintenance`（每小时 :17） | **仍在失败**：`lastSuccessfulTime=2026-11-15T01:17:06Z`，21:17/22:17/23:17/00:17 连续 6–7 次重试均失败，当前 Job `29926097` 仍 active。日志统一为「维护端点不可达」 |
+
+`lyrapass-cloud-maintenance` 的失败不是调度问题，而是服务已下线：
+
+- `deployment/lyrapass-cloud` 为 **0/2**，两个 Pod 卡在 init container `migrate`（`迁移失败`）。
+- `pod/postgres-0` **CrashLoopBackOff**（重启 80+ 次）。`pg_controldata` 显示 `in crash recovery`；每次 redo ~0.04 秒完成，随后启动进程等满 60 秒，以 `FATAL: could not signal for checkpoint: Permission denied` 退出（PostgreSQL 源码对应 `RequestCheckpoint()` 中 `kill(checkpointer_pid, SIGINT)` 返回 EPERM）。
+- 起点是 **k1 在 03:06:11 重启**（PG Pod 03:07:31 重建），早于 k3 的 03:16 重启；与本次 ArgoCD/升级变更无关，属于独立的存量服务故障。
+- 曾尝试给 StatefulSet 加 60×10s `startupProbe` 并重建 Pod 验证：PG 仍在同一报错处退出，说明不是 liveness 过早触发。已撤销该改动并再次重建 Pod，live 配置恢复原状；原配置备份在 k1 `/root/lyrapass-postgres-sts.bak-20261125.yaml`。
+
+k1/k2/k3/node3 的 `systemctl --failed` 均为 0；`host-watchdog`、`apikv-cert-renew`、`pangolin-strict-route`、`crowdsec-hubupdate`、`k8s-etcd-defrag` 等 timer 均有近期成功运行记录，无漏跑。14 个 ArgoCD 应用当前全部 `Synced / Healthy`。
+
+**后续**：LyraPass cloud/PG 需单独恢复（从备份恢复或继续排查 checkpoint 信号权限），本次变更不含其数据与配置改动。
+
 ---
 
 ## 4. 验证结果
@@ -113,6 +136,7 @@ CEL 策略保持 Audit 语义；冒烟测试确认违规 Pod 放行且 PolicyRep
 | casdoor 自动备份 | 待补 | 现有 dump 停在 2026-11-11；建议补每日 timer。 |
 | casdoor DB 连接串 | 保持 | `pg.apikv.com` 经 `extra_hosts` 指向 `172.18.0.1`，既走内网又满足 `verify-full` SAN；改公网 IP/127.0.0.1 已实测不可行。 |
 | `scorpius-prod` Degraded | **已恢复 Healthy** | 03:16 k3 计划内关机重启，备份 Job 03:17 命中 API 重建窗口而 3 次重试全失败；手动复现备份成功并同步 CronJob 状态。详见 §3.4。 |
+| `lyrapass-cloud-maintenance` | **仍失败（存量故障）** | 服务本身下线：cloud 0/2 + PG 卡在 crash recovery；k1 03:06 重启后开始，非本次升级引入。详见 §3.5，需单独恢复。 |
 
 ---
 

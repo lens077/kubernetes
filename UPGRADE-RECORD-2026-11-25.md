@@ -296,3 +296,15 @@ CNPG 1.30 的 **primary lease 机制 + 单实例集群 + 实例管理器原地�
 - 复现验证：同镜像 + `secretKeyRef` 起临时 Pod 调接口，返回 `HTTP/1.1 200 OK`、`{"bytes":110592,"path":"/data/backups/licenses-20261125-001900.db"}`、`wget_exit=0`。
 - 处置：删除失败 Job `-29925797` 与临时 Pod；`kubectl patch cronjob scorpius-backup --subresource=status` 把 `lastSuccessfulTime` 设为手工备份成功时刻 `2026-11-25T00:19:00Z`；刷新 App。最终 `scorpius-prod Synced/Healthy`。
 - 说明：这是**节点计划内重启与定时任务撞车**导致的偶发失败，不是备份功能故障；无需改 CronJob 时间，下一次 03:17 会自然覆盖。ArgoCD 3.6 内置 CronJob health check 用 `lastSuccessfulTime < lastScheduleTime` 判 Degraded，失败 Job 删除后仍需状态时间追平才会恢复。
+
+---
+
+## 15. 全量定时任务落空扫描（08:25 追加）
+
+- 5 个 CronJob + k1/k2/k3/node3 的 systemd timer 全量核对。`kafka/cdc-reconcile-es` 与 `palcommerce/pal-topup-reconcile` 在 19:20/19:40 UTC（k1/k3 重启窗口）各有 1 次失败，随后 00:10–00:20 UTC 连续成功，ArgoCD 应用 Healthy，**无需处置**。`postgresql/cnpg-backup-freshness-probe` 正常。
+- ⚠️ **`lyrapass-cloud-maintenance` 仍在失败**：`lastSuccessfulTime=2026-11-15T01:17:06Z`，最近 4 个小时调度全部 6–7 次重试失败（日志「维护端点不可达」），当前 Job `29926097` 仍 active。
+  - 直接原因是 `deployment/lyrapass-cloud` 0/2（init container `migrate` 报「迁移失败」），根因是 `pod/postgres-0` CrashLoopBackOff：`pg_controldata` = `in crash recovery`，每次 redo 0.04s 完成，但启动进程等满 60s 后 `FATAL: could not signal for checkpoint: Permission denied` 退出（PostgreSQL 源码为 `RequestCheckpoint()` 里 `kill(checkpointer_pid, SIGINT)` 返回 EPERM）。`pg_isready` 走 socket/TCP 均 rejecting connections。
+  - 起点是 **k1 03:06:11 重启**（PG Pod 03:07:31 重建），早于 k3 03:16 重启；与本次升级无关，是独立存量故障。
+  - 试过给 STS 加 `startupProbe`（60×10s）并重建 Pod：仍在同一处 EPERM 退出，证明不是 liveness 过早。已撤销探针并再次重建 Pod，live 配置回到原状；备份 `/root/lyrapass-postgres-sts.bak-20261125.yaml`。数据和配置均未改动。
+  - 后续需单独恢复 LyraPass PG（备份恢复或继续查 checkpoint 信号权限），不在本次变更范围。
+- 四台主机 `systemctl --failed` 均 0；`host-watchdog`/`apikv-cert-renew`/`pangolin-strict-route`/`crowdsec-hubupdate`/`k8s-etcd-defrag` 等 timer 近期均有成功记录。14 个 ArgoCD 应用全 `Synced / Healthy`。
