@@ -1,0 +1,44 @@
+# 中间件：Elasticsearch（2026-11-25 新增）
+#
+# 数据来源：components/elasticsearch-exporter（prometheuscommunity/elasticsearch-exporter v1.7.0）
+# 通过 ES 超级用户密码从 /_cluster/stats 读取，只在集群内 ClusterIP:9114 暴露；
+# OTel Collector 的 prometheus/middleware receiver 抓取后写入 VictoriaMetrics。
+# 指标名按 v1.7.0 现场输出核对；cluster_health_status 带 color label，值 1 表示该颜色命中。
+#
+# ⚠️ 每条规则都必须有 for:。
+groups:
+  - name: middleware-elasticsearch
+    interval: 15s
+    rules:
+      - alert: ElasticsearchMetricsMissing
+        expr: 'absent(elasticsearch_cluster_health_status) == 1'
+        for: 15m
+        labels: { severity: warning, category: middleware, notification_class: ticket }
+        annotations:
+          summary: Elasticsearch 指标停止写入 VictoriaMetrics
+          description: '连续 15 分钟收不到 elasticsearch_cluster_health_status。检查 otel collector 的 prometheus/middleware receiver、elasticsearch-exporter Deployment 与 ES /_cluster/stats；此时本文件其余规则已失效。'
+
+      - alert: ElasticsearchClusterRed
+        expr: 'elasticsearch_cluster_health_status{color="red"} == 1'
+        for: 5m
+        keep_firing_for: 5m
+        labels: { severity: critical, category: middleware, notification_class: page }
+        annotations:
+          summary: Elasticsearch 集群持续 RED
+          description: '主分片缺失，搜索写入均可能失败。先看 elasticsearch_cluster_health_unassigned_shards 与 ES 日志；当前是单节点单副本，RED 通常意味着节点或磁盘不可用。'
+
+      - alert: ElasticsearchClusterYellow
+        expr: 'elasticsearch_cluster_health_status{color="yellow"} == 1'
+        for: 15m
+        labels: { severity: warning, category: middleware, notification_class: ticket }
+        annotations:
+          summary: Elasticsearch 集群持续 YELLOW
+          description: '副本分片未分配。单节点集群中这是预期状态之一；若持续超过 15 分钟且伴随写入延迟，检查索引副本设置与磁盘余量，不要为了满足颜色盲目加节点。'
+
+      - alert: ElasticsearchShardsUnassigned
+        expr: 'elasticsearch_cluster_health_unassigned_shards > 0'
+        for: 10m
+        labels: { severity: warning, category: middleware, notification_class: ticket }
+        annotations:
+          summary: 'Elasticsearch 有未分配分片（{{ $value | printf "%.0f" }} 个）'
+          description: '未分配分片持续 10 分钟。查 _cluster/allocation/explain 定位是磁盘水位、节点离线还是 allocation 设置；YELLOW 状态下本告警可作为冗余下降的独立证据。'

@@ -346,6 +346,12 @@ config:
             scrape_timeout: 10s
             static_configs:
               - targets: ['minio-service.minio.svc.cluster.local:9000']
+          # 2026-11-25: elasticsearch-exporter 组件，只在集群内 :9114 暴露。
+          - job_name: elasticsearch-exporter
+            scrape_interval: 30s
+            scrape_timeout: 10s
+            static_configs:
+              - targets: ['elasticsearch-exporter.elasticsearch.svc.cluster.local:9114']
 
     # 2026-11-25: VictoriaLogs / VictoriaTraces 自身指标。此前 VM 里查不到
     # vl_bytes_ingested_total / vt_bytes_ingested_total, 导致「日志/链路真的写进去了吗」
