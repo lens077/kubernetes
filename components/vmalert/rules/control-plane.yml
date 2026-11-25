@@ -1,0 +1,41 @@
+# Kubernetes 控制面可用性（2026-11-25 新增）
+#
+# 数据来源：集群内 otel collector 的 k8s_cluster receiver（不需要 kube-state-metrics）。
+# ⚠️ 边界：这套规则只看控制面 Pod 的 phase/container ready，不做 apiserver 延迟、etcd 磁盘
+# 或 leader lease 的语义检测。k1 上 apiserver(:6443) 需带 RBAC token，etcd(:2381)、
+# scheduler/controller-manager 都只监听 127.0.0.1，集群内 collector 目前够不到；
+# 要做进程级指标需要节点侧 collector/DaemonSet，不能把「Pod Running」当成已覆盖。
+#
+# ⚠️ 每条规则都必须有 for:（Watchdog 除外）。
+groups:
+  - name: control-plane
+    interval: 15s
+    rules:
+      - alert: KubeControlPlanePodNotRunning
+        # k8s_pod_phase 是枚举 gauge：Pending=1, Running=2, Succeeded=3, Failed=4, Unknown=5。
+        # 控制面是静态 Pod，没有 Succeeded 这种正常终态；非 2 且持续 10 分钟即异常。
+        expr: 'k8s_pod_phase{k8s_namespace_name="kube-system",k8s_pod_name=~"kube-apiserver-.*|etcd-.*|kube-scheduler-.*|kube-controller-manager-.*"} != 2'
+        for: 10m
+        keep_firing_for: 5m
+        labels: { severity: critical, category: kubernetes, notification_class: page }
+        annotations:
+          summary: '控制面 Pod 异常 {{ $labels.k8s_node_name }}/{{ $labels.k8s_pod_name }}'
+          description: 'kube-apiserver/etcd/scheduler/controller-manager 的静态 Pod 连续 10 分钟不是 Running。先 kubectl -n kube-system describe pod 看事件，再查对应节点 kubelet 与容器运行时；同一节点多个组件同时异常优先查节点。'
+
+      - alert: KubeControlPlaneContainerNotReady
+        # 同样过滤 phase==2，避免把刚重建、已退出的旧实例算成未就绪。
+        expr: '(min by (k8s_namespace_name,k8s_pod_name,k8s_container_name) (k8s_container_ready{k8s_namespace_name="kube-system",k8s_pod_name=~"kube-apiserver-.*|etcd-.*|kube-scheduler-.*|kube-controller-manager-.*"}) == 0) and on(k8s_namespace_name,k8s_pod_name) (k8s_pod_phase == 2)'
+        for: 10m
+        labels: { severity: warning, category: kubernetes, notification_class: ticket }
+        annotations:
+          summary: '控制面容器未就绪 {{ $labels.k8s_node_name }}/{{ $labels.k8s_pod_name }}'
+          description: '控制面进程仍在运行但就绪探针连续 10 分钟未通过。查 kubectl logs 与 describe 的 readiness 失败原因；单节点集群里控制面未就绪会直接影响所有工作负载的调度和 API 写入。'
+
+      - alert: KubeControlPlaneMetricsMissing
+        # 采集断了上面两条会静默变成无数据，必须独立兜底。
+        expr: 'absent(k8s_pod_phase{k8s_namespace_name="kube-system",k8s_pod_name=~"kube-apiserver-.*|etcd-.*|kube-scheduler-.*|kube-controller-manager-.*"}) == 1'
+        for: 15m
+        labels: { severity: warning, category: observability, notification_class: ticket }
+        annotations:
+          summary: 控制面 Pod 状态指标停止写入
+          description: '连续 15 分钟收不到控制面静态 Pod 的 k8s_pod_phase。检查 otel collector 的 k8s_cluster receiver 与到 VictoriaMetrics 的写入；此时所有控制面状态告警均已失效。'

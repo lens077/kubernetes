@@ -307,6 +307,37 @@ config:
               - source_labels: [__meta_kubernetes_pod_label_strimzi_io_kind]
                 target_label: strimzi_kind
 
+    # 2026-11-25: Dragonfly 自身指标。现有 gorse 缓存是单实例，之前只靠 Gatus 探活，
+    # 命中率/内存/阻塞客户端都不可见。Dragonfly 1.40.1 在 6379 上直接暴露 /metrics，
+    # 但启用了 --tls，所以这里必须 scheme=https + insecure_skip_verify（集群内部自签）。
+    prometheus/middleware:
+      config:
+        scrape_configs:
+          - job_name: dragonfly
+            scrape_interval: 30s
+            scrape_timeout: 10s
+            scheme: https
+            tls_config:
+              insecure_skip_verify: true
+            kubernetes_sd_configs:
+              - role: pod
+                namespaces:
+                  names: [dragonfly]
+            relabel_configs:
+              - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_name]
+                action: keep
+                regex: dragonfly
+              - source_labels: [__meta_kubernetes_pod_phase]
+                action: keep
+                regex: Running
+              - source_labels: [__meta_kubernetes_pod_ip]
+                target_label: __address__
+                replacement: $1:6379
+              - source_labels: [__meta_kubernetes_pod_name]
+                target_label: pod
+              - source_labels: [__meta_kubernetes_pod_node_name]
+                target_label: node
+
     # 2026-11-25: VictoriaLogs / VictoriaTraces 自身指标。此前 VM 里查不到
     # vl_bytes_ingested_total / vt_bytes_ingested_total, 导致「日志/链路真的写进去了吗」
     # 只能靠 Gatus 直连后端查一次 —— 而 Gatus 进程活着不等于持续入库。

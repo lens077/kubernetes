@@ -1,0 +1,40 @@
+# 中间件：Dragonfly（2026-11-25 新增）
+#
+# 数据来源：opentelemetry 组件 values.yaml 的 prometheus/middleware receiver，
+# 直接抓 dragonfly StatefulSet 自身的 :6379/metrics（TLS 自签，仅集群内）。
+# 指标名按 Dragonfly 1.40.1 现场输出核对过，不是照抄 Redis exporter。
+#
+# ⚠️ 本文件目前只覆盖 Dragonfly。MinIO 的 /minio/v2/metrics/cluster 需要 MinIO 专用
+# JWT（不是 basic auth），Elasticsearch 没装 exporter，两者都还没进 VM；
+# 不要因为「文件叫 middleware」就以为中间件全覆盖。
+# ⚠️ 每条规则都必须有 for:。
+groups:
+  - name: middleware-dragonfly
+    interval: 15s
+    rules:
+      - alert: DragonflyMetricsMissing
+        # counter/gauge 持续导出；absent 是最可靠的采集断链信号。
+        expr: 'absent(dragonfly_uptime_in_seconds) == 1'
+        for: 15m
+        labels: { severity: warning, category: middleware, notification_class: ticket }
+        annotations:
+          summary: Dragonfly 指标停止写入 VictoriaMetrics
+          description: '连续 15 分钟收不到 dragonfly_uptime_in_seconds。检查 otel collector 的 prometheus/middleware receiver、dragonfly Pod 与 :6379/metrics；此时本文件其余规则已失效。'
+
+      - alert: DragonflyBlockedClients
+        # 客户端被阻塞通常意味着单线程事件循环被慢命令或大 key 卡住。
+        expr: 'sum(dragonfly_blocked_clients) > 0'
+        for: 10m
+        labels: { severity: warning, category: middleware, notification_class: ticket }
+        annotations:
+          summary: 'Dragonfly 有客户端持续阻塞（{{ $value | printf "%.0f" }} 个）'
+          description: '连续 10 分钟存在 blocked client。查 dragonfly_commands_total 的慢命令分布与 pipeline_queue_length，优先排查 FT.SEARCH / SCAN 全表扫描。'
+
+      - alert: DragonflyKeyspaceMissRateHigh
+        # 低流量时比例抖动很大，要求 10 分钟内至少 100 次 hits+misses 才判。
+        expr: '(sum(increase(dragonfly_keyspace_misses_total[10m])) / (sum(increase(dragonfly_keyspace_hits_total[10m])) + sum(increase(dragonfly_keyspace_misses_total[10m])))) > 0.5 and (sum(increase(dragonfly_keyspace_hits_total[10m])) + sum(increase(dragonfly_keyspace_misses_total[10m]))) >= 100'
+        for: 15m
+        labels: { severity: warning, category: middleware, notification_class: ticket }
+        annotations:
+          summary: 'Dragonfly 命中率持续偏低（miss {{ $value | printf "%.0f%%" }}）'
+          description: '10 分钟窗口内 miss 占比超过 50% 且请求量足够。先看 gorse 的缓存 key 是否频繁失效或被大批量写入挤出；FT.SEARCH 不走 keyspace hit/miss，不能拿本规则判断搜索命中率。'
