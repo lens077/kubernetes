@@ -1,0 +1,55 @@
+# 中间件：MinIO（2026-11-25 新增）
+#
+# 数据来源：opentelemetry 组件 values.yaml 的 prometheus/middleware receiver，
+# 抓取 minio-service.minio.svc:9000/minio/v2/metrics/cluster。
+# 2026-11-25 起 MinIO Deployment 设置 MINIO_PROMETHEUS_AUTH_TYPE=public，
+# 该端点只在集群内 ClusterIP 上匿名可读；公网仍由 Pangolin SSO 控制。
+# 指标名在 OTel prometheus receiver 后现场核对过（部分 gauge 会被加 _total 后缀，
+# 容量类 bytes gauge 保持原名）。
+#
+# ⚠️ Elasticsearch 仍未接入（无 exporter），不要因为目录里有多个 middleware 文件就以为全覆盖。
+# ⚠️ 每条规则都必须有 for:。
+groups:
+  - name: middleware-minio
+    interval: 15s
+    rules:
+      - alert: MinioMetricsMissing
+        expr: 'absent(minio_cluster_capacity_raw_total_bytes) == 1'
+        for: 15m
+        labels: { severity: warning, category: middleware, notification_class: ticket }
+        annotations:
+          summary: MinIO 指标停止写入 VictoriaMetrics
+          description: '连续 15 分钟收不到 minio_cluster_capacity_raw_total_bytes。检查 otel collector 的 prometheus/middleware receiver、MinIO Pod 与 MINIO_PROMETHEUS_AUTH_TYPE；此时本文件其余规则已失效。'
+
+      - alert: MinioDriveOffline
+        expr: 'minio_cluster_drive_offline_total > 0'
+        for: 5m
+        keep_firing_for: 5m
+        labels: { severity: critical, category: middleware, notification_class: page }
+        annotations:
+          summary: 'MinIO 有磁盘离线（{{ $value | printf "%.0f" }} 块）'
+          description: '单盘集群里一块盘离线就等于不可写。检查 PVC 挂载、节点磁盘与 MinIO 日志；先确认 S3 上传是否已经 5xx。'
+
+      - alert: MinioNodesOffline
+        expr: 'minio_cluster_nodes_offline_total > 0'
+        for: 5m
+        labels: { severity: critical, category: middleware, notification_class: page }
+        annotations:
+          summary: 'MinIO 节点离线（{{ $value | printf "%.0f" }} 个）'
+          description: '集群内出现离线节点并持续 5 分钟。当前是单节点部署，任何节点离线都会让 S3 写入不可用；检查 Pod 状态与节点网络。'
+
+      - alert: MinioClusterUnhealthy
+        expr: 'minio_cluster_health_status != 1'
+        for: 10m
+        labels: { severity: critical, category: middleware, notification_class: page }
+        annotations:
+          summary: MinIO 集群健康状态异常
+          description: 'minio_cluster_health_status 连续 10 分钟不为 1。结合 MinioDriveOffline / MinioNodesOffline 判断是磁盘、节点还是 erasure set  quorum 问题。'
+
+      - alert: MinioCapacityLow
+        expr: '(minio_cluster_capacity_usable_free_bytes / minio_cluster_capacity_usable_total_bytes) < 0.15'
+        for: 15m
+        labels: { severity: warning, category: middleware, notification_class: ticket }
+        annotations:
+          summary: 'MinIO 剩余可用容量不足 15%（{{ $value | printf "%.1f%%" }}）'
+          description: '可用容量持续低于 15%。先核对是否有异常大对象或旧版本未清理，再扩容 PVC；不要直接删除业务对象。'
