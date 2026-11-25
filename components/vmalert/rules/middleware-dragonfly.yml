@@ -13,13 +13,14 @@ groups:
     interval: 15s
     rules:
       - alert: DragonflyMetricsMissing
-        # counter/gauge 持续导出；absent 是最可靠的采集断链信号。
-        expr: 'absent(dragonfly_uptime_in_seconds) == 1'
+        # 选 gauge 而非 uptime：OTel prometheus receiver 会把 uptime 归一化成
+        # dragonfly_uptime_in_seconds_total（现场实测），按原名写守卫会永远 firing 或永不匹配。
+        expr: 'absent(dragonfly_connected_clients) == 1'
         for: 15m
         labels: { severity: warning, category: middleware, notification_class: ticket }
         annotations:
           summary: Dragonfly 指标停止写入 VictoriaMetrics
-          description: '连续 15 分钟收不到 dragonfly_uptime_in_seconds。检查 otel collector 的 prometheus/middleware receiver、dragonfly Pod 与 :6379/metrics；此时本文件其余规则已失效。'
+          description: '连续 15 分钟收不到 dragonfly_connected_clients。检查 otel collector 的 prometheus/middleware receiver、dragonfly Pod 与 :6379/metrics；此时本文件其余规则已失效。'
 
       - alert: DragonflyBlockedClients
         # 客户端被阻塞通常意味着单线程事件循环被慢命令或大 key 卡住。
