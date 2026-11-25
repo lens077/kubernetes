@@ -28,10 +28,27 @@ Alertmanager webhook → 单副本 bridge → ntfy JSON UTF-8 发布。只使用
 | `ACK_TOKEN` | ntfy 静音回执的 HMAC 签名密钥；安装器一次性生成并持久化（`creds/ack-token`），进 Secret `alert-bridge-ntfy`，不在仓库 |
 | `ACK_ENDPOINT` | 公网静音端点根 URL，默认 `https://ack.apikv.com`（VPS 边缘终结 `*.apikv.com` TLS 后隧道进集群） |
 | `BRIDGE_ACK_FILE` | 默认 `/state/acks.json`，与状态同卷；静音记录持久化于此 |
+| `GITHUB_WEBHOOK_TOKEN` | GitHub `workflow_run` webhook 的 `X-Hub-Signature-256` 密钥；`get_cred github-webhook-token` 一次生成，进 Secret，不入库 |
 
 安装器先从 `$STATE_DIR/creds/ntfy.env` 读取默认值，再保留显式环境值（包括显式空值）。core/ticket/test 必须非空且彼此不同，否则 readiness=503、发送拒绝，安装器在修改 Secret 前退出。凭据文件保留原有内容，追加 shell 安全转义后的当前五个字段，权限 0600；与 Gatus 共用时不能删掉未知字段。现有 bridge Secret 存在而本地 Bugsink 路径 token 缺失时也退出，避免意外改坏已有 webhook。不得在日志/对话里输出 token/topic。
 
 部署入口仍是 `components/alert-bridge/install.sh`，但生产执行属于单独授权动作。本地测试不调用安装器。
+
+## GitHub Actions 失败通知（2026-11-25）
+
+`POST /github` 接收 GitHub `workflow_run` webhook，验签通过后只在 `action=completed` 且
+`conclusion=failure` 时向 core topic 发一条 page（标签 `warning,github`，点击直达运行记录）。
+成功、其它事件、ping 都回 200 但不推送；同一 `workflow_run.id` 24 小时内重投递去重（进程重启后内存集合清空，最多重复一条）。
+验签用 `X-Hub-Signature-256` + HMAC-SHA256，密钥缺失时端点返回 503，签名错误返回 403。
+这条路径**不进 NotificationEngine**：CI 失败没有 episode/续期语义，也不该被 ntfy 静音吞掉。
+
+公网地址 `https://config-api.apikv.com/github`，由 `manifests/03-github-route.yaml` 的
+PathPrefix `/github` 路由到 bridge。不要改用 `ack.apikv.com`：该 Pangolin 资源绑定了 SSO
+策略，匿名 webhook 会拿到 401。实测当前 Cilium Gateway 跨命名空间的 Exact 路由不优先于
+config-center 的 PathPrefix `/`，所以这里也用 PathPrefix 并独占 `/github` 前缀。
+
+`alert_bridge_github_events_total{result="published|duplicate|ignored|rejected|failed"}`
+单独计数；`ignored` 包含建 hook 时 GitHub 发的 ping，可用来确认投递链路通了。
 
 ## 持久性、故障与恢复
 
@@ -58,7 +75,7 @@ Manifest 新增 `${SC_NAME}` 的 1 GiB ReadWriteOnce PVC `alert-bridge-state`，
 | `alert_bridge_state_entries{active}` | gauge。当前持久状态中的 active / closed 组数量，不是待发送队列长度。 |
 | `alert_bridge_acks_active` | gauge。当前活跃的 ntfy 静音（用户 mute）数量，到期自动归零。 |
 
-指标只覆盖 Alertmanager webhook 路径，不覆盖 Gatus、宿主 watchdog、证书任务或 Bugsink 直推。`sent` **不证明手机送达**。计数器随进程重启归零，`rate` / `increase` 能处理已观察到的重置，但首次抓取前的事件、重启间隙和接入前历史仍可能漏计；不能作为消息审计账本。退避状态独立保存在 PVC，不因计数器归零而重置。
+指标覆盖 Alertmanager 与 GitHub webhook 两条路径，不覆盖 Gatus、宿主 watchdog、证书任务或 Bugsink 直推。`sent` **不证明手机送达**。计数器随进程重启归零，`rate` / `increase` 能处理已观察到的重置，但首次抓取前的事件、重启间隙和接入前历史仍可能漏计；不能作为消息审计账本。退避状态独立保存在 PVC，不因计数器归零而重置。
 
 Grafana 的 `ntfy-alerting-overview` 面板显示发布、失败与抑制，规则仍由 vmalert 管理。三条 bridge 规则的排查入口随通知链接到该面板；同一发布链路故障时，它们也可能无法送达，不能代替独立外部 dead-man。
 

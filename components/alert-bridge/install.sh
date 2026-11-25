@@ -45,6 +45,7 @@ mkdir -p "$STATE_DIR/creds"
 chmod 600 "$creds_file"
 bridge_token=$(get_cred bugsink-bridge-token)   # 只生成一次
 ack_token=$(get_cred ack-token)                  # ntfy 静音回执签名密钥, 只生成一次
+github_token=$(get_cred github-webhook-token)    # GitHub workflow_run webhook 签名密钥, 只生成一次
 
 log_step "安装 $ID → 命名空间 $NAMESPACE (core/ticket/test 分流；持久退避状态)"
 ns_ensure "$NAMESPACE"
@@ -57,6 +58,7 @@ kctl -n "$NAMESPACE" create secret generic alert-bridge-ntfy \
   --from-literal=NTFY_TOKEN="$ntfy_token" \
   --from-literal=BUGSINK_BRIDGE_TOKEN="$bridge_token" \
   --from-literal=ACK_TOKEN="$ack_token" \
+  --from-literal=GITHUB_WEBHOOK_TOKEN="$github_token" \
   --dry-run=client -o yaml | kctl apply -f -
 
 kctl -n "$NAMESPACE" create configmap alert-bridge-script \
@@ -77,5 +79,6 @@ rm -rf "$out"
 log_ok "$ID 安装完成"
 log_info "  Alertmanager receiver: http://alert-bridge.$NAMESPACE.svc.cluster.local:9099/alerts"
 log_info "  Bugsink webhook:       http://alert-bridge.$NAMESPACE.svc.cluster.local:9199/bugsink/<token>(token 见 /root/.k8s-installer-credentials)"
+log_info "  GitHub webhook:        https://config-api.apikv.com/github (secret 见 \$STATE_DIR/creds/github-webhook-token)"
 log_warn "首次挂载空状态卷会立即通知当前 firing 组；保留 alert-bridge-state PVC 以保留退避状态"
 log_info "  readiness: /healthz（配置不完整返回 503）；liveness: /livez"

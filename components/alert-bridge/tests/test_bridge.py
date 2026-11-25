@@ -1,6 +1,7 @@
 """Offline bridge regressions: no server import side effects or notification network."""
 import importlib.util
 import http.client
+import json
 import threading
 import pathlib
 import tempfile
@@ -560,6 +561,84 @@ class AckEndpointTest(unittest.TestCase):
             conn.request('GET', '/ack?scope=group&target=abc&dur=86400&exp=9999999999&sig=x')
             r = conn.getresponse(); conn.close()
             self.assertEqual(503, r.status)
+
+
+class GithubWebhookTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.sent = []
+        self.env = patch.dict(bridge.os.environ, {
+            'NTFY_URL': 'https://ntfy.example', 'NTFY_TOPIC': 'core',
+            'NTFY_TICKET_TOPIC': 'ticket', 'NTFY_TEST_TOPIC': 'test',
+            'GITHUB_WEBHOOK_TOKEN': 'test-gh-token'})
+        self.env.start(); self.addCleanup(self.env.stop)
+        with bridge.GITHUB_SEEN_LOCK:
+            bridge.GITHUB_SEEN.clear()
+        self.server = bridge.ThreadingHTTPServer(('127.0.0.1', 0), bridge.AlertmanagerHandler)
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+        self.addCleanup(self.server.server_close)
+        self.addCleanup(lambda: (self.server.shutdown(), self.thread.join()))
+        self.publisher = patch.object(bridge, 'send_raw', side_effect=self.record)
+        self.publisher.start(); self.addCleanup(self.publisher.stop)
+        self.metrics = patch.object(bridge, 'METRICS', bridge.Metrics())
+        self.metrics.start(); self.addCleanup(self.metrics.stop)
+
+    def record(self, title, message, priority, tags, click='', topic=None, actions=None):
+        self.sent.append({'title': title, 'message': message, 'priority': priority,
+                          'tags': tags, 'click': click})
+
+    def post(self, raw, event='workflow_run', sig=None):
+        token = bridge.os.environ['GITHUB_WEBHOOK_TOKEN']
+        signature = sig or 'sha256=' + bridge.hmac.new(
+            token.encode(), raw, bridge.hashlib.sha256).hexdigest()
+        conn = http.client.HTTPConnection('127.0.0.1', self.server.server_port, timeout=2)
+        conn.request('POST', '/github', body=raw, headers={
+            'Content-Type': 'application/json',
+            'X-GitHub-Event': event,
+            'X-Hub-Signature-256': signature})
+        r = conn.getresponse(); body = r.read().decode(); conn.close()
+        return r.status, body
+
+    def run_payload(self, conclusion='failure', run_id=12345):
+        return json.dumps({
+            'action': 'completed',
+            'repository': {'full_name': 'lens077/ecommerce'},
+            'workflow_run': {'id': run_id, 'name': 'CI', 'conclusion': conclusion,
+                             'head_branch': 'main',
+                             'html_url': 'https://github.com/lens077/ecommerce/actions/runs/12345'}
+        }).encode()
+
+    def test_failed_run_publishes_page(self):
+        status, _ = self.post(self.run_payload())
+        self.assertEqual(200, status)
+        self.assertEqual(1, len(self.sent))
+        self.assertIn('ecommerce', self.sent[0]['title'])
+        self.assertEqual(4, self.sent[0]['priority'])
+        self.assertIn('github', self.sent[0]['tags'])
+        self.assertIn('alert_bridge_github_events_total{result="published"} 1',
+                      bridge.METRICS.render())
+
+    def test_bad_signature_rejected(self):
+        status, _ = self.post(self.run_payload(), sig='sha256=' + '0' * 64)
+        self.assertEqual(403, status)
+        self.assertEqual(0, len(self.sent))
+
+    def test_success_run_ignored(self):
+        status, _ = self.post(self.run_payload(conclusion='success'))
+        self.assertEqual(200, status)
+        self.assertEqual(0, len(self.sent))
+
+    def test_duplicate_delivery_deduped(self):
+        self.post(self.run_payload())
+        self.post(self.run_payload())
+        self.assertEqual(1, len(self.sent))
+
+    def test_non_workflow_event_ignored(self):
+        status, _ = self.post(self.run_payload(), event='ping')
+        self.assertEqual(200, status)
+        self.assertEqual(0, len(self.sent))
 
 
 if __name__ == '__main__':

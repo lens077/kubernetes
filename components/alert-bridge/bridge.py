@@ -43,6 +43,12 @@ ACK_BUTTONS = {
 ACK_RATE = {}            # client IP -> [timestamps] 内存限流
 ACK_RATE_LIMIT = 30      # 每 IP 每 60s
 
+# GitHub workflow_run webhook（2026-11-25）：只推失败，不接 Alertmanager 的退避引擎。
+# GitHub 重投递同一个 run_id 会去重；进程重启后内存集合清空，最多重复一条。
+GITHUB_SEEN = {}
+GITHUB_SEEN_LOCK = threading.Lock()
+GITHUB_SEEN_TTL = 24 * 3600
+
 
 def _ack_rate_ok(client):
     now = time.time()
@@ -92,6 +98,10 @@ class Metrics:
             }.items()))): 0
             for kind in ("page", "ticket", "test") for result, reason in outcomes
         }
+        # GitHub workflow_run webhook（2026-11-25）：与 AM 路径分开计数，便于确认
+        # 「CI 失败到底有没有推送」而不依赖手机回执。
+        for result in ("published", "duplicate", "ignored", "rejected", "failed"):
+            self.values[("alert_bridge_github_events_total", (("result", result),))] = 0
 
     def inc(self, name, **labels):
         key = (name, tuple(sorted(labels.items())))
@@ -106,8 +116,19 @@ class Metrics:
         with self.lock:
             values = dict(self.values)
         for (name, labels), value in sorted(values.items()):
+            if name == "alert_bridge_github_events_total":
+                continue
             suffix = "{" + ",".join(f'{k}="{v}"' for k, v in labels) + "}" if labels else ""
             lines.append(f"{name}{suffix} {value}")
+        github_values = {k[1]: v for k, v in values.items()
+                         if k[0] == "alert_bridge_github_events_total"}
+        lines.extend([
+            "# HELP alert_bridge_github_events_total GitHub workflow_run webhook events by outcome.",
+            "# TYPE alert_bridge_github_events_total counter",
+        ])
+        for labels, value in sorted(github_values.items()):
+            suffix = "{" + ",".join(f'{k}="{v}"' for k, v in labels) + "}"
+            lines.append(f"alert_bridge_github_events_total{suffix} {value}")
         if engine is not None:
             # commit() replaces the dict; keep one coherent snapshot without
             # holding the publisher lock across a scrape or network publish.
@@ -615,7 +636,7 @@ class WebhookHandler(BaseHTTPRequestHandler):
         self.wfile.flush()
         self.close_connection = True
 
-    def read_payload(self):
+    def read_raw(self):
         if self.headers.get("Transfer-Encoding"):
             raise InvalidPayload("chunked requests unsupported")
         lengths = self.headers.get_all("Content-Length", [])
@@ -633,7 +654,10 @@ class WebhookHandler(BaseHTTPRequestHandler):
         raw = self.rfile.read(length)
         if len(raw) != length:
             raise InvalidPayload("incomplete body")
-        return decode_payload(raw)
+        return raw
+
+    def read_payload(self):
+        return decode_payload(self.read_raw())
 
     def do_GET(self):
         if self.path == "/healthz":
@@ -675,6 +699,9 @@ class AlertmanagerHandler(WebhookHandler):
             return
         if self.path.startswith("/unack"):
             self.handle_unack()
+            return
+        if self.path == "/github":
+            self.handle_github()
             return
         if self.path != "/alerts":
             self.reply(404)
@@ -760,6 +787,77 @@ class AlertmanagerHandler(WebhookHandler):
         store.clear_key(scope, target.strip())
         log({"source": "ack", "event": "clear", "scope": scope, "target": target})
         self.reply(200, {"ok": True})
+
+
+    def handle_github(self):
+        """GitHub Actions workflow_run 失败 → ntfy page。不经 AM，独立可验证。"""
+        token = os.environ.get("GITHUB_WEBHOOK_TOKEN", "")
+        if not token:
+            METRICS.inc("alert_bridge_github_events_total", result="rejected")
+            self.reply(503, {"ok": False, "error": "github webhook disabled"})
+            return
+        sig = self.headers.get("X-Hub-Signature-256", "")
+        try:
+            raw = self.read_raw()
+        except Exception as exc:
+            METRICS.inc("alert_bridge_github_events_total", result="rejected")
+            self.error(exc)
+            return
+        expected = "sha256=" + hmac.new(token.encode(), raw, hashlib.sha256).hexdigest()
+        if not sig.startswith("sha256=") or not hmac.compare_digest(expected, sig):
+            METRICS.inc("alert_bridge_github_events_total", result="rejected")
+            self.reply(403, {"ok": False, "error": "bad signature"})
+            return
+        if self.headers.get("X-GitHub-Event", "") != "workflow_run":
+            METRICS.inc("alert_bridge_github_events_total", result="ignored")
+            self.reply(200)
+            return
+        try:
+            payload = decode_payload(raw)
+        except InvalidPayload:
+            METRICS.inc("alert_bridge_github_events_total", result="rejected")
+            self.reply(400)
+            return
+        run = payload.get("workflow_run")
+        if (payload.get("action") != "completed" or not isinstance(run, dict)
+                or run.get("conclusion") != "failure"):
+            METRICS.inc("alert_bridge_github_events_total", result="ignored")
+            self.reply(200)
+            return
+        run_id = str(run.get("id") or digest(run))
+        now = time.time()
+        with GITHUB_SEEN_LOCK:
+            for key in [k for k, t in GITHUB_SEEN.items() if now - t > GITHUB_SEEN_TTL]:
+                GITHUB_SEEN.pop(key, None)
+            if run_id in GITHUB_SEEN:
+                METRICS.inc("alert_bridge_github_events_total", result="duplicate")
+                self.reply(200)
+                return
+        repo = str((payload.get("repository") or {}).get("full_name") or "unknown-repo")
+        name = str(run.get("name") or "workflow")
+        branch = str(run.get("head_branch") or "unknown-branch")
+        url = str(run.get("html_url") or "")
+        title = utf8_limit(f"[CI失败][关注] {repo} · {name}", 240)
+        message = "\n".join((
+            f"分支：{branch}",
+            "结论：failure（workflow_run 已完成）",
+            f"运行记录：{url or '未提供'}",
+            "来源：GitHub Actions webhook（不依赖 node3 / ntfy 内部链路）",
+        ))
+        try:
+            send_raw(title, message, 4, "warning,github",
+                     click=url if safe_https(url) else "")
+        except Exception as exc:
+            METRICS.inc("alert_bridge_github_events_total", result="failed")
+            log({"source": "github", "event": "publish_failed", "error_type": type(exc).__name__})
+            self.error(exc)
+            return
+        with GITHUB_SEEN_LOCK:
+            GITHUB_SEEN[run_id] = now
+        METRICS.inc("alert_bridge_github_events_total", result="published")
+        log({"source": "github", "event": "published", "repo": repo,
+             "workflow": name, "run_id": run_id})
+        self.reply(200)
 
 
 class BugsinkHandler(WebhookHandler):

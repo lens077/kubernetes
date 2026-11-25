@@ -1,0 +1,30 @@
+# GitHub Actions workflow_run webhook（2026-11-25）。
+# 不能复用 ack.apikv.com：那个 Pangolin 资源绑定了 SSO 策略（resource 76 / policy 68,
+# sso=1），GitHub 匿名推送会拿到 401。config-api.apikv.com 是开放资源（sso=0），
+# 借它的一条 PathPrefix /github 路由把 webhook 指到告警桥。实测当前 Cilium Gateway
+# 对跨命名空间的 Exact / PathPrefix 混用不按优先级选（Exact 在公网仍落到 config-center），
+# 所以这里统一用 PathPrefix /github；config-center 自身没有 /github 路径，不影响原 API。
+# 真正的安全边界在 bridge.py 的 X-Hub-Signature-256 HMAC 校验，不靠路径隐蔽。
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: alert-bridge-github
+  namespace: ${NAMESPACE}
+spec:
+  parentRefs:
+    - name: cilium-gateway
+      namespace: default
+      sectionName: https
+  hostnames:
+    - "config-api.apikv.com"
+    # Pangolin 隧道进来时可能把 Host 改写成集群域名，两个都匹配，避免只在公网通。
+    - "config-api.dev.test"
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /github
+      backendRefs:
+        - name: alert-bridge
+          port: 9099
