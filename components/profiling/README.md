@@ -30,20 +30,29 @@ KUBECONFIG=/etc/kubernetes/admin.conf kubectl apply -n observability -f componen
 KUBECONFIG=/etc/kubernetes/admin.conf kubectl -n observability get pods -l app=pyroscope
 KUBECONFIG=/etc/kubernetes/admin.conf kubectl -n observability get pods -l app=alloy-pyroscope
 
-# 集群内健康检查（需要一个有 curl/wget 的 Pod，或用kubectl exec到任一容器）
+# 集群内健康检查。注意: Pyroscope v2.4.4 没有 /-/healthy(返回 404),
+# 等价健康端点是 /ready(200 表示可服务)。
 KUBECONFIG=/etc/kubernetes/admin.conf kubectl -n observability run curl-probe \
   --image=curlimages/curl:8.10.1 --restart=Never --rm -it -- \
-  curl -fsS http://pyroscope.observability.svc.cluster.local:4040/-/healthy
+  curl -fsS http://pyroscope.observability.svc.cluster.local:4040/ready
 
-# Alloy 组件健康（每个 Alloy Pod）
-KUBECONFIG=/etc/kubernetes/admin.conf kubectl -n observability exec ds/alloy-pyroscope -- \
-  wget -qO- http://127.0.0.1:12345/api/v1/health 2>/dev/null || true
-
-# Pyroscope 内置自剖析会向自己写数据；查询 API 看 profile 列表
+# v2 查询 API(Connect 风格 POST) — 列出 service_name
 KUBECONFIG=/etc/kubernetes/admin.conf kubectl -n observability run curl-probe2 \
   --image=curlimages/curl:8.10.1 --restart=Never --rm -it -- \
-  curl -fsS 'http://pyroscope.observability.svc.cluster.local:4040/api/v1/label/service_name/values'
+  curl -fsS -H 'Content-Type: application/json' \
+    -d "{\"name\":\"service_name\",\"start\":$(($(date +%s)*1000-3600000)),\"end\":$(($(date +%s)*1000))}" \
+    http://pyroscope.observability.svc.cluster.local:4040/querier.v1.QuerierService/LabelValues
+
+# 取火焰图 JSON 并在函数名里搜 Go 栈增长开销
+KUBECONFIG=/etc/kubernetes/admin.conf kubectl -n observability run curl-probe3 \
+  --image=curlimages/curl:8.10.1 --restart=Never --rm -it -- \
+  curl -fsS 'http://pyroscope.observability.svc.cluster.local:4040/pyroscope/render?query=process_cpu:cpu:nanoseconds:cpu:nanoseconds%7Bservice_name%3D%22ebpf/kube-system/coredns%22%7D&from=now-2h&until=now&format=json' \
+  | grep -oE 'runtime\.(copystack|morestack|newstack)'
 ```
+
+实测（2026-11-25）：`ebpf/kube-system/coredns` 的火焰图里可见
+`coredns/plugin/kubernetes.(*Kubernetes).Services → runtime.morestack → runtime.newstack → runtime.copystack → runtime.adjustframe`，
+即真实 Go 1.27 自适应栈开销被 eBPF 抓到；ecommerce 各服务也都有函数级 Go 帧，但当时未见栈增长帧（负载未触发）。
 
 ## Grafana 数据源（由另一工作流配置）
 
