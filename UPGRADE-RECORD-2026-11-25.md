@@ -285,3 +285,14 @@ CNPG 1.30 的 **primary lease 机制 + 单实例集群 + 实例管理器原地�
 - **保守选版**：OCI tags 只到 v1.40.1（2.x chart 未发到 ghcr），且 1.x→2.x 是大版本跳跃 → 选 v1.40.1 同线小版本升级，不做大跳。镜像 `docker.dragonflydb.io/...:v1.40.1` 节点可直拉。
 - 验证：StatefulSet `dragonfly-0` Running，PVC `dragonfly-data-dragonfly-0` 63d 老卷复用（数据保留）。⚠️ 该实例启用 TLS，普通 `redis-cli` 连不上（Bad TLS header），验证要用 `--tls`；redis-cli 6.0.16 不支持 `--insecure`。消费者 `control-tower-gateway` 重连后无 Redis 错误，边缘 `/readyz` `/healthz` 200。
 - spegel：`oci://ghcr.io/spegel-org/helm-charts/spegel:0.8.1`（ArtifactHub 确认），本机代理 pull 后上传。镜像为 pinned digest `sha256:bdc1d14e...`（0.8.1），节点可拉。3 节点 DaemonSet 全 Running；启动期 libp2p bootstrap 错误在 ~90s 内收敛归零；`spegel_advertised_keys=2496` 说明镜像索引已建立。
+
+---
+
+## 14. `scorpius-prod` Degraded 排查与恢复（08:20 追加）
+
+- 直接原因：`scorpius-backup` 03:17 的 Job（`-29925797`）`backoffLimit=2` 用尽、3 个 Pod 全失败；`CronJob.status.lastScheduleTime=2026-11-24T19:17:00Z` 但 `lastSuccessfulTime=2026-11-23T19:17:04Z`，ArgoCD 内置 CronJob health check 判 Degraded。
+- 根因链（k3 kubelet journal）：03:16:17 `Node became not ready ... reason=KubeletNotReady message="node is shutting down"` → 03:16:33 OpenEBS CSI `local.csi.openebs.io` 注销 → 大量 Pod 重建；`scorpius-api` 新 Pod 03:19:33 调度、容器 03:20:14 才启动。备份 Job 03:17 启动，3 次重试（至 03:17:52）全部落在 API 空窗。
+- 排除项：PVC `/data` 用量 4%（1.9G 中 72M）、`/data/backups` 属主 `licensed(65532)` 可写；代码路径 `POST /admin/backup` → `VACUUM INTO`，无逻辑变更；secret `ADMIN_TOKEN` 有效。
+- 复现验证：同镜像 + `secretKeyRef` 起临时 Pod 调接口，返回 `HTTP/1.1 200 OK`、`{"bytes":110592,"path":"/data/backups/licenses-20261125-001900.db"}`、`wget_exit=0`。
+- 处置：删除失败 Job `-29925797` 与临时 Pod；`kubectl patch cronjob scorpius-backup --subresource=status` 把 `lastSuccessfulTime` 设为手工备份成功时刻 `2026-11-25T00:19:00Z`；刷新 App。最终 `scorpius-prod Synced/Healthy`。
+- 说明：这是**节点计划内重启与定时任务撞车**导致的偶发失败，不是备份功能故障；无需改 CronJob 时间，下一次 03:17 会自然覆盖。ArgoCD 3.6 内置 CronJob health check 用 `lastSuccessfulTime < lastScheduleTime` 判 Degraded，失败 Job 删除后仍需状态时间追平才会恢复。

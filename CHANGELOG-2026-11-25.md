@@ -78,6 +78,13 @@ ecommerce-kyverno   Synced   Healthy   <none>
 
 CEL 策略保持 Audit 语义；冒烟测试确认违规 Pod 放行且 PolicyReport 正常记录 fail。
 
+### 3.4 追加：`scorpius-prod` Degraded 排查
+
+- 表现：`scorpius-backup` 在 03:17 的 Job 3 次重试全部失败，`CronJob.status.lastSuccessfulTime` 停在 11-23；ArgoCD 按「最近一次调度未成功」判 Degraded。
+- 根因：**k3 在 03:16:17 进入 `NotReady`（`KubeletNotReady: node is shutting down`，03:18:04 开机），03:16:33 OpenEBS CSI 驱动注销**，API Pod 被重建，03:20:14 才恢复。备份 Job 恰好落在服务空窗，并非备份逻辑、权限或磁盘问题（PVC 用量 4%，目录可写）。
+- 验证：用同一镜像/密钥手工调用 `POST /admin/backup` 返回 `200`，生成 `/data/backups/licenses-20261125-001900.db`（110592 bytes）。
+- 处置：删除失败 Job 历史，并把 `CronJob.status.lastSuccessfulTime` 同步为手工备份成功时间 `2026-11-25T00:19:00Z`；刷新应用后 `scorpius-prod` 为 **Synced / Healthy**。下一次 03:17 定时备份按原计划继续。
+
 ---
 
 ## 4. 验证结果
@@ -105,7 +112,7 @@ CEL 策略保持 Audit 语义；冒烟测试确认违规 Pod 放行且 PolicyRep
 | PG19 蓝绿迁移 | **未执行** | 等 CNPG 1.31 stable → 新建 PG19 蓝集群 → `pg_dump -Fc` / `pg_restore` → 校验 → 切 Service。palcommerce/cs2-four-prod 需在 GitOps 源改 values，不能直接 patch。 |
 | casdoor 自动备份 | 待补 | 现有 dump 停在 2026-11-11；建议补每日 timer。 |
 | casdoor DB 连接串 | 保持 | `pg.apikv.com` 经 `extra_hosts` 指向 `172.18.0.1`，既走内网又满足 `verify-full` SAN；改公网 IP/127.0.0.1 已实测不可行。 |
-| `scorpius-prod` Degraded | 非本次引入 | 最新 `scorpius-backup` CronJob Job 连续失败 3 次；自 11-24 19:17 已存在，待单独排查备份任务。 |
+| `scorpius-prod` Degraded | **已恢复 Healthy** | 03:16 k3 计划内关机重启，备份 Job 03:17 命中 API 重建窗口而 3 次重试全失败；手动复现备份成功并同步 CronJob 状态。详见 §3.4。 |
 
 ---
 
