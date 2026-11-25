@@ -1,0 +1,74 @@
+# control-tower 应用层告警规则（2026-11-25）。
+#
+# 覆盖范围：config 服务的 Connect RPC 服务端埋点（service_name="config-service"、
+# service_namespace="config-center"）。gateway 的 HTTP 指标（control-tower-gateway）
+# 目前在 kubernetes 仓 rules/palcommerce.yml 里覆盖，本文件不重复。
+#
+# 为什么在本仓：config-service 是 control-tower 的服务，其 RPC 告警原先被放在
+# kubernetes 仓 rules/ecommerce-app.yml 里、且只是被排除（service_name!~"config-service"）
+# 而非被监控——既有归属错配，又造成"ecommerce RPC 规则永不触发"的死规则。
+# 2026-11-25 拆分：本文件是 config-service 告警的真相源；同内容复制到
+# kubernetes 仓 components/vmalert/rules/control-tower-app.yml 由 vmalert 加载，
+# 改一边必须改另一边（两边各一份，无自动同步）。本文件不进 Argo CD（路径在 docs/ 下）。
+#
+# 指标实测（2026-11-25 VM 24h 窗口）：
+#   rpc_server_call_duration_seconds_count{service_name="config-service",
+#     service_namespace="config-center",deployment_environment_name="pre",
+#     rpc_response_status_code=~"OK|UNAVAILABLE"}  —— 状态码是大写 RPC code。
+#   config-service 的 deployment 是 config-center/config-center，
+#   k8s_deployment_available 有序列，可作 missing 守卫的存活证据。
+#   注意：config-center 无 dev 环境序列，排除 dev 只是沿袭全局口径（公网 OTLP
+#   曾把本地 dev 指标写进同一 VM），对本服务实际无影响。
+#
+# 规矩（vmalert/README + install.sh 校验）：每条 alert 必须有 for:。
+# annotation：summary/description + dashboard（ntfy 的 Click）+ logs_query（VL LogsQL）。
+# dashboard 主机名用公网 grafana.apikv.com，不用内网 $externalLabels.cluster。
+groups:
+  - name: control-tower-app
+    interval: 30s
+    rules:
+      - alert: ConfigServiceErrorRateHigh
+        # 服务侧错误 = rpc_response_status_code ∈ SERVER_FAULT_CODES（大写 RPC code）。
+        # 最低流量门槛 0.02 rps（约 1.2 次/分钟）：pre 流量稀疏，避免单次失败被当事故。
+        # 客户端异常（invalid_argument / not_found 等）不进错误率。
+        expr: |
+          (
+            sum by (service_name, deployment_environment_name) (rate(rpc_server_call_duration_seconds_count{service_name="config-service",deployment_environment_name!="dev",rpc_response_status_code=~"UNKNOWN|INTERNAL|UNAVAILABLE|DEADLINE_EXCEEDED|RESOURCE_EXHAUSTED|DATA_LOSS|UNIMPLEMENTED"}[5m]))
+            /
+            sum by (service_name, deployment_environment_name) (rate(rpc_server_call_duration_seconds_count{service_name="config-service",deployment_environment_name!="dev"}[5m]))
+          ) > 0.05
+          and
+          sum by (service_name, deployment_environment_name) (rate(rpc_server_call_duration_seconds_count{service_name="config-service",deployment_environment_name!="dev"}[5m])) > 0.02
+        for: 10m
+        keep_firing_for: 5m
+        labels: { severity: critical, category: application }
+        annotations:
+          summary: '[{{ $labels.deployment_environment_name }}] config-service 服务侧错误率 {{ $value | humanizePercentage }}（> 5%，持续 10 分钟）'
+          description: >-
+            Connect RPC 服务端返回了 UNKNOWN/INTERNAL/UNAVAILABLE 等故障码。先看 ecommerce-apm 盘
+            「Connect RPC RED」区按 rpc_method / rpc_response_status_code 定位是哪类故障；
+            再按 logs_query 查日志，用 error.origin 与 trace_id 定位到具体数据层与调用链。
+            UNAVAILABLE 常见于下游 Dragonfly/PG 连接或配置热重建失败，先核对中间件告警。
+          dashboard: >-
+            https://grafana.apikv.com/explore?schemaVersion=1&orgId=1&panes={{ printf `{"a":{"datasource":"P4169E866C3094E38","queries":[{"refId":"A","datasource":{"type":"prometheus","uid":"P4169E866C3094E38"},"expr":"sum by (rpc_method, rpc_response_status_code) (rate(rpc_server_call_duration_seconds_count{service_name=\"config-service\",deployment_environment_name=\"%s\",rpc_response_status_code!=\"\"}[5m]))"}],"range":{"from":"now-1h","to":"now"}}}` $labels.deployment_environment_name | queryEscape }}
+          logs_query: 'service.name:="config-service" deployment.environment.name:="{{ $labels.deployment_environment_name }}" rpc.code:in(unknown,internal,unavailable,deadline_exceeded,resource_exhausted,data_loss,unimplemented)'
+
+      - alert: ConfigServiceRPCMetricsMissing
+        # deployment 在跑但没有 RPC 指标 = 应用 OTLP 指标链断了，此时所有 config-service
+        # 错误率告警都失效（无数据不会触发）。deployment 守卫避免集群尚未部署时慢性 firing。
+        # 判活用 k8s_deployment_available 而非 goroutine：config-service 的 runtime 指标
+        # 与 RPC 指标走同一条 OTLP 链，用它判活会掩盖整链故障。
+        expr: |
+          (count(k8s_deployment_available{k8s_namespace_name="config-center",k8s_deployment_name="config-center"} > 0) > 0)
+          unless on ()
+          (count(rpc_server_call_duration_seconds_count{service_name="config-service",deployment_environment_name!="dev"}) > 0)
+        for: 15m
+        labels: { severity: warning, category: application }
+        annotations:
+          summary: 'config-center/config-center 在跑，但 15 分钟内没有 config-service 的 RPC 指标'
+          description: >-
+            config-service 的 OTLP metrics pipeline 断了。检查服务 observability.enable 配置、
+            OTel collector 的 metrics pipeline 与 VictoriaMetrics 写入口认证；
+            恢复后确认 ecommerce-apm 盘「Connect RPC RED」重新有序列。
+          dashboard: 'https://grafana.apikv.com/explore?schemaVersion=1&orgId=1&panes=%7B%22a%22%3A%7B%22datasource%22%3A%22P4169E866C3094E38%22%2C%22queries%22%3A%5B%7B%22refId%22%3A%22A%22%2C%22datasource%22%3A%7B%22type%22%3A%22prometheus%22%2C%22uid%22%3A%22P4169E866C3094E38%22%7D%2C%22expr%22%3A%22count%20by%20%28rpc_method%2C%20rpc_response_status_code%29%20%28rpc_server_call_duration_seconds_count%7Bservice_name%3D%5C%22config-service%5C%22%7D%29%22%7D%5D%2C%22range%22%3A%7B%22from%22%3A%22now-3h%22%2C%22to%22%3A%22now%22%7D%7D%7D'
+          logs_query: 'service.name:="config-service" deployment.environment.name:!="dev" severity_text:=error'
