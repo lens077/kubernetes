@@ -337,6 +337,15 @@ config:
                 target_label: pod
               - source_labels: [__meta_kubernetes_pod_node_name]
                 target_label: node
+          # MinIO 的 metrics 路径不在默认 /metrics，且默认需要专用 JWT。
+          # 2026-11-25 起 MinIO Deployment 设置 MINIO_PROMETHEUS_AUTH_TYPE=public，
+          # 仅 ClusterIP :9000 匿名可读；公网 S3/Console 仍由 Pangolin SSO 控制。
+          - job_name: minio
+            metrics_path: /minio/v2/metrics/cluster
+            scrape_interval: 30s
+            scrape_timeout: 10s
+            static_configs:
+              - targets: ['minio-service.minio.svc.cluster.local:9000']
 
     # 2026-11-25: VictoriaLogs / VictoriaTraces 自身指标。此前 VM 里查不到
     # vl_bytes_ingested_total / vt_bytes_ingested_total, 导致「日志/链路真的写进去了吗」
