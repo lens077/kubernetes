@@ -114,7 +114,7 @@ k1/k2/k3/node3 的 `systemctl --failed` 均为 0；`host-watchdog`、`apikv-cert
 - **排除项**：容器进程 UID 均为 70、`kill -0` 成功但真实信号全失败；`CapEff=0`、`NoNewPrivs=1`；PGDATA 属主 70、`/var/run/postgresql` 属组 70（chmod 报错是 entrypoint 无害告警）；数据目录仅 46.9M，`pg_controldata` redo 0.04s 正常完成。`startupProbe` 无效也印证非 liveness 问题。
 - **修复**：给 `sts/postgres` 的 pod `securityContext` 加 `appArmorProfile.type: Unconfined`（仅本 Pod 解除 AppArmor；seccomp RuntimeDefault / runAsNonRoot / drop ALL 保留）。重建 Pod 后 `cluster state = in production`、`database system is ready to accept connections`，0 重启。已固化到 LyraPass 仓 `deploy/cloud/k8s/base/k8s.yaml`（带注释）。
 - **数据完整性**：17 张业务表全部完好（`accounts`/`vaults`/`vault_records`/`subscriptions`/`_sqlx_migrations` 等），零丢失。
-- **验证**：`deployment/lyrapass-cloud` 两个副本均 Ready；手动 `create job --from=cronjob` 维护任务成功（`{"expiredSubscriptions":0,...}`），`lastSuccessfulTime` 从 11-15 追平到 `2026-11-25T01:11:10Z`；已清理 3 个历史失败 Job 与临时 Job。14 个 ArgoCD 应用全部 Healthy。
+- **验证**：`deployment/lyrapass-cloud` 两个副本均 Ready；手动 `create job --from=cronjob` 维护任务成功（`{"expiredSubscriptions":0,...}`），`lastSuccessfulTime` 从 11-15 追平到 `2026-11-25T01:11:10Z`；**01:17 UTC 自然调度 Job `29926157` 自主成功**（`lastSuccessfulTime=2026-11-25T01:17:03Z`）；已清理 3 个历史失败 Job 与临时 Job。14 个 ArgoCD 应用全部 Healthy。
 - **回滚**：删除 `appArmorProfile` 字段并重建 Pod 即回到 confinement（会再次卡住，除非 containerd profile 信号规则修复）；live 备份仍在 k1 `/root/lyrapass-postgres-sts.bak-20261125.yaml`（Note: 该备份是加 Unconfined 之前的原始配置）。
 
 ---
