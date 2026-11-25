@@ -117,6 +117,18 @@ k1/k2/k3/node3 的 `systemctl --failed` 均为 0；`host-watchdog`、`apikv-cert
 - **验证**：`deployment/lyrapass-cloud` 两个副本均 Ready；手动 `create job --from=cronjob` 维护任务成功（`{"expiredSubscriptions":0,...}`），`lastSuccessfulTime` 从 11-15 追平到 `2026-11-25T01:11:10Z`；**01:17 UTC 自然调度 Job `29926157` 自主成功**（`lastSuccessfulTime=2026-11-25T01:17:03Z`）；已清理 3 个历史失败 Job 与临时 Job。14 个 ArgoCD 应用全部 Healthy。
 - **回滚**：删除 `appArmorProfile` 字段并重建 Pod 即回到 confinement（会再次卡住，除非 containerd profile 信号规则修复）；live 备份仍在 k1 `/root/lyrapass-postgres-sts.bak-20261125.yaml`（Note: 该备份是加 Unconfined 之前的原始配置）。
 
+### 3.7 追加：AppArmor 信号豁免的范围评估（10:00，结论：不再扩大豁免）
+
+用户要求给"基础设施、数据库和缓存这类需要信号的"服务单独加豁免。基于 24 小时内核 audit 实证评估后，**结论是不再扩大豁免范围**，理由如下。
+
+- **实证**：24h 内 `operation="signal" signal=int`（真正阻塞 PG checkpoint 的信号）只有 `comm="postgres"` 8437 次 + `pg_ctl` 3 次；被 LyraPass PG 的 Unconfined 修复覆盖。其余 DENIED 中：`signal=urg` 来自 Go runtime 异步抢占（vmalert/virgo-auth 等，Go 会自动降级，无功能影响）；`ptrace read` 来自 otelcol 的 hostmetrics（2412 次，仅宿主进程信息缺失，采集器健康，无功能影响）。**没有第二个真正被信号阻塞的服务**。
+- **CNPG 三集群尝试已回滚**：曾给 `pg-main`/`cs2four-pg`/`pal-pg` 的 Cluster CR 加 `spec.podSecurityContext.appArmorProfile=Unconfined`，但 `cs2-four` 命名空间启用了 `pod-security.kubernetes.io/enforce=restricted`，明确禁止 Unconfined profile，operator 进入报错循环（`violates PodSecurity "restricted:latest": forbidden AppArmor profile`）。已立即移除三个 CR 的该字段；期间 PG 经历一次计划内重启，三个集群均恢复 `Cluster in healthy state` / Ready=True / 0 重启。`pal-pg` 由 ArgoCD 跟踪，live 改动若保留会被 selfHeal 覆盖，回滚后一致。
+- **为何不给其他服务加**：Go/Java 单进程多线程服务不依赖进程间信号协调（信号只用于优雅停机，由 kubelet 从外部发送，不经容器 AppArmor）；给它们加 Unconfined 只会白白缩小安全面并降低合规基线。
+- **副作用处置**：CNPG 重启期间 ArgoCD `application-controller` 缓存了 palcommerce 应用的空 health 状态，hard refresh 无效；重启 controller 后 14 个应用全部恢复 Synced/Healthy。
+- **备份**：三个 CNPG Cluster CR 变更前快照在 k1 `/root/apparmor-signal-fix-20261125/*-*.yaml.bak`（未使用，配置已回到原值）。
+
+> 结论：容器 AppArmor 信号拦截的根治仍是节点级 containerd profile 信号规则；在根治前，只对**已证明会造成实际故障**的 PostgreSQL（LyraPass）保留 Pod 级 Unconfined 豁免，不做预防性扩大。
+
 ---
 
 ## 4. 验证结果

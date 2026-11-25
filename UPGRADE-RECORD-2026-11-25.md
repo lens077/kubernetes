@@ -323,3 +323,13 @@ CNPG 1.30 的 **primary lease 机制 + 单实例集群 + 实例管理器原地�
 **验证**：`pg_controldata` = `in production`、`database system is ready to accept connections`、0 重启；17 张业务表完好（零丢失）；cloud 2/2 Ready；手动维护 Job 成功并追平 `lastSuccessfulTime=2026-11-25T01:11:10Z`；3 个历史失败 Job + 临时 Job 已清理；14 个 ArgoCD 应用全 Healthy。
 
 **经验**：容器化 PostgreSQL 出现 `could not signal for checkpoint: Permission denied` 且 `kill -0` 正常时，先查内核 `apparmor DENIED operation=signal`——containerd 2.x 默认 AppArmor profile 会拒绝容器进程间信号，尤其 crash recovery 的 checkpoint 路径。修法：对该 Pod 设 `appArmorProfile: Unconfined`，或从节点侧修正 profile 的信号规则（影响面更大）。
+
+## 17. AppArmor 信号豁免范围评估（10:00，结论：不扩大）
+
+用户要求给"基础设施、数据库和缓存这类需要信号的"服务单独加豁免。基于 24h audit 实证后决定**不扩大**：`signal=int`（阻塞 PG checkpoint 的信号）24h 内只有 `comm="postgres"` 8437 次，已由 LyraPass PG 的 Unconfined 覆盖；`signal=urg`（Go runtime 异步抢占）与 `ptrace read`（otelcol hostmetrics）属无害降级，不影响功能。
+
+**CNPG 三集群尝试与回滚**：曾给 `pg-main`/`cs2four-pg`/`pal-pg` Cluster CR 加 `spec.podSecurityContext.appArmorProfile=Unconfined`。`cs2-four` 命名空间有 `pod-security.kubernetes.io/enforce=restricted`，明确禁止 Unconfined，operator 报错循环：`violates PodSecurity "restricted:latest": forbidden AppArmor profile (pod must not set AppArmor profile type to "Unconfined")`。已移除三个 CR 字段止血。期间三集群经历一次计划内重启，全部恢复 `Cluster in healthy state` / Ready=True / 0 重启，数据无损。`pal-pg` 有 `argocd.argoproj.io/tracking-id`，live 改动会被 selfHeal 覆盖，回滚后一致。CR 快照：k1 `/root/apparmor-signal-fix-20261125/*-*.yaml.bak`。
+
+**ArgoCD 副作用**：CNPG 重启期间 application-controller 缓存 palcommerce 空 health，hard refresh 无效；`rollout restart sts/argocd-application-controller` 后 14 应用全 Synced/Healthy。
+
+**判据总结**：只有多进程且靠进程间信号协调的服务（PostgreSQL）会因 AppArmor 信号拦截产生实际故障。Go/Java 单进程多线程服务的 SIGURG/ptrace 拒绝是无害噪音；优雅停机的 SIGTERM 由 kubelet 从外部发送，不经容器 AppArmor。根治仍在节点级 containerd profile 信号规则；根治前只对已证明故障的 LyraPass PG 保留 Pod 级豁免。
