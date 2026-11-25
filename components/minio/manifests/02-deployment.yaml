@@ -30,6 +30,10 @@ spec:
             - name: MINIO_ROOT_PASSWORD
               valueFrom:
                 secretKeyRef: {name: minio-root, key: password}
+            # 2026-11-25: 让 /minio/v2/metrics/cluster 在集群内匿名可读，供 otel collector 抓取。
+            # MinIO 的 metrics 默认需要专用 JWT（不是基本认证），而 OTel prometheus receiver
+            # 不会自动签 S3 请求；这里只开放 ClusterIP :9000，公网仍走 Pangolin 的 SSO 路由。
+            - {name: MINIO_PROMETHEUS_AUTH_TYPE, value: "public"}
             # Console 登录后的跳转必须使用公网地址；否则反向代理场景会生成集群内地址。
             - {name: MINIO_BROWSER_REDIRECT_URL, value: "https://silo.apikv.com"}
             # S3 presigned URL 等对外地址使用独立 API 域名。
