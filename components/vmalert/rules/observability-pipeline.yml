@@ -79,14 +79,17 @@ groups:
           runbook_url: https://grafana.apikv.com/d/ntfy-alerting-overview?viewPanel=13
 
       - alert: AlertBridgeNotificationFlood
-        # 20/h 是试运行噪声预算，须观察 24–48h 后校准；超限也可能来自真实事件变化。
+        # 2026-11-07 校准: 原试运行预算 20/h 过紧——7 天实测 page 类峰值 29/h
+        # (2026-11-07 证书续期风暴: 21 个端点同窗口失败重发), ticket 类峰值 14/h,
+        # 期间持续 firing 属真实事件而非降噪失效。阈值提到 40/h:
+        # 正常事故风暴不误报, 真正的降噪失效(退避/静音失灵)仍会在 40/h 以上被抓住。
         # AM 的 5m webhook 刷新不是手机通知量，sent 只证明 ntfy 已接受发布。
-        expr: 'sum(increase(alert_bridge_notifications_total{result="sent",notification_class!="test"}[1h])) > 20'
+        expr: 'sum(increase(alert_bridge_notifications_total{result="sent",notification_class!="test"}[1h])) > 40'
         for: 15m
         labels: { severity: warning, category: observability, notification_class: ticket }
         annotations:
           summary: alert-bridge 发布量超过试运行噪声预算
-          description: 非测试主题一小时发布超过 20 条并持续 15 分钟。先区分真实事件变化与重复，再检查 groupKey 和退避状态 PVC；超限不等于去重失效，不以静音掩盖故障。
+          description: 非测试主题一小时发布超过 40 条并持续 15 分钟。先区分真实事件变化与重复，再检查 groupKey 和退避状态 PVC；超限不等于去重失效，不以静音掩盖故障。
           dashboard: https://grafana.apikv.com/d/ntfy-alerting-overview
           runbook_url: https://grafana.apikv.com/d/ntfy-alerting-overview?viewPanel=13
 
@@ -98,3 +101,39 @@ groups:
         annotations:
           summary: 'OTel Collector 导出队列超过 80% (exporter={{ $labels.exporter }})'
           description: '数据即将被丢弃。对照 exporter 名(victoriametrics/victorialogs/victoriatraces)检查对应后端、网络和磁盘；VL/VT 撑满 PVC 会拒写。'
+
+      # 2026-11-25: 补齐 VL/VT 的「数据真的写进去了吗」。指标来自 opentelemetry 的
+      # prometheus/victoria job, 直抓后端自身 /metrics, 不经过 OTLP 写入链,
+      # 因此 collector 的日志/链路 exporter 停掉时这两个计数器会停止增长。
+      - alert: VictoriaLogsMetricsMissing
+        expr: 'absent(vl_bytes_ingested_total) == 1'
+        for: 10m
+        labels: { severity: warning, category: observability, notification_class: ticket }
+        annotations:
+          summary: 抓不到 VictoriaLogs 自身指标
+          description: 连续 10 分钟没有 vl_bytes_ingested_total。检查 prometheus/victoria scrape job 与 VL Pod；此时下面的写入停摆规则也会失去依据。
+
+      - alert: VictoriaLogsIngestionStalled
+        # or vector(0) 让「series 完全消失」也判为停摆, 而不是静默无数据。
+        expr: '(sum(increase(vl_bytes_ingested_total[10m])) or vector(0)) == 0'
+        for: 10m
+        labels: { severity: critical, category: observability, notification_class: page }
+        annotations:
+          summary: VictoriaLogs 连续 20 分钟没有新日志写入
+          description: 检查 Vector/OTel 到 VL 的写入路径、VL PVC 水位与 /insert/jsonline 错误计数；Gatus 的 victorialogs-log-ingestion 探针应同时变红。
+
+      - alert: VictoriaTracesMetricsMissing
+        expr: 'absent(vt_bytes_ingested_total) == 1'
+        for: 10m
+        labels: { severity: warning, category: observability, notification_class: ticket }
+        annotations:
+          summary: 抓不到 VictoriaTraces 自身指标
+          description: 连续 10 分钟没有 vt_bytes_ingested_total。检查 prometheus/victoria scrape job 与 VT Pod。
+
+      - alert: VictoriaTracesIngestionStalled
+        expr: '(sum(increase(vt_bytes_ingested_total[10m])) or vector(0)) == 0'
+        for: 10m
+        labels: { severity: critical, category: observability, notification_class: page }
+        annotations:
+          summary: VictoriaTraces 连续 20 分钟没有新 span 写入
+          description: 检查应用 OTLP/HTTP 到 collector、collector 的 victoriatraces exporter 与 VT PVC；Gatus 的 victoriatraces-span-ingestion 探针应同时变红。

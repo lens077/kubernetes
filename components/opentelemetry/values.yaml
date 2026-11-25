@@ -307,6 +307,53 @@ config:
               - source_labels: [__meta_kubernetes_pod_label_strimzi_io_kind]
                 target_label: strimzi_kind
 
+    # 2026-11-25: VictoriaLogs / VictoriaTraces 自身指标。此前 VM 里查不到
+    # vl_bytes_ingested_total / vt_bytes_ingested_total, 导致「日志/链路真的写进去了吗」
+    # 只能靠 Gatus 直连后端查一次 —— 而 Gatus 进程活着不等于持续入库。
+    # 这两个 job 只抓后端自身 /metrics, 不经 OTLP 写入链, 因此可作独立的写入证据:
+    # 若 collector 的 OTLP exporter 挂了, 这两个计数会停止增长, vmalert 立即红。
+    prometheus/victoria:
+      config:
+        scrape_configs:
+          - job_name: victorialogs
+            scrape_interval: 30s
+            scrape_timeout: 10s
+            kubernetes_sd_configs:
+              - role: pod
+                namespaces:
+                  names: [logging]
+            relabel_configs:
+              - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_name]
+                action: keep
+                regex: victoria-logs-single
+              - source_labels: [__meta_kubernetes_pod_phase]
+                action: keep
+                regex: Running
+              - source_labels: [__meta_kubernetes_pod_ip]
+                target_label: __address__
+                replacement: $1:9428
+              - source_labels: [__meta_kubernetes_pod_name]
+                target_label: pod
+          - job_name: victoriatraces
+            scrape_interval: 30s
+            scrape_timeout: 10s
+            kubernetes_sd_configs:
+              - role: pod
+                namespaces:
+                  names: [observability]
+            relabel_configs:
+              - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_name]
+                action: keep
+                regex: vt-single
+              - source_labels: [__meta_kubernetes_pod_phase]
+                action: keep
+                regex: Running
+              - source_labels: [__meta_kubernetes_pod_ip]
+                target_label: __address__
+                replacement: $1:10428
+              - source_labels: [__meta_kubernetes_pod_name]
+                target_label: pod
+
 resources:
   requests:
     cpu: 50m

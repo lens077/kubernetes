@@ -56,21 +56,15 @@ kctl -n "$NAMESPACE" create configmap vmalert-rules "${args[@]}" \
 helm_install_component "$DIR" --version "$CHART_VERSION"
 routes_apply "$DIR"
 
-# ConfigMap 卷由 kubelet 按同步周期(默认 ≤1 分钟)投影, 之后再 reload 才读到新规则。
-# 先等 Pod 内文件指纹追上仓库文件, 再 POST /-/reload; 等不到也只警告, 不阻塞安装。
-# 两边都按文件名排序再拼接, 否则 manifest_files 的顺序与 Pod 里 glob 的字母序对不上
-_rules_want=$(for f in $(printf '%s\n' "${rules[@]}" | sort); do cat "$f"; done | sha256sum | cut -c1-16)
-_pod_rules_current() {
-  [[ $(kctl -n "$NAMESPACE" exec deploy/vmalert -- sh -c 'for f in $(ls /config/*.yml | sort); do cat "$f"; done' 2>/dev/null | sha256sum | cut -c1-16) == "$_rules_want" ]]
-}
+# 2026-11-25: 不再 POST /-/reload。当前节点内核(7.0.0-38)上 vmalert 进程给自己发
+# SIGHUP 会 EPERM panic(与 PG18 latch 唤醒丢失同源, 见 11-07 处置报告), 热加载会
+# 造成重启风暴且规则未必生效。改为更新 ConfigMap 后滚动重启, 新 Pod 直接读到新规则。
+# 滚动重启期间告警评估有几十秒空窗, 但比「看着 reload 成功实则 panic」可靠。
 if kctl -n "$NAMESPACE" rollout status deploy/vmalert --timeout=120s >/dev/null 2>&1; then
-  if wait_for "vmalert 规则卷投影" 150 _pod_rules_current; then
-    kctl -n "$NAMESPACE" exec deploy/vmalert -- wget -qO- --post-data= http://127.0.0.1:8880/-/reload >/dev/null 2>&1 \
-      && log_ok "vmalert 已 reload 规则" \
-      || log_warn "vmalert /-/reload 失败, 手动: kubectl -n $NAMESPACE exec deploy/vmalert -- kill -HUP 1"
-  else
-    log_warn "150s 内 Pod 里的规则还没追上仓库版本, 稍后手动: kubectl -n $NAMESPACE exec deploy/vmalert -- wget -qO- --post-data= http://127.0.0.1:8880/-/reload"
-  fi
+  kctl -n "$NAMESPACE" rollout restart deploy/vmalert >/dev/null \
+    && kctl -n "$NAMESPACE" rollout status deploy/vmalert --timeout=180s >/dev/null 2>&1 \
+    && log_ok "vmalert 已滚动重启以加载新规则" \
+    || log_warn "vmalert 滚动重启未完成, 检查 kubectl -n $NAMESPACE get pods"
 fi
 log_ok "$ID 安装完成"
 log_info "  规则/告警页面: https://$HOSTNAME  (API: /api/v1/rules, /api/v1/alerts)"

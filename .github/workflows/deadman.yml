@@ -1,0 +1,111 @@
+name: External dead-man probe
+
+# 2026-11-25: 独立于 node3 / ntfy / 集群的第二条告警通道。
+# 生产告警最终都收敛到 node3 上的 ntfy + 同一批公网入口；如果整站、边缘或 ntfy
+# 自己挂了，vmalert / gatus / alert-bridge / host-watchdog 会一起失声。
+# 这个 workflow 从 GitHub 的网络定时探测几个关键公网端点，失败时开 issue
+# （GitHub 会给绑定邮箱发通知），恢复时自动关 issue。它不读取也不依赖任何集群凭据。
+#
+# 这不是业务健康检查的替代品：Gatus 在集群里探得更细。它只回答一个问题——
+# "从外网看，整套入口是不是整体不可用了"。
+
+on:
+  schedule:
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: external-deadman
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Probe public endpoints from GitHub network
+        id: probe
+        shell: bash
+        run: |
+          set -uo pipefail
+          # 判据刻意稀疏且稳定：只判断"入口还在不在"，不判断业务语义。
+          # shop 的 /.git/config 期望 403 是 SafeLine WAF 活性探针（403 表示 WAF 在拦）。
+          TARGETS=(
+            "ntfy|https://ntfy.apikv.com/v1/health|200"
+            "control-tower-gateway|https://gateway.apikv.com/readyz|200"
+            "config-api|https://config-api.apikv.com/healthz|200"
+            "grafana|https://grafana.apikv.com/api/health|200"
+            "safeline-waf|https://shop.apikv.com/.git/config|403"
+          )
+          failed=""
+          details=""
+          for spec in "${TARGETS[@]}"; do
+            IFS='|' read -r name url want <<<"$spec"
+            code=$(curl -sS -o /dev/null -w '%{http_code}' \
+              --connect-timeout 8 --max-time 15 "$url" 2>/dev/null || echo "000")
+            if [[ "$code" == "$want" ]]; then
+              details+="- OK ${name}: ${code} (expected ${want})"$'\n'
+            else
+              details+="- FAIL ${name}: ${code} (expected ${want})"$'\n'
+              failed+="${name} "
+            fi
+          done
+          {
+            echo 'details<<DEADMAN_EOF'
+            printf '%s' "$details"
+            echo 'DEADMAN_EOF'
+            echo "failed=${failed// /,}"
+          } >> "$GITHUB_OUTPUT"
+          if [[ -n "$failed" ]]; then
+            echo "::error::外部探针失败: $failed"
+            exit 1
+          fi
+
+      - name: Open, update or close the dead-man issue
+        if: always()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DETAILS: ${{ steps.probe.outputs.details }}
+          FAILED: ${{ steps.probe.outputs.failed }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          LABEL=deadman
+          TITLE='DEAD-MAN: public edge unreachable from outside'
+          gh label create "$LABEL" --color b60205 \
+            --description 'External dead-man probe failure' >/dev/null 2>&1 || true
+          issue=$(gh issue list --label "$LABEL" --state open --limit 5 --json number --jq '.[0].number' || true)
+
+          body=$(cat <<EOF
+          由 GitHub Actions 从外部网络探测，时间: $(date -u '+%Y-%m-%dT%H:%M:%SZ')
+
+          ${DETAILS}
+
+          运行记录: ${RUN_URL}
+
+          此 issue 不依赖 node3 / ntfy / 集群内部链路；恢复后自动关闭。
+          EOF
+          )
+
+          if [[ -n "${FAILED//,/}" ]]; then
+            if [[ -n "$issue" ]]; then
+              gh issue comment "$issue" --body "$body"
+            else
+              gh issue create --title "$TITLE" --body "$body" --label "$LABEL"
+            fi
+            echo "::error::dead-man issue 已打开/更新，请检查公网入口"
+            exit 1
+          fi
+
+          if [[ -n "$issue" ]]; then
+            gh issue comment "$issue" --body "外部探针已恢复，全部端点可达。自动关闭。\n\n${DETAILS}"
+            gh issue close "$issue" --comment 'Recovered: external dead-man probe all green.'
+            echo "已关闭 issue #$issue"
+          else
+            echo '外部探针全绿，无活跃 dead-man issue'
+          fi

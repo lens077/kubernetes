@@ -91,6 +91,25 @@ endpoints:
     client: {timeout: 10s}
     conditions: ["[STATUS] == 200", "[BODY].status == success", "len([BODY].data.result) > 0"]
     alerts: [{type: custom, failure-threshold: 6, success-threshold: 4}]
+  # 2026-11-25: 补上「数据真的进了 VL/VT 吗」。此前这一组只查 VM 的 K8s 状态与 AM Watchdog,
+  # 日志/链路后端写入停摆也不会红。两条判据刻意走不同路径:
+  #   - VL 直连后端 /select/logsql/hits, 最近 5 分钟必须有日志行; 不经 OTLP 写入链。
+  #   - VT 查 VM 里独立抓取的 vt_bytes_ingested_total(见 opentelemetry 的 prometheus/victoria job),
+  #     这个计数器由 VT 自己 /metrics 暴露, 与 OTLP 写路径无关, 停止增长才是真故障。
+  - name: victorialogs-log-ingestion
+    group: observability-pipeline
+    url: "http://vl-victoria-logs-single-server.logging.svc.cluster.local:9428/select/logsql/hits?query=*&step=1m&start=5m"
+    interval: 2m
+    client: {timeout: 10s}
+    conditions: ["[STATUS] == 200", "len([BODY].hits) > 0", "[BODY].hits[0].total > 0"]
+    alerts: [{type: custom, failure-threshold: 6, success-threshold: 4}]
+  - name: victoriatraces-span-ingestion
+    group: observability-pipeline
+    url: "http://vm-single-victoria-metrics-single-server.victoriametrics.svc.cluster.local:8428/api/v1/query?query=increase(vt_bytes_ingested_total%7Btype%3D%22opentelemetry_traces_otlphttp_protobuf%22%7D%5B10m%5D)"
+    interval: 2m
+    client: {timeout: 10s}
+    conditions: ["[STATUS] == 200", "[BODY].status == success", "len([BODY].data.result) > 0"]
+    alerts: [{type: custom, failure-threshold: 6, success-threshold: 4}]
   # ---------- cdc (PG → Debezium → Kafka → ES, 全在集群内; 替代原 node3 cdc-connect-exporter 的 task 级告警) ----------
   # connector 级 RUNNING 而 task 级 FAILED 是这条链三次事故的共同形态, 所以两级都看。
   # Connect REST 默认被 Strimzi NetworkPolicy 封住, 由 components/kafka/cdc/connect-rest-netpol.yaml 放行 ops。
@@ -120,12 +139,34 @@ endpoints:
   #   → HTTPRoute → 后端 Service
   # 所以它是**唯一**能证明「公网真的能访问到集群」的一组; cluster-origin 那组只证明后端进程活着。
   #
-  # gateway / mall / bugsink-edge 仍未部署，不恢复探针。Config Center 已于 2026-09-23 迁回 K8s，
-  # 对应公网资源也已恢复，因此下面重新纳管 Web/API。业务入口重新上线时再连同 Pangolin 资源加回来。
+  # Config Center 已于 2026-09-23 迁回 K8s，对应公网资源已恢复，下面重新纳管 Web/API。
+  # 2026-11-10: control-tower-gateway 也已部署上线，补了 /readyz 探针（见该条说明，别拿 / 探活）。
+  # mall / bugsink-edge 仍未部署，不恢复探针。业务入口重新上线时再连同 Pangolin 资源加回来。
   #
   # ⚠️ 只放**匿名可达**的入口。traces / vmalert / alerts / hc 这四个资源在 Pangolin 侧
   # 开了 SSO(policy sso=1), 匿名请求恒为 401 —— 拿 401 当"活着"只能证明 Pangolin 边缘在,
   # 证明不了集群后端, 反而会掩盖后端故障, 所以不放进来; 它们的后端由 cluster-origin 覆盖。
+  - name: d-console-edge
+    group: public-edge
+    # 2026-11-07 新增: d.apikv.com 总控制台(Pangolin → newt → Cilium Gateway → sites/homepage)。
+    # 匿名请求恒 302 到 SSO 登录页, 只证明「公网入口 + Pangolin + SSO 门户」整条边活着,
+    # 不证明后端业务(与 console-edge 组说明一致); 后端由 k8s 侧就绪探针覆盖。
+    # 2026-11-06 该入口整链超时而 console-edge 组无告警, 属覆盖盲区, 故提升为带告警探针。
+    url: https://d.apikv.com/
+    interval: 2m
+    client: {timeout: 10s, ignore-redirect: true}
+    conditions: ["[STATUS] == 302", "[CERTIFICATE_EXPIRATION] > 720h"]
+    alerts: [{type: custom, failure-threshold: 6, success-threshold: 4}]
+  - name: gorse-edge-alert
+    group: public-edge
+    # 2026-11-07 新增: gorse 迁回集群后从 console-edge(仅状态卡)提升为带告警探针。
+    # 未登录匿名 302 到 /login, 与 console-edge/gorse-edge 同一判据; gorse 自带登录,
+    # 302 能代表应用本体(console-edge 组头注口径)。
+    url: https://gorse.apikv.com/
+    interval: 2m
+    client: {timeout: 10s, ignore-redirect: true}
+    conditions: ["[STATUS] == 302", "[CERTIFICATE_EXPIRATION] > 720h"]
+    alerts: [{type: custom, failure-threshold: 6, success-threshold: 4}]
   - name: casdoor
     group: public-edge
     # node1 本地站点(node1-local), 与集群无关, 重建期间一直正常
@@ -158,6 +199,33 @@ endpoints:
     client: {timeout: 10s, ignore-redirect: true}
     conditions: ["[STATUS] == 401", "[CERTIFICATE_EXPIRATION] > 720h", "[RESPONSE_TIME] < 5000"]
     alerts: [{type: custom, failure-threshold: 6, success-threshold: 4}]
+  - name: control-tower-gateway-edge
+    group: public-edge
+    # 2026-11-10 新增: gateway.apikv.com 是 Connect RPC 网关(control-tower services/gateway),
+    # 按一级 proto 包名路由, 根路径 / 没有注册 procedure -> 应用层恒返 404
+    # `no route for this procedure`。那不是故障, 绝不能用 / 或随便一个 RPC 路径当探针。
+    # 只有 /readyz 与 /healthz 返回 200 `ok`, 用它作「公网 -> Pangolin -> newt ->
+    # Cilium Gateway 10.10.31.240:443 -> ecommerce-gateway-service:8080」整链判据。
+    # 区分法: 纯文本 `404 page not found` = 没到集群; 应用层 JSON `no route for this procedure`
+    # = 到了集群但 procedure 没注册。详见 control-tower/AGENTS.md。
+    url: https://gateway.apikv.com/readyz
+    interval: 2m
+    client: {timeout: 10s, ignore-redirect: true}
+    conditions: ["[STATUS] == 200", "len([BODY]) > 0", "[CERTIFICATE_EXPIRATION] > 720h", "[RESPONSE_TIME] < 5000"]
+    alerts: [{type: custom, failure-threshold: 6, success-threshold: 4}]
+  - name: safeline-waf-liveness
+    group: public-edge
+    # 2026-11-10: WAF 活性探针。SafeLine 插件 fail-open 时入口仍返回 200/404，
+    # 只探「首页 200」发现不了 WAF 已经不拦了 —— 必须探一个「应当被拦」的请求。
+    # 期望 403 + body.code==403 + success==false；校验响应体是为了区分 CrowdSec
+    # ban 页面（HTML），避免探针源被 ban 时出现假阳性「健康」。
+    # 10m 间隔 + failure-threshold 3，避免高频攻击载荷刷 CrowdSec http-probing。
+    # 若将来探针源 IP 被 ban，把出口 IP 加进 crowdsec whitelists 或换探测路径。
+    url: https://shop.apikv.com/.git/config
+    interval: 10m
+    client: {timeout: 10s, ignore-redirect: true}
+    conditions: ["[STATUS] == 403", "[BODY].code == 403", "[BODY].success == false", "[CERTIFICATE_EXPIRATION] > 720h"]
+    alerts: [{type: custom, failure-threshold: 3, success-threshold: 2}]
   - name: grafana-edge
     group: public-edge
     url: https://grafana.apikv.com/api/health
@@ -229,9 +297,12 @@ endpoints:
     client: {timeout: 10s, ignore-redirect: true}
     conditions: ["[STATUS] == 200", "[CERTIFICATE_EXPIRATION] > 720h"]
     alerts: [{type: custom, failure-threshold: 3, success-threshold: 2}]
-  - name: mcm-site
+  # 2026-11-07: mcm-site 探针删除——mcm.apikv.com 已于 2026-10-28 退役
+  # (Pangolin 资源删除, 产品迁入集群内 k8s sites 命名空间并以 pyxis.apikv.com 对外),
+  # 公网 mcm 恒 404, 探针只会永远红。新域名见下方 pyxis-site。
+  - name: pyxis-site
     group: product-sites
-    url: https://mcm.apikv.com/
+    url: https://pyxis.apikv.com/
     interval: 5m
     client: {timeout: 10s, ignore-redirect: true}
     conditions: ["[STATUS] == 200", "[CERTIFICATE_EXPIRATION] > 720h"]
@@ -282,7 +353,8 @@ endpoints:
     conditions: ["[STATUS] == 200", "[CERTIFICATE_EXPIRATION] > 720h"]
   - name: gorse-edge
     group: console-edge
-    # node2 docker；未登录 302 到 /login
+    # 2026-11-04 已从 node2 docker 迁回集群内 K8s(gorse 命名空间, 经 Cilium Gateway 暴露),
+    # 探针 URL 与判据不变; 未登录 302 到 /login
     url: https://gorse.apikv.com/
     interval: 5m
     client: {timeout: 10s, ignore-redirect: true}
