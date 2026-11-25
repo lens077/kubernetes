@@ -50,3 +50,5 @@ Kyverno 1.20 **彻底删除** legacy `kyverno.io` 策略引擎：旧 `ClusterPol
 - `ecommerce-image-provenance` → `policies.kyverno.io/v1 NamespacedImageValidatingPolicy`（见 ecommerce 仓 `infrastructure/kyverno/policies/`，ArgoCD 管理）
 
 均保持 Audit 语义（不阻断）；镜像验签保留原 keyless identity + rekor。Helm gate 用 `upgrade.acknowledgeLegacyPoliciesNotEnforced=true` 越过（legacy 对象保留但不执行）。旧 legacy 对象可择机删除。CEL 策略的 `images.*` 变量只用于 image policy，ValidatingPolicy 用 `object.spec.containers`。
+
+ArgoCD 3.6 对 `policies.kyverno.io/*` 新 GVK 没有内置 health check，策略本体虽 `ready=true`，App 仍可能显示 Unknown/Missing。已在 `argocd-cm` 补 4 个 `resource.customizations.health.policies.kyverno.io_*` 脚本（按 `status.conditionStatus.ready` 判定 Healthy/Degraded/Progressing），values 源见 `components/argo/values-cel-health.yaml`。ecommerce 项目还需在 AppProject 白名单放行 `policies.kyverno.io/NamespacedImageValidatingPolicy`，否则 `ecommerce-kyverno` 会 SyncError。
