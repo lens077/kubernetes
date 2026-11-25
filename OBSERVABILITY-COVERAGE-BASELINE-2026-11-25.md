@@ -122,7 +122,7 @@
 
 | 层 | 指标 | 日志 | 链路 | 告警/自检 | 面板 | 主要证据 |
 |---|---|---|---|---|---|---|
-| **Golang 应用**（ecommerce 10 服务、control-tower、go-connect-* 等） | ◐ RPC RED + OTel runtime + PG/Redis 插装；无 `/metrics`、无 `service.namespace`、runtime 系列未验收、无 copystack/GC pause | ◐ zap JSON + RPC trace_id + stdout→Vector；**OTLP log 在 K8s 被关**、无脱敏、无限流 | ✅ W3C TraceContext/Baggage、Connect/PG/Redis 插装、Collector 尾采样；前端 RUM 未关联、无 Kafka span | ◐ 5 条应用告警（错误率/配置 stale/守卫）+ 8 条 palcommerce；无延迟分位/SLO；无 CI 指标契约检查 | ❌ APM 盘 404/未发布，规则只能链 Explore | `ecommerce/backend/services/*/internal/pkg/otel/`, `go-connect-kit@v1.0.0/otel/otel.go`, `components/vmalert/rules/ecommerce-app.yml` |
+| **Golang 应用**（ecommerce 10 服务、control-tower、go-connect-* 等） | ◐ RPC RED + OTel runtime + PG/Redis 插装；ecommerce 10 服务有 `service.namespace=ecommerce`，但实测只有 HTTP 5xx 埋点无 RPC、config-service 才有 RPC；runtime 系列已进 VM，无 copystack/GC pause | ◐ zap JSON + RPC trace_id + stdout→Vector；**OTLP log 在 K8s 被关**、go-connect-kit 已加脱敏/限流 | ✅ W3C TraceContext/Baggage、Connect/PG/Redis 插装、Collector 尾采样；前端 RUM 未关联、无 Kafka span | ◐ 4 条 ecommerce（HTTP 5xx/配置 stale/守卫）+ 2 条 config-service（RPC），+ 8 条 palcommerce；无延迟分位/SLO；无 CI 指标契约检查 | ◐ APM 盘已重建（uid `ecommerce-apm`），规则链 Explore；trace→log 已配 derivedFields | `ecommerce/backend/services/*/internal/pkg/otel/`, `go-connect-kit@v1.0.0/otel/otel.go`, `components/vmalert/rules/{ecommerce-app,control-tower-app}.yml` |
 | **Rust 服务端**（ToDo `sync-server`、LyraPass `lyrapass-cloud-server`/`selfhost`、mcm import/export） | ❌ 无 metrics 暴露/抓取；LyraPass 仅 `tracing` 依赖，未见 subscriber 初始化；ToDo sync-server 无 tracing | ◐ println/tracing 默认输出，无结构化采集 | ❌ 无 OTLP | ❌ 无规则 | ❌ 无面板 | 各仓 `Cargo.toml` / `src/` |
 | **系统（主机）** | ◐ otel-node hostmetrics + 云主机 host_otel；`host:*` 15 条记录规则；CPU/内存/磁盘/网络 4 类；**iowait 只记录无告警**，无 FD/TCP 重传/OOM/NTP | ◐ journald → otelcol → VL，node5/6 有历史 404/500 丢数据 | — | ◐ Host* 9 条 + 5 条观测链；node5/6 清单未同步 | ◐ ops-portal（验收口径仍是 8 台，`hosts.json` 已 9 台） | `components/vmalert/rules/cloud-hosts.yml`, `hosts/observability/hosts.json` |
 | **中间件** | ◐ CNPG 13 条、Kafka/Connect/CDC 9 条；Dragonfly/MinIO/ES/Seata/Consul/ClickHouse/Redis **无 scrape job** | ◐ 容器日志经 Vector 进 VL | — | ◐ 仅 CNPG/CDC；ES 只有 Gatus 401+RT；Dragonfly/MinIO 无规则 | ◐ infra-cnpg / infra-cdc；其余无 | `components/opentelemetry/values.yaml`, `components/vmalert/rules/{cnpg,ecommerce-cdc}.yml` |
@@ -185,6 +185,8 @@
 | P2-9 Rust OTel | ❌ 未开始 | `ToDo/sync-server`、`LyraPass/lyrapass-cloud-server`、`selfhost` 未接入 tracing/OTLP |
 | P2-10 APM 面板 / trace→log | ❌ 未开始 | 面板重建与前后端 perf/Bugsink SDK 未做 |
 | P2-11 日志脱敏/限流、明文 token | ◐ 部分完成 | 10 份 gitignored `dev.yml` 中的明文 ntfy token 已清空；go-connect-kit 统一脱敏/限流未做 |
-| P2-12 文档漂移 | ◐ 部分完成 | `OBSERVABILITY-INTEGRATION.md` 中 Gatus 查 VL 的过期描述、node1-public 历史组名已修；规则数现为 16 组 / 104 条（基线时为 9 组 / 65 条） |
+| P2-12 文档漂移 | ◐ 部分完成 | `OBSERVABILITY-INTEGRATION.md` 中 Gatus 查 VL 的过期描述、node1-public 历史组名已修；规则数现为 17 文件 / 18 组 / 109 条（95 alerting + 14 recording；基线时为 9 组 / 65 条） |
 
-当前 vmalert 规则组：`control-plane`、`ecommerce-app`、`middleware-dragonfly`、`middleware-elasticsearch`、`middleware-minio` 等共 16 组；上述新增组健康状态均为 `ok`，无误报 firing。
+当前 vmalert 规则文件 17 个、18 组、109 条（95 alerting + 14 recording）：`control-plane`、`control-plane-process`、`control-tower-app`、`ecommerce-app`、`middleware-{dragonfly,minio,elasticsearch}` 等；实测全部组 health=`ok`、无误报 firing（2026-11-25 `/api/v1/rules`）。
+
+**2026-11-25 config-service 告警拆分**：`ecommerce-app.yml` 原有两条基于 `rpc_server_*` 的错误率/unknown 规则对 10 个 ecommerce 服务是死规则（实测这些服务只有 `http_server_*`，无 RPC 序列；RPC 序列只在 config-service 上）。本次把错误率改为 HTTP 5xx 口径（`EcommerceHTTPErrorRateHigh`），删除 RPC 特有的 unknown 占比规则，`EcommerceRPCMetricsMissing` 去掉死 RPC 分支并改名 `EcommerceAppMetricsMissing`；config-service 的 RPC 告警移到新组 `control-tower-app`（`ConfigServiceErrorRateHigh` + `ConfigServiceRPCMetricsMissing`），真相源在 control-tower 仓 `docs/operations/alerts/control-tower-app.yml`，本仓 `rules/control-tower-app.yml` 为同内容副本，改一边必须改另一边。6 条规则实测 `health=ok/inactive`。

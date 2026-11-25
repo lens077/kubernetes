@@ -157,7 +157,7 @@ Service 由 `components/profiling` 提供）。
 | 前端 Web Vitals / 埋点上报 | 经 newt 暴露的公网 collector 入口（Bearer 鉴权，见 node3 时代 `etc/otelcol/config.yaml` 的 `bearertokenauth`，待迁入 opentelemetry 组件） |
 | 错误追踪 DSN | Bugsink 项目页生成，形如 `https://<key>@bugsink.${CLUSTER_DOMAIN}/<id>` |
 | 周期任务（goose 迁移 Job、ces-audit CronJob、备份） | 各建一个 healthchecks check，Job 末尾 `curl <ping>`；模板见 healthchecks 组件 examples |
-| 业务告警规则 | 放 `components/vmalert/rules/ecommerce-*.yml`，与基础设施规则同一套评审规矩 |
+| 业务告警规则 | ecommerce 业务服务放 `components/vmalert/rules/ecommerce-app.yml`；config-service（control-tower）的 RPC 告警真相源在 control-tower 仓 `docs/operations/alerts/control-tower-app.yml`，同内容副本放本仓 `rules/control-tower-app.yml`（两边各一份，改一边必须改另一边）；palcommerce 放 `palcommerce.yml`。与基础设施规则同一套评审规矩 |
 | 合成探测 | 新域名/新服务加进 `components/gatus/endpoints.yaml` 的 `public-edge` 或 `cluster-origin` |
 | 指标标签 | 禁止用户/订单/SKU 等高基数标签（`STACK.md §2.7`）；同样适用于 VL 的 `_stream_fields` |
 
