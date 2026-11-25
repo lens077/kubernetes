@@ -333,3 +333,5 @@ CNPG 1.30 的 **primary lease 机制 + 单实例集群 + 实例管理器原地�
 **ArgoCD 副作用**：CNPG 重启期间 application-controller 缓存 palcommerce 空 health，hard refresh 无效；`rollout restart sts/argocd-application-controller` 后 14 应用全 Synced/Healthy。
 
 **判据总结**：只有多进程且靠进程间信号协调的服务（PostgreSQL）会因 AppArmor 信号拦截产生实际故障。Go/Java 单进程多线程服务的 SIGURG/ptrace 拒绝是无害噪音；优雅停机的 SIGTERM 由 kubelet 从外部发送，不经容器 AppArmor。根治仍在节点级 containerd profile 信号规则；根治前只对已证明故障的 LyraPass PG 保留 Pod 级豁免。
+
+> 通用排障手册（判据 / 诊断 SOP / 修复与回滚 / 适用范围 / 陷阱 / 命令速查）见 `APPARMOR-SIGNAL-RUNBOOK.md`，后续任何容器遇到同类信号拦截问题先看该文档。

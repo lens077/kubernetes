@@ -127,7 +127,7 @@ k1/k2/k3/node3 的 `systemctl --failed` 均为 0；`host-watchdog`、`apikv-cert
 - **副作用处置**：CNPG 重启期间 ArgoCD `application-controller` 缓存了 palcommerce 应用的空 health 状态，hard refresh 无效；重启 controller 后 14 个应用全部恢复 Synced/Healthy。
 - **备份**：三个 CNPG Cluster CR 变更前快照在 k1 `/root/apparmor-signal-fix-20261125/*-*.yaml.bak`（未使用，配置已回到原值）。
 
-> 结论：容器 AppArmor 信号拦截的根治仍是节点级 containerd profile 信号规则；在根治前，只对**已证明会造成实际故障**的 PostgreSQL（LyraPass）保留 Pod 级 Unconfined 豁免，不做预防性扩大。
+> 结论：容器 AppArmor 信号拦截的根治仍是节点级 containerd profile 信号规则；在根治前，只对**已证明会造成实际故障**的 PostgreSQL（LyraPass）保留 Pod 级 Unconfined 豁免，不做预防性扩大。通用排障手册见 `APPARMOR-SIGNAL-RUNBOOK.md`。
 
 ---
 

@@ -92,19 +92,25 @@ curl -s -b <cookie> https://pangolin.apikv.com/api/v1/org/main/sites \
 > **实测结论（2026-08-19）**：newt 1.15.0 在本集群建立隧道成功，
 > 面板站点 `k8s-cluster` `online=true`。
 
-> **实测结论（2026-10-24）**：newt 1.19.0（当前最新）+ Pangolin 服务端 1.25.3（当前最新）配套运行正常，
+> **实测结论（2026-10-24）**：newt 1.19.0（当时最新）+ Pangolin 服务端 1.25.3 配套运行正常，
 > `k8s-cluster` / `k1` / `k2` / `k3` / `node2` 站点全部 `online=true`。
 > 客户端启动日志同时打印 `Newt version 1.19.0` 与 `Server version: 1.25.3`，两者都对才算版本配平。
 
-## 5.1 版本线对照（2026-10-24 复核）
+> **实测结论（2026-11-10）**：newt 1.20.0 + Pangolin 服务端 1.26.0 配套运行正常，
+> 面板 11 个站点（含 2026-11-03 新增的 `node3`/`node4`/`node5`/`node6`）全部 `online=1`。
+> 8 台主机级 newt 与 k8s 内 newt 均报 `Server version: 1.26.0`，服务端 0 条告警。
+
+## 5.1 版本线对照（2026-11-10 复核）
 
 **Pangolin 服务端与 newt 客户端是两个独立的版本线**，不要把服务端的号套到客户端上：
 
 | 组件 | 上游 | 当前版本 | 说明 |
 |---|---|---|---|
-| Pangolin（服务端控制面） | [fosrl/pangolin](https://github.com/fosrl/pangolin) | **1.25.3** | node1 Docker 版控制面 |
-| Gerbil（隧道数据面） | [fosrl/gerbil](https://github.com/fosrl/gerbil) | 1.5.2 | 已是最新，无需动 |
-| Newt（客户端） | [fosrl/newt](https://github.com/fosrl/newt) | **1.19.0** | 客户端版本线独立，1.25.x 服务端配套 1.19.0 |
+| Pangolin（服务端控制面） | [fosrl/pangolin](https://github.com/fosrl/pangolin) | **1.26.0** | node1 Docker 版控制面 |
+| Gerbil（隧道数据面） | [fosrl/gerbil](https://github.com/fosrl/gerbil) | 1.5.2 | 独立版本线（上游已有 1.6.0），本次不动数据面 |
+| Newt（客户端） | [fosrl/newt](https://github.com/fosrl/newt) | **1.20.0** | 客户端版本线独立，1.26.x 服务端配套 1.20.0+（SSH session logging 的前置要求） |
+| Badger（Traefik 插件） | [fosrl/badger](https://github.com/fosrl/badger) | **v1.8.0** | 2026-11-03 起已解禁，1.26.0 迁移自动改写并实测加载成功 |
+| Traefik | traefik | v3.7.12 | 未动镜像；仅为让 Badger v1.8.0 生效单独重启过一次 |
 
 升级时服务端与客户端要**成对升**：只升服务端不升客户端，服务端日志会出现
 `Newt ping with outdated config version: 2 (current: 0)`；只升客户端不升服务端，
@@ -114,7 +120,7 @@ curl -s -b <cookie> https://pangolin.apikv.com/api/v1/org/main/sites \
 
 | 位置 | 形态 | 站点 | 升级方式 |
 |---|---|---|---|
-| k8s 内（`pangolin` ns） | Deployment，镜像 `fosrl/newt:1.19.0` | `k8s-cluster` | 改本目录 manifest → `bash components/newt/install.sh` |
+| k8s 内（`pangolin` ns） | Deployment，镜像 `fosrl/newt:1.20.0` | `k8s-cluster` | 改本目录 manifest → `bash components/newt/install.sh` |
 | 主机级 | `/usr/local/bin/newt` + systemd `newt.service` | `k1`/`k2`/`k3`/`node2` + 云机 `node3`/`node4`/`node5`/`node6`（2026-11-03 新增，siteId 15–18） | 换二进制 → `systemctl restart newt.service` |
 
 主机级 newt 的凭据在 `/home/docker/newt/newt.env`（每台一份），
@@ -122,8 +128,13 @@ curl -s -b <cookie> https://pangolin.apikv.com/api/v1/org/main/sites \
 云机的加/移除/巡检用 `./newt-host.sh add|remove <ssh-alias> | list`（面板凭据放 `~/.pangolin-admin.env`，不入库）；
 secret 只在站点创建那一刻回显一次，凭据丢失只能在面板删站重建。
 
+**Windows 客户端**（开发机接入）见同目录 `WINDOWS-CLIENT-RUNBOOK.md`：
+面板建站点 → 下载 `newt_windows_amd64.exe` 1.20.0 → NSSM 注册开机自启 →
+验握手与 `online=True` → 建 HTTP/TCP 资源。注意 newt 是反代，
+资源 target IP 要从 Windows 本机视角写 `127.0.0.1`，不是机器公网 IP。
+
 > **机房拉镜像**：k1/k2/k3 的 containerd 配了一串国内镜像站，个别站对非公开路径会 401。
-> 实测 `fosrl/newt:1.19.0` 能拉到，但**换版本前先在三台节点上 `crictl pull` 预拉**，
+> 实测 `fosrl/newt:1.20.0` 能拉到，但**换版本前先在三台节点上 `crictl pull` 预拉**，
 > 否则 rollout 时可能卡在 `ImagePullBackOff`。
 > GitHub release 下载同理，机房直连不通，走 `https://ghfast.top/https://github.com/...`。
 
@@ -142,19 +153,30 @@ secret 只在站点创建那一刻回显一次，凭据丢失只能在面板删�
 - **凭据不入库**：`newt-credentials` Secret 由 install.sh 从 creds 生成，manifest 里只有引用。
 - **`auth-daemon must be run as root` 是可忽略的 WARN**：那是 newt 的 SSH 认证附加功能，
   与隧道无关；本组件刻意不给 root。
-- **升服务端时别让 Pangolin 把 Badger 改成 v1.8.0**（2026-10-24 记录）：
-  Pangolin 1.25 起，如果 release 里含 Badger 更新，它会**尝试自动改写 Traefik 配置**里的
-  Badger 版本号。坏消息是上游明确警告 **Badger `v1.8.0` 是坏的**（过不了 Traefik 插件完整性校验，
-  插件会被禁用 → 所有路由 404），要求留在 `v1.7.0`。
-  好消息是这个自动改写**只在 Traefik 配置与默认安装器模板一致时才生效**，
-  改不动就静默失败。本集群 `config/traefik/traefik_config.yml` 已深度定制
-  （vendored `plugins-local` + `localPlugins` + crowdsec/safeline），与默认模板不符，
-  实测升级后指纹不变、Badger 仍是 `v1.7.0`。
-  **但这是"碰巧安全"，不是保证** —— 每次升服务端前都该确认一次：
+- **Badger v1.8.0：结论在 2026-11-03 反转了**（2026-11-10 修订，覆盖 10-24 的旧记录）：
+  - **10-24 当时**：上游明确警告 `v1.8.0` 是坏的（过不了插件完整性校验 → 插件被禁 → 全路由 404），
+    要求留 `v1.7.0`。当时我们升 1.25.3 后配置指纹没变、Badger 仍是 v1.7.0，
+    于是推断「深度定制的 Traefik 配置不匹配默认安装器模板 → 自动改写静默失败」。
+  - **11-10 实测推翻了这个推断**：1.26.0 迁移日志明确打印
+    `Updated the version of Badger in your Traefik configuration to v1.8.0`，
+    指纹 `d4c74bd…` → `2cc2cf7…`。**不要依赖"定制配置能挡住改写"**。
+  - 修复方是 **Traefik 插件目录服务端**（11-03），不是 Traefik 二进制版本门槛：
+    最新稳定版 v3.7.17 发布于 10-30，早于修复日；本集群 v3.7.12 实测也能加载 v1.8.0。
+    1.26.0 release notes 已明确「You can now safely upgrade to Badger v1.8.0」。
+  - ⚠️ **最容易漏的一步**：迁移只改**配置文件**，不会重启 traefik。此时
+    配置写 v1.8.0、运行态还是 v1.7.0，等于把雷留到下一次任何一次 traefik 重启。
+    升完服务端必须立刻重启 traefik 让两者对齐，并验证插件真的加载成功：
 
-  ```bash
-  grep -A3 'badger:' /home/docker/pangolin/config/traefik/traefik_config.yml   # 应为 v1.7.0
-  ```
+    ```bash
+    grep -A2 'badger:' /home/docker/pangolin/config/traefik/traefik_config.yml
+    docker restart traefik
+    docker logs traefik --since 2m | grep -i 'Plugins loaded'     # 应含 badger
+    docker exec traefik ls /plugins-storage/archives/github.com/fosrl/badger/   # 应只有 v1.8.0.zip
+    curl -s -o /dev/null -w '%{http_code}\n' -k https://pangolin.apikv.com/     # 200
+    ```
+
+    重启前先确认 `safeline-detector` 是 healthy（它没重启时才安全，详见 node1 安全栈记录）；
+    重启后顺带看 traefik 日志无 `crowdsec …403` / `safeline error in detection` / `broken pipe`。
 
 - **升服务端必然断隧道几秒**（2026-10-24 记录）：`docker compose up -d pangolin` 重建控制面时，
   所有 newt 客户端会连到断掉的后端，报 `failed to get token: ... 502 Bad Gateway. Retrying in 3s...`。
