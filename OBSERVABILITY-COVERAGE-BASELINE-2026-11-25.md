@@ -159,9 +159,32 @@
 
 ---
 
-## 6. 本轮未做的事
+## 6. 基线盘点时点未做的事
+
+> 以下描述的是**写基线报告时**的状态；后续已按 §5 顺序实施，实际进度见 §7。
 
 - 未修改任何 ntfy / vmalert / gatus / Alertmanager / alert-bridge 配置。
 - 未修改任何 GitHub 仓库或 CI 文件。
 - 未对业务代码、Go/Rust SDK 做任何改动。
 - 只读取证：node3 ntfy db 查询、k1 ConfigMap 读取、`gh api` 查询、本地文档与源码阅读。
+
+---
+
+## 7. 实施状态（2026-11-25 更新）
+
+| 项 | 状态 | 证据 / 备注 |
+|---|---|---|
+| P0-1 VL/VT 写入新鲜度 | ✅ 已完成 | Gatus `victorialogs-log-ingestion` / `victoriatraces-span-ingestion` 双绿；OTel `prometheus/victoria` 抓 VL/VT 自身指标；vmalert 增 4 条新鲜度规则 |
+| P0-2 外部 dead-man | ✅ 已完成 | `.github/workflows/deadman.yml`，30 分钟探测 5 个公网端点，失败建/更新 `deadman` issue；手工运行 45523609590 全绿 |
+| P0-3 GitHub Actions 失败 → ntfy | ✅ 已完成 | alert-bridge `/github` HMAC 验签 + 24h 去重；webhook 走 `config-api.apikv.com/github`（`ack` 资源 SSO=1 不可用）；49 个单测全绿 |
+| P0-4 host-watchdog 清单 | ✅ 已完成 | node1 清单清空并清理 14 条僵尸事件；node3 移除 `mcm-site` 漂移；node4/5/6 由 `cloud-hosts.yml` 覆盖，不部署 watchdog |
+| P1-5 Go runtime / namespace | ◐ 部分完成 | 已验证 `go_goroutine_count` 等 series；10 个 Go 服务经 `OTEL_RESOURCE_ATTRIBUTES` 统一下发 `service.namespace=ecommerce` 并已进入 VM；RPC 指标名/错误码 label 漂移已修；GC pause 自定义采集未做 |
+| P1-6 持续剖析 | ❌ 未开始 | pprof / Pyroscope / Parca 均未接入，函数级 `runtime.copystack` 仍不可见 |
+| P1-7 控制面 | ◐ 部分完成 | `control-plane.yml` 3 条规则已上线，基于 `k8s_pod_phase` / `k8s_container_ready`；apiserver 延迟、etcd leader/raft、scheduler/CM leader lease 因端点只监听 127.0.0.1 尚未覆盖；无 Grafana 面板 |
+| P1-8 中间件 | ✅ 抓取与规则完成，面板未做 | Dragonfly（TLS :6379/metrics）、MinIO（`MINIO_PROMETHEUS_AUTH_TYPE=public`）、ES（`elasticsearch-exporter` v1.7.0）均已进 VM；规则组 3+5+4 条全 `ok/inactive`；无专门面板 |
+| P2-9 Rust OTel | ❌ 未开始 | `ToDo/sync-server`、`LyraPass/lyrapass-cloud-server`、`selfhost` 未接入 tracing/OTLP |
+| P2-10 APM 面板 / trace→log | ❌ 未开始 | 面板重建与前后端 perf/Bugsink SDK 未做 |
+| P2-11 日志脱敏/限流、明文 token | ◐ 部分完成 | 10 份 gitignored `dev.yml` 中的明文 ntfy token 已清空；go-connect-kit 统一脱敏/限流未做 |
+| P2-12 文档漂移 | ◐ 部分完成 | `OBSERVABILITY-INTEGRATION.md` 中 Gatus 查 VL 的过期描述、node1-public 历史组名已修；规则数现为 16 组 / 104 条（基线时为 9 组 / 65 条） |
+
+当前 vmalert 规则组：`control-plane`、`ecommerce-app`、`middleware-dragonfly`、`middleware-elasticsearch`、`middleware-minio` 等共 16 组；上述新增组健康状态均为 `ok`，无误报 firing。

@@ -84,6 +84,7 @@ sudo bash bootstrap/start.sh --verify
 | otel-node → VM | `opentelemetry-node/component.env` 的 `REMOTE_METRICS_URL` 留空 | vmui 查 `system_cpu_time_seconds_total` |
 | vector → VL | `vector/values.yaml` sink `victorialogs.uri` | Grafana VictoriaLogs 查 `kubernetes.pod_namespace:=kube-system` |
 | CNPG/vmalert/AM/gatus → VM | `opentelemetry/values.yaml` 的 `prometheus/cilium` receiver 新增 4 个 job | vmui 查 `cnpg_collector_up`、`vmalert_alerts_send_errors_total`、`alertmanager_build_info`、`gatus_results_total` |
+| VL/VT/Dragonfly/MinIO/ES → VM | `opentelemetry/values.yaml` 的 `prometheus/victoria`、`prometheus/middleware` receiver；MinIO 需 Deployment 上的 `MINIO_PROMETHEUS_AUTH_TYPE=public`，ES 由 `components/elasticsearch-exporter` 提供 | vmui 查 `vl_bytes_ingested_total`、`vt_bytes_ingested_total`、`dragonfly_connected_clients`、`minio_cluster_capacity_raw_total_bytes`、`elasticsearch_cluster_health_status` |
 
 指标命名口径（VM 开了 `usePrometheusNaming`）：OTLP 点号变下划线（`k8s.container.restarts` →
 `k8s_container_restarts`），单调计数加 `_total`，带单位加 `_seconds`/`_bytes`（`system.cpu.time` →
@@ -107,8 +108,8 @@ sudo bash bootstrap/start.sh --verify
 | 线 | 配置在哪 | 怎么验证 |
 |---|---|---|
 | gatus → 集群内后端 | `gatus/endpoints.yaml` `cluster-origin` 组 | `https://status.dev.test` 全绿 |
-| gatus → 「数据到了吗」 | `observability-pipeline` 组：查 VM `k8s_deployment_available`、查 VL 容器日志与 Event、查 AM `Watchdog` | 同上；任一探针红 = 对应链路断，先于任何业务告警 |
-| gatus → 公网入口 | `public-edge` / `node1-public` 组（沿用 node3 清单） | 同上 |
+| gatus → 「数据到了吗」 | `observability-pipeline` 组：查 VM `k8s_deployment_available`、查 VL 最近 5 分钟真实日志 hits、查 VT 最近 10 分钟 `vt_bytes_ingested_total` 增长、查 AM `Watchdog` | 同上；任一探针红 = 对应链路断，先于任何业务告警 |
+| gatus → 公网入口 | `public-edge` / `node1-public` 组（`node1-public` 是历史组名，目标现由 node3 边缘承载） | 同上 |
 | gatus → ntfy | `gatus/config.yaml` `alerting.ntfy`（凭据来自 `$STATE_DIR/creds/ntfy.env`） | 故意把一个端点的 URL 改错重跑 install.sh，2 次失败后手机收到 |
 | CronJob → healthchecks | `healthchecks/examples/cnpg-backup-ping-cronjob.yaml`（`/start` → 成功 ping / `/fail`） | 面板里 check 变绿；把 CronJob `suspend: true` 一天后变红 |
 | healthchecks → ntfy | 面板 Integrations → ntfy（同一 token） | 面板 "Send test notification" |

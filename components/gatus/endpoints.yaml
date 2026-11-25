@@ -4,7 +4,7 @@
 #   observability-pipeline  不只看进程存活，还检查数据是否进入集群内 VictoriaMetrics
 #   cdc                     集群内 CDC 链 (Connect task 状态 / ES 存活)
 #   public-edge             经 Pangolin/newt 暴露的公网入口(与 node3 时代同一批域名)
-#   node1-public            node1 VPS 上的站点
+#   node1-public            历史组名；node1 已退役，这组域名现由 node3 边缘承载
 #   product-sites           对外产品站与博客（带告警，挂了影响访客）
 #   console-edge            d.apikv.com 总控制台卡片的入口状态（不带告警，只供控制台显示，见该组说明）
 # 端点里的 `alerts: [{type: custom, failure-threshold: 11, success-threshold: 6}]` 行在未配置 ntfy 时会被 install.sh 删掉。
