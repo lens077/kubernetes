@@ -308,3 +308,18 @@ CNPG 1.30 的 **primary lease 机制 + 单实例集群 + 实例管理器原地�
   - 试过给 STS 加 `startupProbe`（60×10s）并重建 Pod：仍在同一处 EPERM 退出，证明不是 liveness 过早。已撤销探针并再次重建 Pod，live 配置回到原状；备份 `/root/lyrapass-postgres-sts.bak-20261125.yaml`。数据和配置均未改动。
   - 后续需单独恢复 LyraPass PG（备份恢复或继续查 checkpoint 信号权限），不在本次变更范围。
 - 四台主机 `systemctl --failed` 均 0；`host-watchdog`/`apikv-cert-renew`/`pangolin-strict-route`/`crowdsec-hubupdate`/`k8s-etcd-defrag` 等 timer 近期均有成功记录。14 个 ArgoCD 应用全 `Synced / Healthy`。
+
+## 16. LyraPass PG 崩溃循环 —— 根因确认与修复（09:12，已恢复）
+
+**根因：AppArmor 信号拦截，不是数据损坏 / liveness / 权限位。** 深入取证过程：
+
+1. 放宽 liveness 探针（`initialDelaySeconds` 3600）并重建 Pod：数据库仍卡 `in crash recovery`，redo 0.04s 完成后永远不进 ready → 排除探针过早。
+2. 容器内进程取证：所有 PG 进程 UID=70，`/var/run/postgresql` 属组 70、PGDATA 属主 70，`CapEff=0`、`NoNewPrivs=1`、`Seccomp=2`。`kill -0 20` 成功，但 `kill -INT/-TERM/-2 20` 全部 `Permission denied` → 不是进程不存在或 UID 不匹配。
+3. 节点侧内核 audit 找到铁证：`apparmor="DENIED" operation="signal" profile="cri-containerd.apparmor.d" ... signal=int peer="cri-containerd.apparmor.d//&unconfined" denied_mask="send"`，1 小时 `signal=int` **8437 次**，另有 kill/pwr/quit/usr/urg。PG 进程标签 `cri-containerd.apparmor.d//&unconfined (enforce)`。
+4. containerd **v2.3.4**（`io.containerd.runc.v2`），默认 profile `cri-containerd.apparmor.d (enforce)` 拒绝向 unconfined peer 发信号。PG crash recovery 末尾 `RequestCheckpoint()` 发 SIGINT 给 checkpointer 被 EPERM 拒 → 永久卡在 `in crash recovery` → migrate 连不上 → cloud 0/2 → 维护端点不可达。故障自 11-15 起（lastSuccessful 停在 11-15 01:17），k1 重启只是让 Pod 重建重新暴露，非本次升级引入。
+
+**修复**（可逆）：`sts/postgres` pod securityContext 加 `appArmorProfile.type: Unconfined`（K8s 1.37 GA 字段，旧注解已废弃），重建 Pod。已固化到 LyraPass 仓 `deploy/cloud/k8s/base/k8s.yaml`。seccomp RuntimeDefault / runAsNonRoot / drop ALL 全部保留，仅解除 AppArmor。
+
+**验证**：`pg_controldata` = `in production`、`database system is ready to accept connections`、0 重启；17 张业务表完好（零丢失）；cloud 2/2 Ready；手动维护 Job 成功并追平 `lastSuccessfulTime=2026-11-25T01:11:10Z`；3 个历史失败 Job + 临时 Job 已清理；14 个 ArgoCD 应用全 Healthy。
+
+**经验**：容器化 PostgreSQL 出现 `could not signal for checkpoint: Permission denied` 且 `kill -0` 正常时，先查内核 `apparmor DENIED operation=signal`——containerd 2.x 默认 AppArmor profile 会拒绝容器进程间信号，尤其 crash recovery 的 checkpoint 路径。修法：对该 Pod 设 `appArmorProfile: Unconfined`，或从节点侧修正 profile 的信号规则（影响面更大）。

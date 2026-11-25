@@ -106,7 +106,16 @@ CEL 策略保持 Audit 语义；冒烟测试确认违规 Pod 放行且 PolicyRep
 
 k1/k2/k3/node3 的 `systemctl --failed` 均为 0；`host-watchdog`、`apikv-cert-renew`、`pangolin-strict-route`、`crowdsec-hubupdate`、`k8s-etcd-defrag` 等 timer 均有近期成功运行记录，无漏跑。14 个 ArgoCD 应用当前全部 `Synced / Healthy`。
 
-**后续**：LyraPass cloud/PG 需单独恢复（从备份恢复或继续排查 checkpoint 信号权限），本次变更不含其数据与配置改动。
+### 3.6 LyraPass PG 崩溃循环根因与修复（09:12 追加，已恢复）
+
+`lyrapass-cloud-maintenance` 失败的唯一根因已定位并修复，服务与定时任务全部恢复。
+
+- **真正根因（AppArmor 信号拦截，非数据损坏 / 非探针）**：节点 k1 的 containerd **2.3.4** 默认 AppArmor profile `cri-containerd.apparmor.d` 拒绝同标签进程间 signal。内核 audit 显示 `operation="signal" ... signal=int ... peer="cri-containerd.apparmor.d//&unconfined" ... DENIED`（1 小时内 `signal=int` 8437 次），另含 `kill/pwr/quit/usr/urg`。PG 在 crash recovery 结束时须向 checkpointer 发 SIGINT 完成 end-of-recovery checkpoint，被 EPERM 拒绝（`could not signal for checkpoint: Permission denied`），数据库永久卡在 `in crash recovery`，`migrate` init container 连不上库 → cloud 0/2 → 维护端点不可达。
+- **排除项**：容器进程 UID 均为 70、`kill -0` 成功但真实信号全失败；`CapEff=0`、`NoNewPrivs=1`；PGDATA 属主 70、`/var/run/postgresql` 属组 70（chmod 报错是 entrypoint 无害告警）；数据目录仅 46.9M，`pg_controldata` redo 0.04s 正常完成。`startupProbe` 无效也印证非 liveness 问题。
+- **修复**：给 `sts/postgres` 的 pod `securityContext` 加 `appArmorProfile.type: Unconfined`（仅本 Pod 解除 AppArmor；seccomp RuntimeDefault / runAsNonRoot / drop ALL 保留）。重建 Pod 后 `cluster state = in production`、`database system is ready to accept connections`，0 重启。已固化到 LyraPass 仓 `deploy/cloud/k8s/base/k8s.yaml`（带注释）。
+- **数据完整性**：17 张业务表全部完好（`accounts`/`vaults`/`vault_records`/`subscriptions`/`_sqlx_migrations` 等），零丢失。
+- **验证**：`deployment/lyrapass-cloud` 两个副本均 Ready；手动 `create job --from=cronjob` 维护任务成功（`{"expiredSubscriptions":0,...}`），`lastSuccessfulTime` 从 11-15 追平到 `2026-11-25T01:11:10Z`；已清理 3 个历史失败 Job 与临时 Job。14 个 ArgoCD 应用全部 Healthy。
+- **回滚**：删除 `appArmorProfile` 字段并重建 Pod 即回到 confinement（会再次卡住，除非 containerd profile 信号规则修复）；live 备份仍在 k1 `/root/lyrapass-postgres-sts.bak-20261125.yaml`（Note: 该备份是加 Unconfined 之前的原始配置）。
 
 ---
 
@@ -136,7 +145,7 @@ k1/k2/k3/node3 的 `systemctl --failed` 均为 0；`host-watchdog`、`apikv-cert
 | casdoor 自动备份 | 待补 | 现有 dump 停在 2026-11-11；建议补每日 timer。 |
 | casdoor DB 连接串 | 保持 | `pg.apikv.com` 经 `extra_hosts` 指向 `172.18.0.1`，既走内网又满足 `verify-full` SAN；改公网 IP/127.0.0.1 已实测不可行。 |
 | `scorpius-prod` Degraded | **已恢复 Healthy** | 03:16 k3 计划内关机重启，备份 Job 03:17 命中 API 重建窗口而 3 次重试全失败；手动复现备份成功并同步 CronJob 状态。详见 §3.4。 |
-| `lyrapass-cloud-maintenance` | **仍失败（存量故障）** | 服务本身下线：cloud 0/2 + PG 卡在 crash recovery；k1 03:06 重启后开始，非本次升级引入。详见 §3.5，需单独恢复。 |
+| `lyrapass-cloud-maintenance` | **已恢复** | 根因是 containerd 2.3.4 AppArmor profile 拒绝 PG checkpoint 的 SIGINT，数据库卡在 crash recovery。给 PG Pod 设 `appArmorProfile: Unconfined` 后恢复，数据零丢失，定时任务追平。详见 §3.6。 |
 
 ---
 
