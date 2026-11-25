@@ -13,8 +13,8 @@
 #
 # annotations 约定：除 summary/description 外，每条应用告警必须带
 #   dashboard  —— alert-bridge 转成 ntfy 的 Click，点通知直接打开 Grafana Explore，已预填该服务（与环境）的错误查询。
-#                 不链 APM 盘：2026-09-24 集群重建后 ecommerce-apm 等三张盘不在 Grafana 里（404），
-#                 且生成的 JSON 仍含退役的 Loki/Jaeger 数据源不能直接导入；APM 盘重建后可改回看板链接。
+#                 2026-11-25 APM 盘已重建（uid ecommerce-apm，见 components/grafana/dashboards/），但 Explore
+#                 链接仍按服务/环境预填查询，定位路径更短，故保留；需要全局视角时从该盘进入。
 #                 主机名与 components/grafana/values.yaml 的 root_url 一致（公网 grafana.apikv.com）；
 #                 不能用 $externalLabels.cluster 拼：那是集群内网域 dev.test，手机上解析不了。
 #   logs_query —— 可直接粘进 VictoriaLogs 的 LogsQL（字段名 2026-09-24 在 VL 实测）。

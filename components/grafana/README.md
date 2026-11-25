@@ -2,8 +2,8 @@
 
 ## 1. 定位
 
-指标（VictoriaMetrics）、日志（Loki）、链路（Jaeger）三个后端的统一查询界面与告警入口。
-数据源在安装时按**集群里实际装了哪些后端**自动预置，不用手点。
+指标（VictoriaMetrics）、日志（VictoriaLogs）、链路（VictoriaTraces，Jaeger 兼容 API）三个后端的统一查询界面与告警入口，
+另有持续剖析数据源（Pyroscope，由 `components/profiling` 提供 Service）。数据源在安装时预置，不用手点。
 
 ## 2. 上游最佳实践
 
@@ -63,6 +63,9 @@
 | `infra-kubernetes` | 节点 Ready、Deployment/StatefulSet、运行容器与重启 |
 | `infra-cdc` | Connect task、Debezium、复制槽 WAL、消费 lag 和 PG/ES 对账 |
 | `infra-observability` | OTel 队列、Hubble、Gatus 与通知链路 |
+| `control-plane-overview` | apiserver / etcd / scheduler / controller-manager 抓取存活、etcd Leader、apiserver 延迟与错误率、调度与队列 |
+| `middleware-overview` | Dragonfly / MinIO / Elasticsearch 的容量、健康与命中率 |
+| `ecommerce-apm` | ecommerce RED（HTTP）、Connect RPC RED、Go runtime 与 copystack/Pyroscope 指引 |
 
 **运维控制台**：跳转卡片是 HTML 文本面板，只用 Grafana 消毒器保留的内联样式（flex，不用 grid）；外部服务 `target="_blank"`，站内面板同页打开。链接清单在 `build-dashboards.py` 的 `PORTAL_LINKS`，按 Pangolin 启用资源手工筛选：纯 API / 数据入口（`*-api`、`es-dev`、`minio` S3 端口、`otlp-dev`、`gateway`）、已屏蔽资源和个人 mac 上的站点不收录，`test_portal.py` 防止回归。资源面板只读共享 `host:*` recording rules（[契约](../vmalert/README-host-metrics.md)），不再自行聚合原始标签。CPU 忙碌与 iowait 独立，另有网络速率、预期主机覆盖和原始上报时间。主机清单来自 `hosts/observability/hosts.json`；每条记录和覆盖数据均有 180 秒新鲜度门槛。缺失用灰色占位及覆盖表显示，不补绿色零；`HostMetricsMissing` / `HostMetricSignalMissing` 区分整机与单类信号缺失。
 
@@ -150,5 +153,10 @@ curl -sk -u "admin:$PASS" -H "Host: grafana.dev.test" \
 - **数据源列表是空的**：装 Grafana 时后端还没起来。重跑 `bash components/grafana/install.sh`
   即可（幂等，密码不变）。
 - **Secret 与登录密码不一致**：Grafana 只在数据库首次初始化时读取管理员 Secret，之后更改 Secret 或重跑安装器不会同步数据库密码。不要删除本地凭据文件后重装来重置密码；这会扩大凭据源漂移。面板更新只操作 dashboard ConfigMap，凭据修复须作为单独的授权任务处理。
-- **面板里 trace 关联不上日志**：Jaeger 数据源要配 `tracesToLogs`，这块目前没预置，
-  需要在 UI 里按实际的 label 映射配置。
+- **面板里 trace 关联不上日志**：已在 `install.sh` 的 `ds-vtraces`（Jaeger 类型，指向 VictoriaTraces）
+  同时预置 `jsonData.tracesToLogs` 与 `tracesToLogsV2`，目标 `ds-vlogs`。采样确认 VictoriaLogs 的 trace id
+  字段名是 `trace_id`（不是 Loki 默认的 `traceID`），OTel 字段保留点号名 `service.name`，因此走 `customQuery`
+  写 `trace_id:"${__trace.traceId}"`，并把 `service.name` 显式映射为 `service.name`。
+  `ds-vlogs` 同时配了 `derivedFields`，日志行的 `trace_id` 可反向跳回链路。
+  若 span 上没有 `service.name` 或日志里没有 `trace_id`，「Logs for this span」不会出现或查不到结果——
+  这是数据前提，不是数据源配错；先按 [OBSERVABILITY-INTEGRATION.md](../../OBSERVABILITY-INTEGRATION.md) §3.1 采样验证字段。

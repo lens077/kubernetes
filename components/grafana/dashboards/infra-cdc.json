@@ -1211,6 +1211,30 @@
       "includeVars": false,
       "keepTime": true,
       "targetBlank": false
+    },
+    {
+      "title": "控制面进程",
+      "url": "/d/control-plane-overview",
+      "type": "link",
+      "includeVars": false,
+      "keepTime": true,
+      "targetBlank": false
+    },
+    {
+      "title": "中间件",
+      "url": "/d/middleware-overview",
+      "type": "link",
+      "includeVars": false,
+      "keepTime": true,
+      "targetBlank": false
+    },
+    {
+      "title": "电商 APM",
+      "url": "/d/ecommerce-apm",
+      "type": "link",
+      "includeVars": false,
+      "keepTime": true,
+      "targetBlank": false
     }
   ]
 }

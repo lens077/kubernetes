@@ -14,10 +14,10 @@ Alertmanager + 自写告警桥 + gatus/healthchecks/bugsink）。node3 重装后
  ┌──────────── 产生 ─────────────┐   ┌──────── 采集/中继 ────────┐   ┌──────── 存储 ────────┐   ┌──── 门面 ────┐
  Go 服务 / 前端 (OTel SDK) ──OTLP──▶ otel-opentelemetry-collector ─▶ VictoriaMetrics :8428  ─┐
  Cilium/Hubble/Tetragon 指标 ──scrape─▶  (Deployment, opentelemetry ns)  ─▶ VictoriaLogs   :9428  ─┼─▶ Grafana
- CNPG / vmalert / AM / gatus ──scrape─▶  ├ k8s_cluster / k8sobjects      ─▶ VictoriaTraces :10428 ─┘   (数据源 uid 固定:
- K8s 对象状态与 Event ────────────────▶  └ prometheus receiver                                          ds-prometheus/ds-vlogs/
- 节点主机指标 ── otel-node DaemonSet ───────────────────────────────▶ VictoriaMetrics                    ds-vtraces/ds-alertmanager)
- 容器 stdout/stderr ── vector DaemonSet(VRL 脱敏) ───────────────────▶ VictoriaLogs
+ CNPG / vmalert / AM / gatus ──scrape─▶  ├ k8s_cluster / k8sobjects      ─▶ VictoriaTraces :10428 ─┘   (数据源: 指标走 ${datasource}
+ K8s 对象状态与 Event ────────────────▶  └ prometheus receiver                                          变量按名字选 VictoriaMetrics;
+ 节点主机指标 ── otel-node DaemonSet ───────────────────────────────▶ VictoriaMetrics                   固定 uid: ds-vlogs/ds-vtraces/
+ 容器 stdout/stderr ── vector DaemonSet(VRL 脱敏) ───────────────────▶ VictoriaLogs                     ds-alertmanager/ds-pyroscope)
 
  ┌──────────────────────────── 告警 ─────────────────────────────┐
  VictoriaMetrics ◀─read/write─ vmalert(rules/*.yml, 10s) ─▶ Alertmanager ─▶ alert-bridge ─▶ ntfy (手机)
@@ -32,6 +32,7 @@ Alertmanager + 自写告警桥 + gatus/healthchecks/bugsink）。node3 重装后
 1. **告警链路有两条独立的「活着」证据**：vmalert 永远 firing 的 `Watchdog` 必须出现在 Alertmanager 里
    （gatus 查 `/api/v2/alerts`），以及 `vmalert_alerts_send_errors_total` /
    `alertmanager_notifications_failed_total` 两条自检规则。链路坏了自己会红。
+   数据是否真的落库另看 §3.3 的 VL/VT **新鲜度探针**（不是只看 HTTP 200）。
 2. **gatus 与 healthchecks 不经过 Alertmanager**。它们守的正是「Alertmanager 那条路坏了」的场景，
    所以直接推 ntfy。
 3. **每条告警都落日志**。告警桥把 Alertmanager 的每条告警写成一行 JSON，Vector 采进 VictoriaLogs：
@@ -108,7 +109,7 @@ sudo bash bootstrap/start.sh --verify
 | 线 | 配置在哪 | 怎么验证 |
 |---|---|---|
 | gatus → 集群内后端 | `gatus/endpoints.yaml` `cluster-origin` 组 | `https://status.dev.test` 全绿 |
-| gatus → 「数据到了吗」 | `observability-pipeline` 组：查 VM `k8s_deployment_available`、查 VL 最近 5 分钟真实日志 hits、查 VT 最近 10 分钟 `vt_bytes_ingested_total` 增长、查 AM `Watchdog` | 同上；任一探针红 = 对应链路断，先于任何业务告警 |
+| gatus → 「数据到了吗」 | `observability-pipeline` 组：查 VM `k8s_deployment_available`、查 AM `Watchdog`；VL/VT 已在 2026-11-25 换成**新鲜度探针**——VL 直连 `/select/logsql/hits?query=*&step=1m&start=5m` 要求最近 5 分钟有 hits，VT 查 VM 里独立抓取的 `vt_bytes_ingested_total` 在 10 分钟内增长（与 OTLP 写路径无关，停住才是真故障） | 同上；任一探针红 = 对应链路断，先于任何业务告警。端点 `/health` 200 不再当作「数据到了」 |
 | gatus → 公网入口 | `public-edge` / `node1-public` 组（`node1-public` 是历史组名，目标现由 node3 边缘承载） | 同上 |
 | gatus → ntfy | `gatus/config.yaml` `alerting.ntfy`（凭据来自 `$STATE_DIR/creds/ntfy.env`） | 故意把一个端点的 URL 改错重跑 install.sh，2 次失败后手机收到 |
 | CronJob → healthchecks | `healthchecks/examples/cnpg-backup-ping-cronjob.yaml`（`/start` → 成功 ping / `/fail`） | 面板里 check 变绿；把 CronJob `suspend: true` 一天后变红 |
@@ -118,10 +119,35 @@ sudo bash bootstrap/start.sh --verify
 
 ### 3.4 门面
 
-Grafana 数据源由 `grafana/install.sh` 按集群实际后端预置，uid 固定：`ds-prometheus`（VM，默认）、
-`ds-vlogs`（VictoriaLogs，插件 `victoriametrics-logs-datasource` 由 chart 启动时下载）、`ds-vtraces`
-（jaeger 类型指向 VT `/select/jaeger`）、`ds-alertmanager`。uid 固定的意义：仪表盘 JSON 里的数据源引用
-跨环境不用改——Pigsty 那 67 个仪表盘用的就是这套 uid（`ds-prometheus/ds-vlogs/ds-vtraces`）。
+`grafana/install.sh` 预置的数据源里**没有 `ds-prometheus`**：VM 数据源（name `VictoriaMetrics`，prometheus 类型，
+default）在 `install.sh` 里没设 uid，面板因此统一用 `${datasource}` 变量（按名字 `/VictoriaMetrics/` 选），
+不要把面板写死到不存在的 uid。固定 uid 的只有：`ds-vlogs`（VictoriaLogs，插件 `victoriametrics-logs-datasource`
+由 chart 启动时下载）、`ds-vtraces`（jaeger 类型指向 VT `/select/jaeger`）、`ds-alertmanager`、
+`ds-alert-evidence`（Infinity，在 `triage-values.yaml`）、`ds-pyroscope`（grafana-pyroscope-datasource，
+Service 由 `components/profiling` 提供）。
+
+**trace → log 已配置**：`ds-vtraces` 的 `jsonData` 同时写 `tracesToLogs`（旧版）与 `tracesToLogsV2`
+（Grafana 13 provisioning 现行字段），目标是 `ds-vlogs`。采样验证过 VictoriaLogs 的 trace id 字段是
+`trace_id`（不是 Loki 默认的 `traceID`），OTel 字段保留点号名 `service.name`，因此用 `customQuery`
+写 `trace_id:"${__trace.traceId}"` 并把 `service.name` 显式映射为 `service.name`；时间窗前后各放宽 2 秒。
+反向的 log → trace 由 `ds-vlogs` 的 `derivedFields` 提供。两边都要求日志/span 真的带这两个字段，否则
+「Logs for this span」不出现或查不到——数据前提不成立时不是数据源配错。
+
+**面板清单**（`build-dashboards.py` 生成，ConfigMap + sidecar 发布）：
+
+| UID | 用途 |
+|---|---|
+| `ops-portal` | 运维控制台：跳转卡片 + 共享 `host:*` 资源 |
+| `ntfy-alerting-overview` / `alert-instance-detail` | 问题工作台与实例详情（Alerting 文件夹） |
+| `infra-overview` / `infra-cnpg` / `infra-kubernetes` / `infra-cdc` / `infra-observability` | 既有基础设施证据 |
+| `control-plane-overview` | 控制面进程证据：四个抓取存活、etcd Leader/Raft、apiserver 请求比例与延迟、scheduler/controller-manager 队列 |
+| `middleware-overview` | Dragonfly / MinIO / Elasticsearch 三组 row：容量、健康、命中率 |
+| `ecommerce-apm` | ecommerce RED（HTTP server 埋点）、Connect RPC RED（config-center）、Go runtime、copystack/Pyroscope 指引 |
+
+三个新面板都进了 `NAV`，因此 ops-portal 与面板顶部互链可达。实测埋点边界：ecommerce 服务目前只有
+`http_server_*` 等 OTel 语义指标，`rpc_server_call_duration_seconds_*` / `rpc_response_status_code`
+只在 config-center 的 config-service 上出现；`go_gc_pauses_seconds_bucket` / `go_memstats_*` 只来自控制面组件，
+面板保留这些查询但显示「指标缺失」，不把零当健康。
 
 ## 4. 与 ecommerce 的接口
 

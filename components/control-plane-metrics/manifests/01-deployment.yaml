@@ -1,0 +1,58 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: control-plane-metrics
+  namespace: observability
+  labels:
+    app: control-plane-metrics
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate                 # hostNetwork + 固定节点：同时跑两份会抢同一组回环端口的抓取
+  selector:
+    matchLabels:
+      app: control-plane-metrics
+  template:
+    metadata:
+      labels:
+        app: control-plane-metrics
+      annotations:
+        # 配置变更时滚动 Pod；render_tpl 会把 ${CONFIG_SHA256} 替换成配置哈希。
+        checksum/config: "${CONFIG_SHA256}"
+    spec:
+      serviceAccountName: control-plane-metrics
+      automountServiceAccountToken: true
+      hostNetwork: true            # 四个目标只监听 127.0.0.1，必须共享宿主网络命名空间
+      dnsPolicy: ClusterFirstWithHostNet   # hostNetwork 下才能解析 VM 的集群内 Service 名
+      nodeSelector:
+        kubernetes.io/hostname: k1  # 唯一控制面；调度到 worker 上抓不到 127.0.0.1
+      tolerations:
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
+      containers:
+        - name: otel-collector
+          # 0.158.0 已在 k1 缓存；不必从公网拉取（机房侧拉镜像慢）。
+          image: docker.io/otel/opentelemetry-collector-contrib:0.158.0
+          args: ["--config=/etc/otel/control-plane.yaml"]
+          ports:
+            - {containerPort: 9090, name: admin, protocol: TCP}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/otel/control-plane.yaml
+              subPath: collector.yaml
+              readOnly: true
+          # apiserver 的 /metrics 单次要传 ~16MB、转换出 ~4.4 万条序列；256Mi 实测 OOMKilled。
+          # 1Gi 上限只影响容器可用量，不会真的占满；k1 有 ~3Gi 可用内存。
+          resources:
+            requests: {cpu: 30m, memory: 256Mi}
+            limits: {memory: 1Gi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+      volumes:
+        - name: config
+          configMap:
+            name: control-plane-metrics-config
+      terminationGracePeriodSeconds: 30

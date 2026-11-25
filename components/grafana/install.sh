@@ -55,23 +55,67 @@ fi
 plugins=()
 if comp_installed logging vl-victoria-logs-single-server; then
   # VictoriaLogs 官方数据源插件(不是 loki 类型); 插件由 chart 的 plugins: 在启动时下载
+  # derivedFields 让日志里的 trace_id 字段(link → 内部 trace 数据源)可直接跳到 VictoriaTraces;
+  # 采样确认过 OTLP 日志字段名是 trace_id(不是 traceID/traceId), 且 service.name 等点号名原样保留。
   ds+="      - name: VictoriaLogs
         uid: ds-vlogs
         type: victoriametrics-logs-datasource
         url: http://vl-victoria-logs-single-server.logging.svc.cluster.local:9428
+        jsonData:
+          derivedFields:
+            - name: TraceID
+              matcherType: label
+              matcherRegex: trace_id
+              url: '\$\${__value.raw}'
+              urlDisplayLabel: 查看链路
+              datasourceUid: ds-vtraces
 "
   sources+=(VictoriaLogs)
   plugins+=(victoriametrics-logs-datasource)
 fi
 if comp_installed observability victoria-traces; then
   # VictoriaTraces 提供 Jaeger 兼容查询 API, 用内置 jaeger 数据源即可(与 node3 Pigsty 同款配置)
+  # trace→log: 点击 span 的「Logs for this span」跳到 ds-vlogs。VL 的 trace id 字段名是
+  # trace_id(已用 /select/logsql/query 采样验证), 所以走 customQuery 显式写 LogsQL, 不用
+  # Loki 默认的 traceID 字段; 时间窗前后各放宽 2s 抵消日志/span 时间戳不对齐。
+  # tags 映射写 service.name → service.name: VL 保留 OTel 点号字段名, 不改成 Loki 的 service_name。
+  # tracesToLogs 是旧版字段, tracesToLogsV2 是 Grafana 13  provisioning 的现行字段, 两者并存兼容。
   ds+="      - name: VictoriaTraces
         uid: ds-vtraces
         type: jaeger
         url: http://victoria-traces.observability.svc.cluster.local:10428/select/jaeger
+        jsonData:
+          tracesToLogs:
+            datasourceUid: ds-vlogs
+            tags:
+              - {key: service.name, value: service.name}
+            mappedTags: []
+            filterByTraceID: true
+            filterBySpanID: false
+            spanStartTimeShift: '-2s'
+            spanEndTimeShift: '2s'
+          tracesToLogsV2:
+            datasourceUid: ds-vlogs
+            tags:
+              - {key: service.name, value: service.name}
+            mappedTags: []
+            filterByTraceID: true
+            filterBySpanID: false
+            spanStartTimeShift: '-2s'
+            spanEndTimeShift: '2s'
+            customQuery: true
+            query: 'trace_id:\"\$\${__trace.traceId}\"'
 "
   sources+=(VictoriaTraces)
 fi
+# 持续剖析: Service 由 components/profiling 提供, 名字/端口固定。uid 先于 Service 落地,
+# 这样 ecommerce APM 面板里指向 ds-pyroscope 的 Explore 链接不会悬空; 后端未部署时数据源显示不可用。
+ds+="      - name: Pyroscope
+        uid: ds-pyroscope
+        type: grafana-pyroscope-datasource
+        url: http://pyroscope.observability.svc.cluster.local:4040
+"
+sources+=(Pyroscope)
 if comp_installed observability alertmanager; then
   # 告警页(Alerting → Alert rules/Groups)直接看 Alertmanager 里的 firing/silence, 不必再开一个 UI
   ds+="      - name: Alertmanager

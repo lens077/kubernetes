@@ -1,0 +1,1283 @@
+{
+  "uid": "ecommerce-apm",
+  "title": "电商 APM · RED 与 Go Runtime",
+  "id": null,
+  "version": 3,
+  "schemaVersion": 42,
+  "editable": true,
+  "description": "ecommerce 服务的 RED 与 Go runtime；RPC 与 GC pause 的真实埋点边界在面板内明示。",
+  "tags": [
+    "infrastructure",
+    "alerting",
+    "evidence"
+  ],
+  "timezone": "browser",
+  "refresh": "30s",
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "annotations": {
+    "list": []
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "怎么读这张 APM 面板",
+      "type": "text",
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 4
+      },
+      "description": "",
+      "options": {
+        "mode": "markdown",
+        "content": "**服务下拉只选 ecommerce 服务**（10 个 Go 服务）。RED 第一组用 `http_server_request_duration_seconds_*`——这是 ecommerce 目前真正上报的服务端埋点。\n\n`rpc_server_call_duration_seconds_*` 与 `rpc_response_status_code`（OK / UNAVAILABLE 等大写值）当前只在 **config-center** 的 config-service 上出现，所以第二组 RED 单独提供 RPC 服务下拉；两个下拉互不替代，某组没有埋点就显示「指标缺失」，**不画成 0 错误率**。\n\nlabels 在 VM 里是下划线形式（`service_name` / `service_namespace`），OTel 语义名中的点号已被 `usePrometheusNaming` 改掉。"
+      }
+    },
+    {
+      "id": 2,
+      "title": "HTTP 请求速率",
+      "type": "stat",
+      "gridPos": {
+        "x": 0,
+        "y": 4,
+        "w": 6,
+        "h": 3
+      },
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(http_server_request_duration_seconds_count{service_namespace=\"ecommerce\",service_name=~\"$service\"}[$__rate_interval]))",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "instant": true,
+          "range": false,
+          "legendFormat": ""
+        }
+      ],
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "noValue": "指标缺失",
+          "decimals": 0,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          },
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "指标缺失",
+                  "color": "gray"
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 3,
+      "title": "HTTP 5xx 错误率",
+      "type": "stat",
+      "gridPos": {
+        "x": 6,
+        "y": 4,
+        "w": 6,
+        "h": 3
+      },
+      "description": "状态码来自 http_response_status_code（如 200 / 503）。",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(http_server_request_duration_seconds_count{service_namespace=\"ecommerce\",service_name=~\"$service\",http_response_status_code=~\"5..\"}[$__rate_interval])) / sum(rate(http_server_request_duration_seconds_count{service_namespace=\"ecommerce\",service_name=~\"$service\"}[$__rate_interval]))",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "instant": true,
+          "range": false,
+          "legendFormat": ""
+        }
+      ],
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "noValue": "指标缺失",
+          "decimals": 1,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          },
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "指标缺失",
+                  "color": "gray"
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 4,
+      "title": "HTTP P99 延迟",
+      "type": "stat",
+      "gridPos": {
+        "x": 12,
+        "y": 4,
+        "w": 6,
+        "h": 3
+      },
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.99, sum by(le)(rate(http_server_request_duration_seconds_bucket{service_namespace=\"ecommerce\",service_name=~\"$service\"}[$__rate_interval])))",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "instant": true,
+          "range": false,
+          "legendFormat": ""
+        }
+      ],
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "noValue": "指标缺失",
+          "decimals": 3,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          },
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "指标缺失",
+                  "color": "gray"
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 5,
+      "title": "Goroutine 数",
+      "type": "stat",
+      "gridPos": {
+        "x": 18,
+        "y": 4,
+        "w": 6,
+        "h": 3
+      },
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(go_goroutine_count{service_namespace=\"ecommerce\",service_name=~\"$service\"})",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "instant": true,
+          "range": false,
+          "legendFormat": ""
+        }
+      ],
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "指标缺失",
+          "decimals": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          },
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "指标缺失",
+                  "color": "gray"
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 6,
+      "title": "RED · HTTP server（ecommerce 实际埋点）",
+      "type": "row",
+      "gridPos": {
+        "x": 0,
+        "y": 7,
+        "w": 24,
+        "h": 1
+      },
+      "description": "",
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 7,
+      "title": "请求速率 · 按服务与状态码",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 0,
+        "y": 8,
+        "w": 12,
+        "h": 7
+      },
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by(service_name, http_response_status_code)(rate(http_server_request_duration_seconds_count{service_namespace=\"ecommerce\",service_name=~\"$service\"}[$__rate_interval]))",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "instant": false,
+          "range": true,
+          "legendFormat": "{{service_name}} / {{http_response_status_code}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "noValue": "指标缺失",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 6,
+            "showPoints": "never",
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 8,
+      "title": "错误率 · 按服务",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 12,
+        "y": 8,
+        "w": 12,
+        "h": 7
+      },
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by(service_name)(rate(http_server_request_duration_seconds_count{service_namespace=\"ecommerce\",service_name=~\"$service\",http_response_status_code=~\"5..\"}[$__rate_interval])) / sum by(service_name)(rate(http_server_request_duration_seconds_count{service_namespace=\"ecommerce\",service_name=~\"$service\"}[$__rate_interval]))",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "instant": false,
+          "range": true,
+          "legendFormat": "{{service_name}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "noValue": "指标缺失",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 6,
+            "showPoints": "never",
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 9,
+      "title": "延迟分位 · P50 / P90 / P99",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 0,
+        "y": 15,
+        "w": 12,
+        "h": 7
+      },
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.50, sum by(le)(rate(http_server_request_duration_seconds_bucket{service_namespace=\"ecommerce\",service_name=~\"$service\"}[$__rate_interval])))",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "instant": false,
+          "range": true,
+          "legendFormat": "P50"
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.90, sum by(le)(rate(http_server_request_duration_seconds_bucket{service_namespace=\"ecommerce\",service_name=~\"$service\"}[$__rate_interval])))",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "instant": false,
+          "range": true,
+          "legendFormat": "P90"
+        },
+        {
+          "refId": "C",
+          "expr": "histogram_quantile(0.99, sum by(le)(rate(http_server_request_duration_seconds_bucket{service_namespace=\"ecommerce\",service_name=~\"$service\"}[$__rate_interval])))",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "instant": false,
+          "range": true,
+          "legendFormat": "P99"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "noValue": "指标缺失",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 6,
+            "showPoints": "never",
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 10,
+      "title": "请求速率 · 按路由",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 12,
+        "y": 15,
+        "w": 12,
+        "h": 7
+      },
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "topk(10, sum by(http_route)(rate(http_server_request_duration_seconds_count{service_namespace=\"ecommerce\",service_name=~\"$service\"}[$__rate_interval])))",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "instant": false,
+          "range": true,
+          "legendFormat": "{{http_route}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "noValue": "指标缺失",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 6,
+            "showPoints": "never",
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 11,
+      "title": "RED · Connect RPC（config-center，当前唯一 RPC 埋点）",
+      "type": "row",
+      "gridPos": {
+        "x": 0,
+        "y": 22,
+        "w": 24,
+        "h": 1
+      },
+      "description": "",
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 12,
+      "title": "RPC 请求速率 · 按响应码",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 0,
+        "y": 23,
+        "w": 12,
+        "h": 7
+      },
+      "description": "rpc_response_status_code 是大写枚举（OK / UNAVAILABLE ...），不是 HTTP 数字码。",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by(rpc_response_status_code)(rate(rpc_server_call_duration_seconds_count{service_namespace=\"config-center\",service_name=~\"$rpc_service\"}[$__rate_interval]))",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "instant": false,
+          "range": true,
+          "legendFormat": "{{rpc_response_status_code}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "noValue": "指标缺失",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 6,
+            "showPoints": "never",
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 13,
+      "title": "RPC 错误率 · 按服务",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 12,
+        "y": 23,
+        "w": 12,
+        "h": 7
+      },
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by(service_name)(rate(rpc_server_call_duration_seconds_count{service_namespace=\"config-center\",service_name=~\"$rpc_service\",rpc_response_status_code!=\"OK\"}[$__rate_interval])) / sum by(service_name)(rate(rpc_server_call_duration_seconds_count{service_namespace=\"config-center\",service_name=~\"$rpc_service\"}[$__rate_interval]))",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "instant": false,
+          "range": true,
+          "legendFormat": "{{service_name}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "noValue": "指标缺失",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 6,
+            "showPoints": "never",
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 14,
+      "title": "Go runtime · OTel 语义指标",
+      "type": "row",
+      "gridPos": {
+        "x": 0,
+        "y": 30,
+        "w": 24,
+        "h": 1
+      },
+      "description": "",
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 15,
+      "title": "Goroutine 数 · 按服务",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 0,
+        "y": 31,
+        "w": 12,
+        "h": 7
+      },
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by(service_name)(go_goroutine_count{service_namespace=\"ecommerce\",service_name=~\"$service\"})",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "instant": false,
+          "range": true,
+          "legendFormat": "{{service_name}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "指标缺失",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 6,
+            "showPoints": "never",
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 16,
+      "title": "调度延迟分位 · P50 / P90 / P99",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 12,
+        "y": 31,
+        "w": 12,
+        "h": 7
+      },
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.50, sum by(le)(rate(go_schedule_duration_seconds_bucket{service_namespace=\"ecommerce\",service_name=~\"$service\"}[$__rate_interval])))",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "instant": false,
+          "range": true,
+          "legendFormat": "P50"
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.90, sum by(le)(rate(go_schedule_duration_seconds_bucket{service_namespace=\"ecommerce\",service_name=~\"$service\"}[$__rate_interval])))",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "instant": false,
+          "range": true,
+          "legendFormat": "P90"
+        },
+        {
+          "refId": "C",
+          "expr": "histogram_quantile(0.99, sum by(le)(rate(go_schedule_duration_seconds_bucket{service_namespace=\"ecommerce\",service_name=~\"$service\"}[$__rate_interval])))",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "instant": false,
+          "range": true,
+          "legendFormat": "P99"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "noValue": "指标缺失",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 6,
+            "showPoints": "never",
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 17,
+      "title": "GC pause 分位 · 待自定义采集",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 0,
+        "y": 38,
+        "w": 12,
+        "h": 7
+      },
+      "description": "OTel 官方 Go runtime 仪表当前不导出 gc pause；该序列在 ecommerce 服务上为空，显示「指标缺失」。go_gc_pauses_seconds_bucket / go_memstats_* 目前只见于控制面组件，不能当成 ecommerce 的 GC 证据。",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.90, sum by(le)(rate(go_gc_pauses_seconds_bucket{service_namespace=\"ecommerce\",service_name=~\"$service\"}[$__rate_interval])))",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "instant": false,
+          "range": true,
+          "legendFormat": "P90"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "noValue": "指标缺失",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 6,
+            "showPoints": "never",
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 18,
+      "title": "内存使用 · 按类型",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 12,
+        "y": 38,
+        "w": 12,
+        "h": 7
+      },
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by(go_memory_type)(go_memory_used_bytes{service_namespace=\"ecommerce\",service_name=~\"$service\"})",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "instant": false,
+          "range": true,
+          "legendFormat": "{{go_memory_type}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "noValue": "指标缺失",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 6,
+            "showPoints": "never",
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 19,
+      "title": "Go runtime 原始值 · 按服务",
+      "type": "table",
+      "gridPos": {
+        "x": 0,
+        "y": 45,
+        "w": 24,
+        "h": 6
+      },
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "go_goroutine_count{service_namespace=\"ecommerce\",service_name=~\"$service\"}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "instant": true,
+          "range": false,
+          "legendFormat": "",
+          "format": "table"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "filterable": true,
+            "wrapText": true,
+            "wrapHeaderText": true,
+            "cellOptions": {
+              "type": "auto"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "md",
+        "enablePagination": true
+      },
+      "transformations": [
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "organize",
+          "options": {
+            "includeByName": {
+              "service_name": true,
+              "service_version": true,
+              "Value": true
+            },
+            "renameByName": {
+              "service_name": "服务",
+              "service_version": "版本",
+              "Value": "Goroutine 数"
+            },
+            "indexByName": {
+              "service_name": 0,
+              "service_version": 1,
+              "Value": 2
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": 20,
+      "title": "copystack · 为什么还需要 Pyroscope",
+      "type": "text",
+      "gridPos": {
+        "x": 0,
+        "y": 51,
+        "w": 24,
+        "h": 5
+      },
+      "description": "",
+      "options": {
+        "mode": "markdown",
+        "content": "微信文章对 Uber Go 集群的分析显示 `runtime.copystack` 占 CPU **3.9%**（GC 为 7.3%），600 个服务中 334 个超过 3%。这类**函数级 CPU 归因**无法从 `go_goroutine_count` 或调度延迟分位推断：总量增长不等于栈拷贝开销，GC 快照也看不到短生命周期 goroutine 的峰值栈需求。\n\n**下一步**：用持续剖析（Pyroscope 数据源 `ds-pyroscope`）看 `runtime.copystack` / `morestack` / `newstack` 的 CPU 占比与趋势，与本页的 goroutine、调度延迟曲线对照；栈缓存优化前后要保留同一口径的 profile 基线。\n\n[打开 Pyroscope Explore](/explore?left=%7B%22datasource%22%3A%22ds-pyroscope%22%7D)（进入后选择 `ds-pyroscope`，label 过滤 `service_namespace=\"ecommerce\"`）。本页只提供指标侧证据，不宣称已定位到函数级热点。"
+      }
+    }
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "label": "指标数据源",
+        "type": "datasource",
+        "query": "prometheus",
+        "regex": "/VictoriaMetrics/",
+        "refresh": 1,
+        "options": [],
+        "current": {
+          "text": "VictoriaMetrics",
+          "value": "VictoriaMetrics"
+        }
+      },
+      {
+        "name": "service",
+        "label": "ecommerce 服务",
+        "hide": 0,
+        "type": "query",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "options": [],
+        "skipUrlSync": false,
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${datasource}"
+        },
+        "query": "label_values(go_goroutine_count{service_namespace=\"ecommerce\"}, service_name)",
+        "definition": "label_values(go_goroutine_count{service_namespace=\"ecommerce\"}, service_name)",
+        "refresh": 1,
+        "includeAll": true,
+        "allValue": ".*",
+        "multi": false,
+        "sort": 1
+      },
+      {
+        "name": "rpc_service",
+        "label": "RPC 服务（config-center）",
+        "hide": 0,
+        "type": "query",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "options": [],
+        "skipUrlSync": false,
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${datasource}"
+        },
+        "query": "label_values(rpc_server_call_duration_seconds_count{service_namespace=\"config-center\"}, service_name)",
+        "definition": "label_values(rpc_server_call_duration_seconds_count{service_namespace=\"config-center\"}, service_name)",
+        "refresh": 1,
+        "includeAll": true,
+        "allValue": ".*",
+        "multi": false,
+        "sort": 1
+      }
+    ]
+  },
+  "links": [
+    {
+      "title": "运维控制台",
+      "url": "/d/ops-portal",
+      "type": "link",
+      "includeVars": false,
+      "keepTime": true,
+      "targetBlank": false
+    },
+    {
+      "title": "问题工作台",
+      "url": "/d/ntfy-alerting-overview",
+      "type": "link",
+      "includeVars": false,
+      "keepTime": true,
+      "targetBlank": false
+    },
+    {
+      "title": "基础设施",
+      "url": "/d/infra-overview",
+      "type": "link",
+      "includeVars": false,
+      "keepTime": true,
+      "targetBlank": false
+    },
+    {
+      "title": "数据库 / 备份",
+      "url": "/d/infra-cnpg",
+      "type": "link",
+      "includeVars": false,
+      "keepTime": true,
+      "targetBlank": false
+    },
+    {
+      "title": "Kubernetes",
+      "url": "/d/infra-kubernetes",
+      "type": "link",
+      "includeVars": false,
+      "keepTime": true,
+      "targetBlank": false
+    },
+    {
+      "title": "Kafka / CDC",
+      "url": "/d/infra-cdc",
+      "type": "link",
+      "includeVars": false,
+      "keepTime": true,
+      "targetBlank": false
+    },
+    {
+      "title": "采集 / 网络",
+      "url": "/d/infra-observability",
+      "type": "link",
+      "includeVars": false,
+      "keepTime": true,
+      "targetBlank": false
+    },
+    {
+      "title": "控制面进程",
+      "url": "/d/control-plane-overview",
+      "type": "link",
+      "includeVars": false,
+      "keepTime": true,
+      "targetBlank": false
+    },
+    {
+      "title": "中间件",
+      "url": "/d/middleware-overview",
+      "type": "link",
+      "includeVars": false,
+      "keepTime": true,
+      "targetBlank": false
+    }
+  ]
+}

@@ -1,0 +1,73 @@
+# 控制面进程级告警（2026-11-25 新增）
+#
+# 数据来源：components/control-plane-metrics 的 hostNetwork collector，固定跑在 k1，
+# 抓 127.0.0.1:2381(etcd) / 6443(apiserver) / 10259(scheduler) / 10257(KCM)，
+# 30s 间隔原样写入 VictoriaMetrics。与 rules/control-plane.yml（只看静态 Pod phase）互补：
+# 本组看进程自己暴露的语义指标。
+#
+# ⚠️ 指标名已在 VM 实测，不是照抄上游文档：
+#    - k8s v1.37 的 scheduler 自身指标叫 scheduler_*（不是 kube_scheduler_*）；
+#    - KCM 自身指标叫 workqueue_* / leader_election_master_status，没有 kube_controller_manager_* 前缀。
+#  ⚠️ 每条规则都必须有 for:（团队规矩，Watchdog 除外）。
+#  ⚠️ 阈值基于现场基线：etcd commit p99≈0.057s、wal fsync p99≈0.012s、
+#     apiserver 非 WATCH 请求 p99≈0.096s。阈值取约 10 倍，避免正常波动误报。
+groups:
+  - name: control-plane-process
+    interval: 30s
+    rules:
+      - alert: ControlPlaneComponentDown
+        # 四个抓取 job 任一 up==0 并持续 5 分钟。标签 job/component 由采集器 relabel 写入。
+        expr: 'up{job=~"control-plane-(apiserver|etcd|scheduler|controller-manager)"} == 0'
+        for: 5m
+        keep_firing_for: 5m
+        labels: { severity: critical, category: kubernetes, notification_class: page }
+        annotations:
+          summary: '控制面组件指标抓取失败 {{ $labels.component }}'
+          description: '采集器连续 5 分钟无法从 k1 本机抓取 {{ $labels.component }} 的 /metrics ({{ $labels.instance }})。先看 collector Pod 日志与 RBAC/token，再确认对应静态 Pod 还在运行；单控制面集群里这比 Pod phase 异常更直接地代表控制面失明。'
+
+      - alert: EtcdLeaderMissing
+        expr: 'etcd_server_has_leader{component="etcd"} == 0'
+        for: 2m
+        keep_firing_for: 5m
+        labels: { severity: critical, category: kubernetes, notification_class: page }
+        annotations:
+          summary: etcd 没有 leader
+          description: 'etcd_server_has_leader 连续 2 分钟为 0：集群无法选举出 leader，所有写入都会失败。单节点 etcd 上先看进程与 /var/lib/etcd 磁盘 IO，不要贸然重启——先确认数据目录完整。'
+
+      - alert: EtcdSlowCommit
+        # p99 backend commit 持续 >500ms（现场基线约 57ms）。排除 le=+Inf 由 histogram_quantile 处理。
+        expr: 'histogram_quantile(0.99, sum by (le) (rate(etcd_disk_backend_commit_duration_seconds_bucket{component="etcd"}[5m]))) > 0.5'
+        for: 10m
+        labels: { severity: warning, category: kubernetes, notification_class: ticket }
+        annotations:
+          summary: 'etcd backend commit 延迟偏高 p99={{ $value | printf "%.3f" }}s'
+          description: 'etcd 磁盘 commit p99 连续 10 分钟超过 500ms（本集群正常约 57ms）。重点查节点磁盘 IO 与 etcd 数据目录所在卷；commit 变慢会拖慢所有 API 写入并可能触发 leader 漂移。'
+
+      - alert: ApiserverHighLatency
+        # 非 WATCH/CONNECT 请求的 p99 持续 >1s（现场基线约 96ms）。WATCH 是长连接，必须排除。
+        expr: 'histogram_quantile(0.99, sum by (le) (rate(apiserver_request_duration_seconds_bucket{component="apiserver",verb!~"WATCH|CONNECT"}[5m]))) > 1'
+        for: 10m
+        labels: { severity: warning, category: kubernetes, notification_class: ticket }
+        annotations:
+          summary: 'apiserver 请求延迟偏高 p99={{ $value | printf "%.2f" }}s'
+          description: 'apiserver 非流式请求 p99 连续 10 分钟超过 1s（本集群正常约 0.1s）。先查 apiserver 自身 CPU/内存与 etcd 延迟（EtcdSlowCommit），再查是否有异常高频 LIST 打满 API。'
+
+      - alert: ControlPlaneLeaderElectionLost
+        # scheduler 与 KCM 都暴露 leader_election_master_status；1=leader, 0=不是 leader。
+        # 单控制面集群里两者都应恒为 1，丢了意味着对应控制器不再干活。
+        expr: 'leader_election_master_status{component=~"scheduler|controller-manager"} == 0'
+        for: 5m
+        keep_firing_for: 5m
+        labels: { severity: critical, category: kubernetes, notification_class: page }
+        annotations:
+          summary: '控制面 leader lease 丢失 {{ $labels.name }}'
+          description: '{{ $labels.name }} 连续 5 分钟不是 leader。单控制面集群没有备用实例接管：scheduler 不调度新 Pod，controller-manager 不维护 Deployment/Endpoint。先看该静态 Pod 与 apiserver 连通性。'
+
+      - alert: ControlPlaneProcessMetricsMissing
+        # 采集断流时上面所有规则会静默变成「无数据」；独立兜底。
+        expr: 'absent(up{job="control-plane-apiserver"}) == 1'
+        for: 15m
+        labels: { severity: warning, category: observability, notification_class: ticket }
+        annotations:
+          summary: 控制面进程指标停止写入
+          description: '连续 15 分钟收不到 up{job="control-plane-apiserver"}。检查 components/control-plane-metrics 的采集器 Pod、RBAC 与到 VictoriaMetrics 的 remote write；此时本组所有控制面进程告警均已失效。'
