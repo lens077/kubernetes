@@ -6,7 +6,7 @@
 # 服务全挂成 unknown 时只有看板会变红，不会有人被叫醒。
 #
 # 口径与 ecommerce 仓 docs/observability/grafana/common.py 一致（改一边必须改另一边）：
-#   服务侧错误 = rpc_connect_rpc_error_code ∈ SERVER_FAULT_CODES；客户端异常不进错误率。
+#   服务侧错误 = rpc_response_status_code ∈ SERVER_FAULT_CODES；客户端异常不进错误率。
 #   config-service（control-tower）不在这里；payment 全部 RPC 是 Unimplemented 桩，恒 100%，排除。
 #   **排除 deployment_environment_name="dev"**：本地开发机经公网 OTLP 入口把指标写进同一个 VM
 #   （2026-09-24 实测 dev 占 rpc 序列的大头），不排除的话开发者本地调试报错会给值班手机推 critical。
@@ -28,12 +28,12 @@ groups:
         # 5 分钟里 1 次失败 / 2 次请求 = 50%，会把单个坏请求当成事故。
         expr: |
           (
-            sum by (service_name, deployment_environment_name) (rate(rpc_server_duration_milliseconds_count{service_name!~"config-service|payment-service",deployment_environment_name!="dev",rpc_connect_rpc_error_code=~"unknown|internal|unavailable|deadline_exceeded|resource_exhausted|data_loss|unimplemented"}[5m]))
+            sum by (service_name, deployment_environment_name) (rate(rpc_server_call_duration_seconds_count{service_name!~"config-service|payment-service",deployment_environment_name!="dev",rpc_response_status_code=~"UNKNOWN|INTERNAL|UNAVAILABLE|DEADLINE_EXCEEDED|RESOURCE_EXHAUSTED|DATA_LOSS|UNIMPLEMENTED"}[5m]))
             /
-            sum by (service_name, deployment_environment_name) (rate(rpc_server_duration_milliseconds_count{service_name!~"config-service|payment-service",deployment_environment_name!="dev"}[5m]))
+            sum by (service_name, deployment_environment_name) (rate(rpc_server_call_duration_seconds_count{service_name!~"config-service|payment-service",deployment_environment_name!="dev"}[5m]))
           ) > 0.05
           and
-          sum by (service_name, deployment_environment_name) (rate(rpc_server_duration_milliseconds_count{service_name!~"config-service|payment-service",deployment_environment_name!="dev"}[5m])) > 0.02
+          sum by (service_name, deployment_environment_name) (rate(rpc_server_call_duration_seconds_count{service_name!~"config-service|payment-service",deployment_environment_name!="dev"}[5m])) > 0.02
         for: 10m
         keep_firing_for: 5m
         labels: { severity: critical, category: application }
@@ -44,7 +44,7 @@ groups:
             再按 logs_query 查日志，用 error.origin 找到抛错的数据层那一行，用 trace_id 跳 VictoriaTraces 看调用链。
             同时看时间轴上的紫色「发布」标记：刚发过版优先考虑回滚。
           dashboard: >-
-            https://grafana.apikv.com/explore?schemaVersion=1&orgId=1&panes={{ printf `{"a":{"datasource":"P4169E866C3094E38","queries":[{"refId":"A","datasource":{"type":"prometheus","uid":"P4169E866C3094E38"},"expr":"sum by (rpc_method, rpc_connect_rpc_error_code) (rate(rpc_server_duration_milliseconds_count{service_name=\"%s\",deployment_environment_name=\"%s\",rpc_connect_rpc_error_code!=\"\"}[5m]))"}],"range":{"from":"now-1h","to":"now"}}}` $labels.service_name $labels.deployment_environment_name | queryEscape }}
+            https://grafana.apikv.com/explore?schemaVersion=1&orgId=1&panes={{ printf `{"a":{"datasource":"P4169E866C3094E38","queries":[{"refId":"A","datasource":{"type":"prometheus","uid":"P4169E866C3094E38"},"expr":"sum by (rpc_method, rpc_response_status_code) (rate(rpc_server_call_duration_seconds_count{service_name=\"%s\",deployment_environment_name=\"%s\",rpc_response_status_code!=\"\"}[5m]))"}],"range":{"from":"now-1h","to":"now"}}}` $labels.service_name $labels.deployment_environment_name | queryEscape }}
           logs_query: 'service.name:="{{ $labels.service_name }}" deployment.environment.name:="{{ $labels.deployment_environment_name }}" rpc.code:in(unknown,internal,unavailable,deadline_exceeded,resource_exhausted,data_loss,unimplemented)'
 
       - alert: EcommerceUnknownErrorShareHigh
@@ -53,12 +53,12 @@ groups:
         # 响了要做的事是补 errors.Is 映射或 errinfo reason，不是去救火。
         expr: |
           (
-            sum by (service_name, deployment_environment_name) (increase(rpc_server_duration_milliseconds_count{service_name!~"config-service|payment-service",deployment_environment_name!="dev",rpc_connect_rpc_error_code="unknown"}[1h]))
+            sum by (service_name, deployment_environment_name) (increase(rpc_server_call_duration_seconds_count{service_name!~"config-service|payment-service",deployment_environment_name!="dev",rpc_response_status_code="UNKNOWN"}[1h]))
             /
-            sum by (service_name, deployment_environment_name) (increase(rpc_server_duration_milliseconds_count{service_name!~"config-service|payment-service",deployment_environment_name!="dev",rpc_connect_rpc_error_code=~"unknown|internal|unavailable|deadline_exceeded|resource_exhausted|data_loss|unimplemented"}[1h]))
+            sum by (service_name, deployment_environment_name) (increase(rpc_server_call_duration_seconds_count{service_name!~"config-service|payment-service",deployment_environment_name!="dev",rpc_response_status_code=~"UNKNOWN|INTERNAL|UNAVAILABLE|DEADLINE_EXCEEDED|RESOURCE_EXHAUSTED|DATA_LOSS|UNIMPLEMENTED"}[1h]))
           ) > 0.5
           and
-          sum by (service_name, deployment_environment_name) (increase(rpc_server_duration_milliseconds_count{service_name!~"config-service|payment-service",deployment_environment_name!="dev",rpc_connect_rpc_error_code="unknown"}[1h])) >= 10
+          sum by (service_name, deployment_environment_name) (increase(rpc_server_call_duration_seconds_count{service_name!~"config-service|payment-service",deployment_environment_name!="dev",rpc_response_status_code="UNKNOWN"}[1h])) >= 10
         for: 1h
         labels: { severity: warning, category: application }
         annotations:
@@ -67,24 +67,33 @@ groups:
             有错误路径没有被 service 层映射归类。按 logs_query 找出这些错误的 error.origin 与错误文本，
             在 service 层补 errors.Is 映射（或给领域错误声明 errinfo reason）。不是故障，不需要立即处置。
           dashboard: >-
-            https://grafana.apikv.com/explore?schemaVersion=1&orgId=1&panes={{ printf `{"a":{"datasource":"P4169E866C3094E38","queries":[{"refId":"A","datasource":{"type":"prometheus","uid":"P4169E866C3094E38"},"expr":"sum by (rpc_method) (increase(rpc_server_duration_milliseconds_count{service_name=\"%s\",deployment_environment_name=\"%s\",rpc_connect_rpc_error_code=\"unknown\"}[1h]))"}],"range":{"from":"now-6h","to":"now"}}}` $labels.service_name $labels.deployment_environment_name | queryEscape }}
+            https://grafana.apikv.com/explore?schemaVersion=1&orgId=1&panes={{ printf `{"a":{"datasource":"P4169E866C3094E38","queries":[{"refId":"A","datasource":{"type":"prometheus","uid":"P4169E866C3094E38"},"expr":"sum by (rpc_method) (increase(rpc_server_call_duration_seconds_count{service_name=\"%s\",deployment_environment_name=\"%s\",rpc_response_status_code=\"UNKNOWN\"}[1h]))"}],"range":{"from":"now-6h","to":"now"}}}` $labels.service_name $labels.deployment_environment_name | queryEscape }}
           logs_query: 'service.name:="{{ $labels.service_name }}" deployment.environment.name:="{{ $labels.deployment_environment_name }}" rpc.code:="unknown"'
 
       - alert: EcommerceRPCMetricsMissing
         # absent 兜底（README 规矩 2），但只在后端 Deployment 确实可用时才判：
         # 2026-09-24 集群重建后 ecommerce 命名空间还是空的，无条件的 absent() 会一上线就慢性 firing。
+        # OTel 升级后 RPC 指标名变了（rpc_server_duration_milliseconds_count →
+        # rpc_server_call_duration_seconds_count）；这里接受任一应用指标作为「链路活着」的证据，
+        # 避免 RPC 指标暂时的命名/版本差异把正常服务误报成全挂。括号不能省：
+        # `unless on () (A or B)` 与 `A unless on () B or C` 的优先级完全不同。
         expr: |
           (count(k8s_deployment_available{k8s_namespace_name="ecommerce",k8s_deployment_name=~"ecommerce-.+-deploy"} > 0) > 0)
           unless on ()
-          (count(rpc_server_duration_milliseconds_count{service_name!="config-service",deployment_environment_name!="dev"}) > 0)
+          (
+            (count(rpc_server_call_duration_seconds_count{service_name!="config-service",deployment_environment_name!="dev"}) > 0)
+            or
+            (count(go_goroutine_count{service_name=~"address-service|behavior-service|cart-service|inventory-service|merchant-service|order-service|payment-service|product-service|search-product|user-identity",deployment_environment_name!="dev"}) > 0)
+          )
         for: 15m
         labels: { severity: warning, category: application }
         annotations:
-          summary: ecommerce 后端 Deployment 在跑，但 15 分钟内没有任何 RPC 指标
+          summary: ecommerce 后端 Deployment 在跑，但 15 分钟内没有任何应用指标
           description: >-
             服务 OTLP 指标链路断了：应用错误率告警此刻全部失效（无数据不会触发）。检查服务 observability.enable 配置、
             OTel collector 的 metrics pipeline 与 VictoriaMetrics 写入口认证。
-          dashboard: 'https://grafana.apikv.com/explore?schemaVersion=1&orgId=1&panes=%7B%22a%22%3A%7B%22datasource%22%3A%22P4169E866C3094E38%22%2C%22queries%22%3A%5B%7B%22refId%22%3A%22A%22%2C%22datasource%22%3A%7B%22type%22%3A%22prometheus%22%2C%22uid%22%3A%22P4169E866C3094E38%22%7D%2C%22expr%22%3A%22count%20by%20%28service_name%2C%20deployment_environment_name%29%20%28rpc_server_duration_milliseconds_count%29%22%7D%5D%2C%22range%22%3A%7B%22from%22%3A%22now-3h%22%2C%22to%22%3A%22now%22%7D%7D%7D'
+            RPC 指标改名或 Go runtime 指标同时消失时才会触发；任一类指标存在都视为链路正常。
+          dashboard: 'https://grafana.apikv.com/explore?schemaVersion=1&orgId=1&panes=%7B%22a%22%3A%7B%22datasource%22%3A%22P4169E866C3094E38%22%2C%22queries%22%3A%5B%7B%22refId%22%3A%22A%22%2C%22datasource%22%3A%7B%22type%22%3A%22prometheus%22%2C%22uid%22%3A%22P4169E866C3094E38%22%7D%2C%22expr%22%3A%22count%20by%20%28service_name%2C%20deployment_environment_name%29%20%28rpc_server_call_duration_seconds_count%29%22%7D%5D%2C%22range%22%3A%7B%22from%22%3A%22now-3h%22%2C%22to%22%3A%22now%22%7D%7D%7D'
           logs_query: 'deployment.environment.name:!="dev" severity_text:=error'
 
       - alert: EcommerceConfigStale
@@ -107,13 +116,14 @@ groups:
           logs_query: 'service.name:="{{ $labels.service_name }}" deployment.environment.name:="{{ $labels.deployment_environment_name }}" _msg:~"rebuild .* failed, keeping the current one"'
 
       - alert: EcommerceConfigStaleMetricsMissing
-        # 只有对应业务服务的 RPC 指标存在时才判 component 缺失，避免业务尚未部署或整条 OTLP 链断开时
+        # 只有对应业务服务的 Go runtime 指标存在时才判 component 缺失，避免业务尚未部署或整条 OTLP 链断开时
         # 与 EcommerceRPCMetricsMissing 重复告警。payment-service 不用 Redis；search-product 两者都不用。
+        # 用 go_goroutine_count 而非 RPC 指标：OTel 升级后 RPC 指标名/错误码 label 都变过，runtime 指标更稳定。
         expr: |
           (
             label_set(
               count by (service_name, deployment_environment_name) (
-                rpc_server_duration_milliseconds_count{service_name=~"user-identity|behavior-service|product-service|cart-service|address-service|order-service|inventory-service|merchant-service|payment-service",deployment_environment_name!="dev"}
+                go_goroutine_count{service_name=~"user-identity|behavior-service|product-service|cart-service|address-service|order-service|inventory-service|merchant-service|payment-service",deployment_environment_name!="dev"}
               ) > 0,
               "component", "pgpool"
             )
@@ -126,7 +136,7 @@ groups:
           (
             label_set(
               count by (service_name, deployment_environment_name) (
-                rpc_server_duration_milliseconds_count{service_name=~"user-identity|behavior-service|product-service|cart-service|address-service|order-service|inventory-service|merchant-service",deployment_environment_name!="dev"}
+                go_goroutine_count{service_name=~"user-identity|behavior-service|product-service|cart-service|address-service|order-service|inventory-service|merchant-service",deployment_environment_name!="dev"}
               ) > 0,
               "component", "redisclient"
             )
@@ -138,7 +148,7 @@ groups:
         for: 15m
         labels: { severity: warning, category: application }
         annotations:
-          summary: '[{{ $labels.deployment_environment_name }}] {{ $labels.service_name }} 有 RPC 指标，但没有配置生效状态指标'
+          summary: '[{{ $labels.deployment_environment_name }}] {{ $labels.service_name }} 有运行时指标，但没有配置生效状态指标'
           description: >-
             该服务的 OTel 指标链可用，但 {{ $labels.component }} 的 connectkit_config_stale 缺失。
             检查镜像是否已升级到包含 go-connect-kit 修复的版本；缺指标时 EcommerceConfigStale 无法发现该连接配置未生效。

@@ -3,9 +3,10 @@
 # vmalert —— 规则评估(VictoriaMetrics 数据源 → Alertmanager); 幂等; 可单独执行:
 #   bash components/vmalert/install.sh
 #
-# 规则就是 rules/*.yml, 改完重跑本脚本即可, 不需要滚动 Pod。但 vmalert 没开 -configCheckInterval,
-# 它**不会**自己重读文件: ConfigMap 卷投影进 Pod 后本脚本末尾 POST /-/reload(= SIGHUP)才生效
-# (2026-09-23 实测: 改完等 95s 内存里还是旧表达式)。写规则的三条规矩见 rules/ecommerce-k8s.yml 头部与 README。
+# 规则就是 rules/*.yml, 改完重跑本脚本即可。vmalert 没开 -configCheckInterval, 不会自己重读文件:
+# ConfigMap 卷投影进 Pod 后由本脚本末尾的 rollout restart 让新 Pod 直接读到新规则。
+# 2026-11-25 起不再 POST /-/reload: 当前节点内核上 vmalert 给自己发 SIGHUP 会 EPERM panic,
+# 热加载看似成功实则没生效还会引发重启风暴。写规则的三条规矩见 rules/ecommerce-k8s.yml 头部与 README。
 # =============================================================================
 set -Eeuo pipefail
 source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../_lib" &>/dev/null && pwd)/env.sh"
