@@ -6,7 +6,7 @@
 建立 WireGuard 隧道，让 `*.apikv.com` 的请求能打到集群内的服务。
 
 ```
-公网用户 ──HTTPS──> node1 VPS(114.132.233.129)     ← Pangolin + Traefik
+公网用户 ──HTTPS──> node3 VPS(193.112.22.183:34125) ← Pangolin + Traefik（2026-11-12 从 node1 迁入）
                         │ WireGuard(隧道由集群侧发起)
                         └──> 本集群 newt ──> Cilium Gateway 固定 VIP:443 ──> HTTPRoute ──> Service/Pod
                                          └──> 10.10.21.161|162|163:<端口> ──> node4|5|3 节点服务
@@ -100,17 +100,22 @@ curl -s -b <cookie> https://pangolin.apikv.com/api/v1/org/main/sites \
 > 面板 11 个站点（含 2026-11-03 新增的 `node3`/`node4`/`node5`/`node6`）全部 `online=1`。
 > 8 台主机级 newt 与 k8s 内 newt 均报 `Server version: 1.26.0`，服务端 0 条告警。
 
-## 5.1 版本线对照（2026-11-10 复核）
+> **实测结论（2026-11-25，当前版本）**：newt **1.20.1** + Pangolin 服务端 **1.27.1** 配套运行正常，
+> 8 个客户端（node2/4/5/6 + k1/k2/k3 + k8s 内）全部握手成功，均见
+> `Newt version 1.20.1` + `Tunnel connection established successfully!`。
+> newt 没有 1.27.1 这个号——服务端与客户端是两条独立版本线，别把服务端号套到客户端。
+
+## 5.1 版本线对照（2026-11-25 复核）
 
 **Pangolin 服务端与 newt 客户端是两个独立的版本线**，不要把服务端的号套到客户端上：
 
 | 组件 | 上游 | 当前版本 | 说明 |
 |---|---|---|---|
-| Pangolin（服务端控制面） | [fosrl/pangolin](https://github.com/fosrl/pangolin) | **1.26.0** | node1 Docker 版控制面 |
-| Gerbil（隧道数据面） | [fosrl/gerbil](https://github.com/fosrl/gerbil) | 1.5.2 | 独立版本线（上游已有 1.6.0），本次不动数据面 |
-| Newt（客户端） | [fosrl/newt](https://github.com/fosrl/newt) | **1.20.0** | 客户端版本线独立，1.26.x 服务端配套 1.20.0+（SSH session logging 的前置要求） |
-| Badger（Traefik 插件） | [fosrl/badger](https://github.com/fosrl/badger) | **v1.8.0** | 2026-11-03 起已解禁，1.26.0 迁移自动改写并实测加载成功 |
-| Traefik | traefik | v3.7.12 | 未动镜像；仅为让 Badger v1.8.0 生效单独重启过一次 |
+| Pangolin（服务端控制面） | [fosrl/pangolin](https://github.com/fosrl/pangolin) | **1.27.1** | 边缘核心已迁至 node3 的 Docker 控制面 |
+| Gerbil（隧道数据面） | [fosrl/gerbil](https://github.com/fosrl/gerbil) | 1.6.0 | 独立版本线，已是最新（`:latest`） |
+| Newt（客户端） | [fosrl/newt](https://github.com/fosrl/newt) | **1.20.1** | 客户端版本线独立，1.27.x 服务端配套 1.20.1；无 1.27.1 这个号 |
+| Badger（Traefik 插件） | [fosrl/badger](https://github.com/fosrl/badger) | **v1.8.0** | 2026-11-03 起已解禁，迁移自动改写并实测加载成功 |
+| Traefik | traefik | v3.8.0 | 2026-11-25 升级，vendored 插件 badger/crowdsec/safeline 全部加载 |
 
 升级时服务端与客户端要**成对升**：只升服务端不升客户端，服务端日志会出现
 `Newt ping with outdated config version: 2 (current: 0)`；只升客户端不升服务端，
@@ -120,7 +125,7 @@ curl -s -b <cookie> https://pangolin.apikv.com/api/v1/org/main/sites \
 
 | 位置 | 形态 | 站点 | 升级方式 |
 |---|---|---|---|
-| k8s 内（`pangolin` ns） | Deployment，镜像 `fosrl/newt:1.20.0` | `k8s-cluster` | 改本目录 manifest → `bash components/newt/install.sh` |
+| k8s 内（`pangolin` ns） | Deployment，镜像 `fosrl/newt:1.20.1` | `k8s-cluster` | 改本目录 manifest → `bash components/newt/install.sh` |
 | 主机级 | `/usr/local/bin/newt` + systemd `newt.service` | `k1`/`k2`/`k3`/`node2` + 云机 `node3`/`node4`/`node5`/`node6`（2026-11-03 新增，siteId 15–18） | 换二进制 → `systemctl restart newt.service` |
 
 主机级 newt 的凭据在 `/home/docker/newt/newt.env`（每台一份），
@@ -129,12 +134,12 @@ curl -s -b <cookie> https://pangolin.apikv.com/api/v1/org/main/sites \
 secret 只在站点创建那一刻回显一次，凭据丢失只能在面板删站重建。
 
 **Windows 客户端**（开发机接入）见同目录 `WINDOWS-CLIENT-RUNBOOK.md`：
-面板建站点 → 下载 `newt_windows_amd64.exe` 1.20.0 → NSSM 注册开机自启 →
+面板建站点 → 下载 `newt_windows_amd64.exe` 1.20.1 → NSSM 注册开机自启 →
 验握手与 `online=True` → 建 HTTP/TCP 资源。注意 newt 是反代，
 资源 target IP 要从 Windows 本机视角写 `127.0.0.1`，不是机器公网 IP。
 
 > **机房拉镜像**：k1/k2/k3 的 containerd 配了一串国内镜像站，个别站对非公开路径会 401。
-> 实测 `fosrl/newt:1.20.0` 能拉到，但**换版本前先在三台节点上 `crictl pull` 预拉**，
+> 实测 `fosrl/newt:1.20.1` 能拉到，但**换版本前先在三台节点上 `crictl pull` 预拉**，
 > 否则 rollout 时可能卡在 `ImagePullBackOff`。
 > GitHub release 下载同理，机房直连不通，走 `https://ghfast.top/https://github.com/...`。
 
@@ -163,6 +168,7 @@ secret 只在站点创建那一刻回显一次，凭据丢失只能在面板删�
   - 修复方是 **Traefik 插件目录服务端**（11-03），不是 Traefik 二进制版本门槛：
     最新稳定版 v3.7.17 发布于 10-30，早于修复日；本集群 v3.7.12 实测也能加载 v1.8.0。
     1.26.0 release notes 已明确「You can now safely upgrade to Badger v1.8.0」。
+    （以上为 11-10 当时的版本；当前 Traefik 已升 v3.8.0、Pangolin 已升 1.27.1，插件仍全部加载。）
   - ⚠️ **最容易漏的一步**：迁移只改**配置文件**，不会重启 traefik。此时
     配置写 v1.8.0、运行态还是 v1.7.0，等于把雷留到下一次任何一次 traefik 重启。
     升完服务端必须立刻重启 traefik 让两者对齐，并验证插件真的加载成功：

@@ -19,7 +19,7 @@
 
 set -euo pipefail
 
-NEWT_VERSION="1.20.0"                      # 与 components/newt/README.md 版本线对照保持一致（配套 Pangolin 1.26.0）
+NEWT_VERSION="1.20.1"                      # 与 components/newt/README.md 版本线对照保持一致（配套 Pangolin 1.27.1）
 ENDPOINT="https://pangolin.apikv.com"
 ORG="main"
 ADMIN_ENV="${PANGOLIN_ADMIN_ENV:-$HOME/.pangolin-admin.env}"

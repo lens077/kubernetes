@@ -44,6 +44,8 @@ spec:
           # 2026-11-10: 服务端升 1.26.0，客户端同步 1.20.0（官方 1.26.0 release notes 明确要求
           #           Newt v1.20.0+ 才支持 SSH session logging；1.19.1 另修了 data plane 崩溃）。
           #           主机级 newt 已覆盖 node2/3/4/5/6 + k1/k2/k3 共 8 台。
+          # 2026-11-25: 服务端升 1.27.1，客户端同步 1.20.1（newt 独立版本线，无 1.27.1 这个号）。
+          #           8 个客户端全部握手成功，日志见 Newt version 1.20.1 + Tunnel connection established。
           # newt 启动时会打印一行 `Server version: <服务端版本>`，版本对不上先看它。
           image: docker.io/fosrl/newt:1.20.1
           imagePullPolicy: IfNotPresent

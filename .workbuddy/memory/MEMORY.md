@@ -8,7 +8,7 @@
 - 站点 online 直读 node3 `python3 /root/check_sites.py`（读 sites 表）。⚠️ node1 上同名脚本读的是割接时冻结的旧 db，结论过期。
 
 ## 版本线（易混）
-Pangolin 1.26.0｜newt 1.20.0｜Gerbil 1.6.0｜Traefik v3.7.18｜CrowdSec v1.8.2｜Badger v1.8.0（本地 vendor，零外部依赖，根治「拉不到 zip→全 404」）。升服务端前先升所有客户端，否则 `Newt ping outdated config version`；服务端重启断隧道几秒、客户端 502 自愈，别手动重启客户端。判据：客户端 `Tunnel connection established` + `Server version` 匹配（别拿 Pod Running 当通了）。schema 迁移用 `sqlite3.backup()` 做一致性快照。
+Pangolin 1.27.1｜newt 1.20.1｜Gerbil 1.6.0｜Traefik v3.8.0｜CrowdSec v1.8.2｜Badger v1.8.0（本地 vendor，零外部依赖，根治「拉不到 zip→全 404」）。升服务端前先升所有客户端，否则 `Newt ping outdated config version`；服务端重启断隧道几秒、客户端 502 自愈，别手动重启客户端。判据：客户端 `Tunnel connection established` + `Server version` 匹配（别拿 Pod Running 当通了）。schema 迁移用 `sqlite3.backup()` 做一致性快照。
 
 ## 边缘安全栈（node3）
 - 插件 vendored 在 `/home/docker/pangolin/config/traefik/plugins-local/`，`experimental.localPlugins`：badger + crowdsec-bouncer-traefik-plugin v1.7.1 + chaitin/traefik-safeline（本地 patch）。明细 `PROVENANCE.txt`。
