@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>对话全景图 · 从最初问题到当前事实（2026-11-26）</title>
+<style>
+  :root{
+    --bg:#f6f7f9; --card:#ffffff; --ink:#1f2430; --muted:#5b6472; --line:#e2e6ec;
+    --blue:#2563eb; --blue-bg:#eef4ff; --green:#15803d; --green-bg:#eaf7ef;
+    --amber:#b45309; --amber-bg:#fff5e6; --red:#b91c1c; --red-bg:#fdeeee;
+    --purple:#6d28d9; --purple-bg:#f3edff; --teal:#0f766e; --teal-bg:#e7f5f3;
+    --shadow:0 1px 2px rgba(16,24,40,.04),0 4px 16px rgba(16,24,40,.05);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+    line-height:1.6;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:1180px;margin:0 auto;padding:32px 24px 64px}
+  header h1{font-size:26px;margin:0 0 6px;letter-spacing:-.3px}
+  header .sub{color:var(--muted);font-size:14px;margin-bottom:24px}
+  .legend{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:28px}
+  .legend span{font-size:12px;padding:3px 10px;border-radius:99px;border:1px solid var(--line);background:#fff;color:var(--muted)}
+  h2{font-size:19px;margin:34px 0 14px;padding-left:11px;border-left:4px solid var(--blue)}
+  h2 .en{font-size:12px;color:var(--muted);font-weight:400;margin-left:8px}
+
+  /* 主线卡片 */
+  .origin{background:var(--blue-bg);border:1px solid #d5e3ff;border-radius:14px;padding:18px 20px;margin-bottom:14px}
+  .origin .q{font-size:15px;font-weight:600;color:#173a75;margin-bottom:14px}
+  .tasks{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}
+  .task{background:#fff;border:1px solid #dbe6fb;border-radius:10px;padding:13px 14px;position:relative}
+  .task .num{position:absolute;top:-9px;left:12px;font-size:11px;font-weight:700;color:#fff;background:var(--blue);
+    border-radius:99px;padding:1px 8px}
+  .task h3{font-size:14px;margin:4px 0 8px}
+  .task p{font-size:12px;color:var(--muted);margin:0}
+  .badge{display:inline-block;font-size:11px;font-weight:600;padding:2px 8px;border-radius:6px;margin-top:9px}
+  .b-ok{background:var(--green-bg);color:var(--green)}
+  .b-hold{background:var(--amber-bg);color:var(--amber)}
+  .b-part{background:var(--red-bg);color:var(--red)}
+  .b-done{background:var(--purple-bg);color:var(--purple)}
+
+  /* 分叉时间线 */
+  .tree{position:relative;padding-left:26px}
+  .tree::before{content:"";position:absolute;left:8px;top:6px;bottom:6px;width:2px;background:var(--line)}
+  .node{position:relative;margin-bottom:12px}
+  .node::before{content:"";position:absolute;left:-22px;top:16px;width:10px;height:10px;border-radius:50%;
+    background:#fff;border:2px solid var(--blue)}
+  .node.branch::before{border-color:var(--purple)}
+  .node .box{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 15px;box-shadow:var(--shadow)}
+  .node .box b{font-size:13px}
+  .node .box p{font-size:12.5px;color:var(--muted);margin:4px 0 0}
+  .tag{font-size:10.5px;font-weight:600;padding:1px 7px;border-radius:5px;margin-left:8px;vertical-align:1px}
+  .t-main{background:var(--blue-bg);color:var(--blue)}
+  .t-branch{background:var(--purple-bg);color:var(--purple)}
+  .t-now{background:var(--teal-bg);color:var(--teal)}
+
+  /* 四象限 */
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media(max-width:820px){.grid2{grid-template-columns:1fr}}
+  .panel{border-radius:14px;padding:18px 20px;border:1px solid var(--line);background:var(--card);box-shadow:var(--shadow)}
+  .panel h3{font-size:15px;margin:0 0 12px;display:flex;align-items:center;gap:8px}
+  .panel h3 .dot{width:9px;height:9px;border-radius:50%}
+  .panel ul{margin:0;padding-left:18px}
+  .panel li{font-size:13px;margin-bottom:7px;color:#333b49}
+  .panel li b{color:var(--ink)}
+  .p-green{background:var(--green-bg);border-color:#cdebd7}
+  .p-green h3{color:var(--green)}
+  .p-amber{background:var(--amber-bg);border-color:#f5dfb5}
+  .p-amber h3{color:var(--amber)}
+  .p-red{background:var(--red-bg);border-color:#f3cfcf}
+  .p-red h3{color:var(--red)}
+  .p-blue{background:var(--blue-bg);border-color:#d5e3ff}
+  .p-blue h3{color:#173a75}
+
+  /* 下一步编号列表 */
+  .steps{counter-reset:s}
+  .step{position:relative;padding:10px 0 10px 40px;border-bottom:1px dashed var(--line)}
+  .step:last-child{border-bottom:0}
+  .step::before{counter-increment:s;content:counter(s);position:absolute;left:0;top:11px;width:24px;height:24px;
+    border-radius:50%;background:var(--blue);color:#fff;font-size:12px;font-weight:700;
+    display:flex;align-items:center;justify-content:center}
+  .step b{font-size:13px}
+  .step p{font-size:12.5px;color:var(--muted);margin:2px 0 0}
+  .step .pri{font-size:10px;font-weight:700;border-radius:5px;padding:1px 7px;margin-left:8px}
+  .pri-hi{background:var(--red-bg);color:var(--red)}
+  .pri-md{background:var(--amber-bg);color:var(--amber)}
+  .pri-lo{background:#eef2f6;color:var(--muted)}
+
+  .note{margin-top:28px;background:#fff;border:1px solid var(--line);border-radius:12px;padding:16px 20px;font-size:12.5px;color:var(--muted)}
+  .note b{color:var(--ink)}
+  code{background:#f0f2f5;border-radius:4px;padding:1px 5px;font-size:11.5px;color:#b91c1c}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>对话全景图 · 从最初问题到当前事实</h1>
+    <div class="sub">工作区：<code>/Users/lens/lens077/kubernetes</code> · 生成时间：2026-11-26 12:58 · 数据依据：本轮对话 + UPGRADE-RECORD / CHANGELOG / 项目记忆</div>
+  </header>
+
+  <div class="legend">
+    <span>主线 = 最初问题的 5 个子任务</span>
+    <span>分叉 = 排查过程中衍生的问题</span>
+    <span>状态：✅ 完成　⏸ 主动暂缓　⚠ 部分/未根治　📘 已沉淀</span>
+  </div>
+
+  <h2>一、最初的问题（主线）<span class="en">the original request — 5 sub-tasks</span></h2>
+  <div class="origin">
+    <div class="q">「安全升级所有 newt 机器与 Pangolin 主控到 1.27.1 → 升级 K8s PG 到 19 → 检查所有服务是否最新版 → 排查 casdoor.apikv.com 响应慢 → 评估 node3 本地 PG 内网访问方案」</div>
+    <div class="tasks">
+      <div class="task"><span class="num">01</span><h3>newt + 主控 → 1.27.1</h3>
+        <p>8 个 newt 客户端 + Pangolin 主控。纠正认知：newt 无 1.27.1，实际为 newt 1.20.1 + 主控 1.27.1。</p>
+        <span class="badge b-ok">✅ 完成 · 隧道握手正常</span></div>
+      <div class="task"><span class="num">02</span><h3>K8s PG → 19</h3>
+        <p>CNPG 1.30.2 仅支持 PG15–18；原地升级卡实例管理器，回滚 18.4。等 CNPG 1.31 再蓝绿。</p>
+        <span class="badge b-hold">⏸ 主动暂缓 · 保持 18.4</span></div>
+      <div class="task"><span class="num">03</span><h3>服务版本检查</h3>
+        <p>升级 cilium/strimzi/grafana/tetragon/argocd/kyverno/dragonfly/spegel/traefik/casdoor/ntfy/safeline 等。</p>
+        <span class="badge b-ok">✅ 大体完成</span></div>
+      <div class="task"><span class="num">04</span><h3>casdoor 响应慢</h3>
+        <p>11-26 分段计时复测定案：外网 P50 94ms / P95 114ms，服务端 2-9ms，不慢。详见 CASDOOR-LATENCY-RETEST。</p>
+        <span class="badge b-ok">✅ 已定案 · 不慢</span></div>
+      <div class="task"><span class="num">05</span><h3>node3 本地 PG 评估</h3>
+        <p>评估在 node3 自部署 PG 走内网，结论不采用（现有 TLS + 网关方案已够）。</p>
+        <span class="badge b-done">📘 评估完成 · 未采用</span></div>
+    </div>
+  </div>
+
+  <h2>二、演变主线与分叉<span class="en">how it diverged — timeline & branches</span></h2>
+  <div class="tree">
+    <div class="node"><div class="box"><b>起始</b><span class="tag t-main">主线</span>
+      <p>一次性抛出 5 项升级/排查需求，范围横跨边缘、K8s、数据库、可观测性。</p></div></div>
+
+    <div class="node branch"><div class="box"><b>分叉 A · newt 版本线纠正</b><span class="tag t-branch">分叉</span>
+      <p>用户要的「newt 1.27.1」不存在 → 拆成 Pangolin 1.27.1 + newt 1.20.1 两条独立线。</p></div></div>
+
+    <div class="node branch"><div class="box"><b>分叉 B · PG19 蓝绿失败</b><span class="tag t-branch">分叉</span>
+      <p>原地升级失败 → 查 CNPG 支持矩阵 → 确认 1.30.2 不支持 19 → 回滚 18.4，暂缓。</p></div></div>
+
+    <div class="node branch"><div class="box"><b>分叉 C · Casdoor host 改造尝试与回滚</b><span class="tag t-branch">分叉</span>
+      <p>改连接串到公网/容器 IP 实测不通 → 回滚；同时清理 socks5Proxy 死代理。</p></div></div>
+
+    <div class="node branch"><div class="box"><b>分叉 D · 6 项跳过/回滚组件二次攻坚</b><span class="tag t-branch">分叉</span>
+      <p>strimzi/grafana/tetragon/argocd/kyverno/dragonfly+spegel 逐个定位失败原因并升级成功；Cilium 留到最后单独升 1.20.5。</p></div></div>
+
+    <div class="node branch"><div class="box"><b>分叉 E · ArgoCD CEL OutOfSync</b><span class="tag t-branch">分叉</span>
+      <p>补 health check + AppProject 白名单 → 14 应用全 Synced/Healthy；顺带产出团队变更说明。</p></div></div>
+
+    <div class="node branch"><div class="box"><b>分叉 F · scorpius-prod Degraded + 定时任务扫描</b><span class="tag t-branch">分叉</span>
+      <p>备份 Job 撞节点重启空窗 → 手动备份追平时间。全量扫描发现仅 LyraPass 维护任务持续落空。</p></div></div>
+
+    <div class="node branch"><div class="box"><b>分叉 G · LyraPass PG 崩溃循环 → AppArmor 根因</b><span class="tag t-branch">分叉</span>
+      <p>排除了探针/UID/数据损坏，内核 audit 找到 containerd 2.3.4 默认 profile 拒绝信号 → Pod 级 Unconfined 修复，数据零丢失。</p></div></div>
+
+    <div class="node branch"><div class="box"><b>分叉 H · AppArmor 概念 / 全局默认 / 范围评估</b><span class="tag t-branch">分叉</span>
+      <p>解释信号机制 → 评估全局 unconfined 影响面 → 24h audit 实证 → 决定不扩大豁免；CNPG 三集群尝试因 restricted 命名空间回滚。</p></div></div>
+
+    <div class="node"><div class="box"><b>当前会话 · 沉淀与仓库整理</b><span class="tag t-now">现在</span>
+      <p>产出 AppArmor Runbook → 版本统一 1.20.1/1.27.1 → Windows runbook 入库 → 历史文档分批提交推送 → 全景图 → casdoor 分段计时复测定案「不慢」→ HTTP OTel 三仓集成。</p></div></div>
+  </div>
+
+  <h2>三、已解决 / 未解决 / 最没把握<span class="en">status snapshot</span></h2>
+  <div class="grid2">
+    <div class="panel p-green">
+      <h3><span class="dot" style="background:var(--green)"></span>✅ 已解决</h3>
+      <ul>
+        <li><b>newt/主控升级</b>：8 客户端 + 1.27.1 主控，握手日志确认版本配平。</li>
+        <li><b>服务版本</b>：traefik 3.8.0、casdoor 4.30.0、ntfy 2.38.2、cilium 1.20.5、argocd 3.6.3、kyverno 1.20.0、tetragon 1.8.0、grafana 13.3.2、strimzi 1.3.1、dragonfly 1.40.1、spegel 0.8.1。</li>
+        <li><b>ArgoCD</b>：14 应用全 Synced/Healthy。</li>
+        <li><b>LyraPass PG</b>：AppArmor 信号拦截根因定位并修复，17 表零丢失，定时任务自然调度恢复。</li>
+        <li><b>知识沉淀</b>：AppArmor Runbook + 变更说明 + 文档索引。</li>
+        <li><b>仓库整理</b>：历史文档分批入库推送，双远端 HEAD 一致，<code>.DS_Store</code> 删除。</li>
+      </ul>
+    </div>
+    <div class="panel p-amber">
+      <h3><span class="dot" style="background:var(--amber)"></span>⚠ 未解决 / 遗留</h3>
+      <ul>
+        <li><b>PG19</b>：仍 18.4，等 CNPG 1.31 稳定后蓝绿 dump/restore。</li>
+        <li><b>casdoor 备份</b>：pg_dump 停在 11-11，缺每日 timer（数据安全，非性能）。</li>
+        <li><b>AppArmor 根治</b>：仅 Pod 级缓解，节点级 containerd profile 未改。</li>
+        <li><b>HTTP-OTEL 收尾</b>：三仓已集成（kit v1.1.0 / template / CLI），ecommerce worktree 的新 patch 待用户评审。</li>
+        <li><b>可观测性欠账</b>：持续剖析深化、Grafana 面板重建、Rust 服务 OTel、脱敏/限流。</li>
+        <li><b>日常</b>：今天的日志/报告未提交；Windows 站点长期离线（已知，符合预期）。</li>
+      </ul>
+    </div>
+    <div class="panel p-red">
+      <h3><span class="dot" style="background:var(--red)"></span>❓ 最没把握</h3>
+      <ul>
+        <li><b>casdoor 慢</b>：~~根因不明~~ → <b>11-26 已定案</b>：外网 P50 94ms、服务端 2-9ms，慢感不成立；仅 node3 本机经域名偶发 DNS 抖动，不影响外部用户。</li>
+        <li><b>节点级 AppArmor profile 改动的影响面</b>：从未在任何节点灰度，改错可能让所有容器信号行为异常——这是当前风险最大、证据最少的一项。</li>
+        <li><b>PG19 支持时间</b>：CNPG 何时支持完全取决于上游，无法给出确定日期。</li>
+        <li><b>ecommerce HTTP-OTEL patch 评审</b>：kit/template/CLI 已落地并发 v1.1.0，剩 ecommerce worktree 的 258 行 patch 待用户确认是否提交。</li>
+        <li><b>信息完整性</b>：早期细节来自压缩摘要，个别数值/命令可能与 live 有偏差，落地前应复核。</li>
+      </ul>
+    </div>
+    <div class="panel p-blue">
+      <h3><span class="dot" style="background:var(--blue)"></span>🧭 判断原则</h3>
+      <ul>
+        <li><b>主线优先</b>：回到最初 5 项，只有 casdoor 慢、PG19 两项仍有未竟之事。</li>
+        <li><b>证据优先</b>：先定量测量再动手（casdoor 分段计时、AppArmor 单节点灰度 24h audit）。</li>
+        <li><b>可逆优先</b>：PG 不冒险上 19；AppArmor 根治前保留 Pod 级豁免，不预防性扩大。</li>
+        <li><b>沉淀优先</b>：每次排障产出可复用文档，避免重复踩坑。</li>
+        <li><b>仓库卫生</b>：改动随做随提交，双远端同步。</li>
+      </ul>
+    </div>
+  </div>
+
+  <h2>四、下一步建议<span class="en">next steps — ordered by priority</span></h2>
+  <div class="panel">
+    <div class="steps">
+      <div class="step"><b>✅ 已完成：casdoor 分段计时复测</b><span class="pri pri-lo">已定案</span>
+        <p>外网 P50 94ms / P95 114ms，服务端 2-9ms、PG 1-2ms —— 不慢，主诉关闭。报告见 <code>CASDOOR-LATENCY-RETEST-2026-11-26.md</code>。</p></div>
+      <div class="step"><b>补 casdoor/gorse 每日备份 timer</b><span class="pri pri-hi">高</span>
+        <p>pg_dump 停在 11-11（14 天未更新），是复测发现的真实数据安全隐患，建议补 systemd timer（复用现有 dump 脚本）。</p></div>
+      <div class="step"><b>评审 ecommerce HTTP-OTEL patch</b><span class="pri pri-md">中</span>
+        <p>kit v1.1.0 / template / CLI 三仓已集成并测试通过，剩 ecommerce worktree 258 行 patch 待用户决定是否提交。</p></div>
+      <div class="step"><b>提交今日日志与报告，保持仓库干净</b><span class="pri pri-lo">低</span>
+        <p><code>.workbuddy/memory/2026-11-26.md</code> + 复测报告 + 更新后的全景图入库推送。</p></div>
+      <div class="step"><b>PG19：跟踪 CNPG 1.31</b><span class="pri pri-lo">低</span>
+        <p>上游支持稳定后，在独立窗口做蓝绿 dump/restore，不在现有 18.4 集群上原地冒险。</p></div>
+      <div class="step"><b>AppArmor 根治（如需推进）</b><span class="pri pri-md">中</span>
+        <p>单节点灰度修改 containerd profile 信号规则，跑 24h audit 验证无副作用后再滚动；完成前保留 Pod 级 Unconfined。</p></div>
+      <div class="step"><b>可观测性欠账排期</b><span class="pri pri-lo">低</span>
+        <p>按 OBSERVABILITY-COVERAGE-BASELINE §7 的实施状态逐项推进（面板、Rust OTel、脱敏限流）。</p></div>
+    </div>
+  </div>
+
+  <div class="note">
+    <b>说明：</b>本图以「最初问题」为主线，分叉节点是排查过程中衍生、但不在原始清单内的任务。状态判断基于当前事实（升级记录、变更说明、项目记忆与最新提交）。<code>origin</code> 为公开仓库，所有入库内容均已做过明文凭据扫描。
+  </div>
+</div>
+</body>
+</html>
