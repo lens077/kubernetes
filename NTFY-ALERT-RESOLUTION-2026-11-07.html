@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ntfy 告警问题处置报告 · 2026-11-07</title>
+<style>
+  :root{
+    --bg:#f6f7f9; --card:#ffffff; --ink:#1c2330; --muted:#5b6575; --line:#e3e7ee;
+    --ok:#0f8a4d; --okbg:#e8f7ee; --warn:#b7791f; --warnbg:#fdf6e7; --bad:#c0392b; --badbg:#fdeceb;
+    --info:#2563a8; --infobg:#eaf2fb; --accent:#1a4f8b;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;font-size:14px;line-height:1.65}
+  .wrap{max-width:1080px;margin:0 auto;padding:32px 20px 64px}
+  header.hero{background:linear-gradient(135deg,#0d3d2e,#0f8a4d 70%,#2b9d68);color:#fff;border-radius:14px;padding:28px 30px;margin-bottom:26px}
+  header.hero h1{margin:0 0 6px;font-size:24px;letter-spacing:.5px}
+  header.hero .sub{opacity:.92;font-size:13.5px}
+  header.hero .meta{margin-top:14px;display:flex;flex-wrap:wrap;gap:10px 22px;font-size:12.5px;opacity:.95}
+  h2{font-size:18px;margin:38px 0 14px;padding-left:10px;border-left:4px solid var(--accent)}
+  h3{font-size:15px;margin:22px 0 10px;color:var(--accent)}
+  .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin:14px 0}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 16px}
+  .card .num{font-size:24px;font-weight:700;line-height:1.2}
+  .card .lbl{font-size:12px;color:var(--muted);margin-top:3px}
+  .card.ok .num{color:var(--ok)} .card.bad .num{color:var(--bad)} .card.warn .num{color:var(--warn)} .card.info .num{color:var(--info)}
+  table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden;font-size:13px}
+  th{background:#eef2f7;text-align:left;padding:8px 10px;font-weight:600;border-bottom:2px solid var(--line);white-space:nowrap}
+  td{padding:7px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+  tr:last-child td{border-bottom:none}
+  code{background:#eef1f5;border-radius:4px;padding:1px 5px;font-family:"SF Mono",Menlo,Consolas,monospace;font-size:12px;word-break:break-all}
+  .tag{display:inline-block;border-radius:20px;padding:1px 9px;font-size:11.5px;font-weight:600;white-space:nowrap}
+  .tag.ok{background:var(--okbg);color:var(--ok)} .tag.warn{background:var(--warnbg);color:var(--warn)}
+  .tag.bad{background:var(--badbg);color:var(--bad)} .tag.info{background:var(--infobg);color:var(--info)}
+  .tag.muted{background:#eceff3;color:#6b7280}
+  .callout{border-radius:10px;padding:14px 16px;margin:14px 0;border:1px solid}
+  .callout.bad{background:var(--badbg);border-color:#f2c4c0}
+  .callout.warn{background:var(--warnbg);border-color:#ecd9b0}
+  .callout.ok{background:var(--okbg);border-color:#bfe6cf}
+  .callout.info{background:var(--infobg);border-color:#c3d9ef}
+  .callout b.tt{display:block;margin-bottom:6px}
+  .chain{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px 18px;font-family:"SF Mono",Menlo,Consolas,monospace;font-size:12.5px;overflow-x:auto;white-space:pre-wrap;line-height:1.8;margin:10px 0}
+  .toc{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 20px;font-size:13px}
+  .toc a{color:var(--accent);text-decoration:none;margin-right:16px;white-space:nowrap}
+  .toc a:hover{text-decoration:underline}
+  details{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 16px;margin:10px 0}
+  summary{cursor:pointer;font-weight:600;color:var(--accent)}
+  .foot{margin-top:40px;color:var(--muted);font-size:12px;border-top:1px solid var(--line);padding-top:14px}
+  .small{font-size:12px;color:var(--muted)}
+  @media print{body{background:#fff}.wrap{max-width:none;padding:0}header.hero{border-radius:0}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="hero">
+  <h1>ntfy 告警问题按优先级处置报告</h1>
+  <div class="sub">承接《ntfy 告警规则全量审计报告》（同日），对审计发现的 P0–P3 共 8 项问题逐项处置</div>
+  <div class="meta">
+    <span>📅 处置时间：2026-11-07 04:00 – 07:00 CST</span>
+    <span>🏷️ 环境：集群 dev.test（k1/k2/k3）＋ 云主机 node1–node6</span>
+    <span>📂 仓库：~/lens077/kubernetes @ main</span>
+    <span>✅ 终态：全部告警清零（仅剩 Watchdog 心跳）</span>
+  </div>
+</header>
+
+<div class="toc">
+  <a href="#s1">① 处置总览</a>
+  <a href="#s2">② P0-1 证书续期链路</a>
+  <a href="#s3">③ P0-2 CNPG 备份（根因深挖）</a>
+  <a href="#s4">④ P1 两项</a>
+  <a href="#s5">⑤ P2 两项</a>
+  <a href="#s6">⑥ P3 两项</a>
+  <a href="#s7">⑦ 终态验证快照</a>
+  <a href="#s8">⑧ 变更清单</a>
+  <a href="#s9">⑨ 后续建议</a>
+</div>
+
+<!-- ============ ① 总览 ============ -->
+<h2 id="s1">① 处置总览</h2>
+<div class="cards">
+  <div class="card ok"><div class="num">6</div><div class="lbl">问题修复并验收<br>（P0×2 + P1×2 + P2×2）</div></div>
+  <div class="card ok"><div class="num">2</div><div class="lbl">观察项完成处置<br>（P3：node4 确认 + gorse 探针新增）</div></div>
+  <div class="card info"><div class="num">0</div><div class="lbl">剩余 firing 告警<br>（Watchdog 心跳除外）</div></div>
+  <div class="card warn"><div class="num">2</div><div class="lbl">遗留风险需跟进<br>（内核回归 + 备份调度首验）</div></div>
+  <div class="card ok"><div class="num">7s</div><div class="lbl">恢复后备份耗时<br>（10-29 以来首次成功）</div></div>
+</div>
+
+<div class="callout ok">
+  <b class="tt">✅ 最终状态（07:00 CST 实测）</b><br>
+  vmalert 仅剩 <code>Watchdog</code>（设计上的心跳）——CNPGBackupStale、CDCSlotWalRetention、CDCConnectTaskNotRunning、K8sDeploymentUnavailable/Degraded、K8sContainerNotReady、AlertBridgeNotificationFlood 全部恢复为绿；gatus 实时探针日志全绿（含新证书检查）；业务库 13 个应用 60 条连接全部恢复；CDC 槽位活跃消费中；公网证书 2027-02-04 到期（自动续期链路已修复并端到端验收）。
+</div>
+
+<!-- ============ ② P0-1 ============ -->
+<h2 id="s2">② P0-1 · apikv.com 证书续期链路（修复 ✅）</h2>
+<h3>根因（两层，都在 node1 证书分发链的「已退役目标」）</h3>
+<p>审计发现 21 个公网探针因 <code>CERTIFICATE_EXPIRATION ≈464h &lt; 720h</code> 失败。深挖 node1 的 <code>/usr/local/sbin/apikv-cert-renew --force</code> 全链路后确认：</p>
+<ol>
+  <li><b>每日任务本身是健康的</b>：acme.sh（ZeroSSL DNS-01 via DNSPod）+ systemd timer 正常，ARI 窗口排在 11-11，脚本按设计每天报「暂存证书剩余 18 天 &lt; 21 天 checkend」的 ticket——这是告警在正确工作。</li>
+  <li><b>但一旦真续期，分发必失败</b>：分发矩阵里两个目标已退役——
+    <ul>
+      <li><b>node2 Harbor</b>（README 2026-09-26 就书面警告过，接收脚本仍写 <code>/home/docker/harbor/…</code> 并验证 <code>harbor.apikv.com:49600</code>，node2 现在只剩 minio）；</li>
+      <li><b>node1 Redis TLS</b>（<code>/home/docker/redis/tls/redis.crt</code> 不存在，Redis 容器已被集群内 Dragonfly 替代）——实机跑 <code>--force</code> 时 cp 直接报错并触发整链回滚。</li>
+    </ul>
+  每次续期都会在分发环节失败→回滚→证书永远停在 8-27 版→11-25 到期全站挂。</li>
+</ol>
+<h3>修复动作</h3>
+<table>
+  <tr><th>动作</th><th>对象</th><th>内容</th></tr>
+  <tr><td><span class="tag warn">重写</span></td><td><code>docker-deploy/certificates/apikv-wildcard/apikv-cert-receive</code>（仓库+node2 部署，sha256 校验一致）</td><td>删除 Harbor 备份/安装/验证与 nginx reload，只保留 minio(Silo) 一条链路（restart + 健康检查 + 指纹验证）</td></tr>
+  <tr><td><span class="tag warn">修改</span></td><td><code>apikv-cert-distribute</code>（仓库+node1 部署）</td><td>移除 Redis 备份/安装/restart/验证行；验证端点只剩 <code>pangolin.apikv.com</code></td></tr>
+  <tr><td><span class="tag info">更新</span></td><td><code>README.md</code>（分发矩阵）</td><td>删 Harbor 行、Redis 行，漂移条目标记「2026-11-07 已修正」</td></tr>
+  <tr><td><span class="tag ok">执行</span></td><td><code>apikv-cert-renew --force</code>（node1，nohup 落盘日志）</td><td>真实 ZeroSSL DNS-01 签发成功（ARI 下一窗口 2027-01-22）→ 分发 node1(Pangolin/blog) + node2(minio) → 指纹验证通过</td></tr>
+</table>
+<h3>验收</h3>
+<p>公网 homepage/grafana/ntfy 与 node2 minio 的证书全部为 <b>notAfter=2027-02-04 23:59:59 GMT</b>；gatus 证书条件（&gt;720h）实时探针通过；node2 接收链路按新脚本验收成功。每日 03:17 的 timer 在下次真续期（1 月下旬）前可完整走通「签发→分发→验证」全链。</p>
+
+<!-- ============ ③ P0-2 ============ -->
+<h2 id="s3">③ P0-2 · CNPG 备份 9 天中断（修复 ✅，根因深挖）</h2>
+<div class="callout bad">
+  <b class="tt">故障链还原（三层嵌套）</b>
+</div>
+<div class="chain">2026-10-30 22:02  k3 节点重启（内核 7.0.0-42 生效；minio Pod 也于 10-31 01:00 重启）
+   │
+   ├─① PG 后端卡死内核 AIO（IO: AioIoCompletion，sync I/O 桥的完成事件丢失）
+   │    → config-center 的 6 个事务僵死 7 天（TouchMachineTokenLastUsed / GetActiveMachineTokenByHash）
+   │    → 二级受害者：新连接被行锁阻塞（10.244.3.78，阻塞 1 天）
+   │    → autovacuum worker 每分钟 "took too long to start; canceled"
+   │
+   ├─② 事务僵死 → checkpoint 永远无法完成
+   │    → 10-30 备份 rpc exit 1 失败；10-31 备份卡死 started（barman 会话等 IPC/CheckpointStart 6d17h）
+   │    → ScheduledBackup 因「已有 backup in progress」永久跳过后续调度
+   │
+   └─③ 每分钟一条的 autovacuum 取消日志 = 唯一显性症状（CNPGWALArchiveFailed 观察不到——
+        CNPG 的 wal-archive 走插件路径，不经过 pg_stat_archiver）</div>
+
+<h3>处置过程（按证据逐层推进）</h3>
+<table>
+  <tr><th>#</th><th>动作</th><th>结果 / 发现</th></tr>
+  <tr><td>1</td><td>删除卡死的 Backup 对象 <code>pg-main-daily-20261031031500</code>，手动创建备份</td><td>调度器立刻补建缺失的 11-01 备份，但新备份同样卡 <code>started</code>——证明不是单个卡死对象的问题</td></tr>
+  <tr><td>2</td><td><code>pg_terminate_backend</code> 终结 9 个僵尸会话</td><td><b>内核拒绝：EPERM</b>（连信号都发不出去——第一个深层异常信号）</td></tr>
+  <tr><td>3</td><td>强制删除 Pod（SIGKILL 后容器死不掉，CNPG preStop 被卡）→ 宿主机清理残留挂载与 sandbox → 重建</td><td>新 Pod 冷启动仍卡在 end-of-recovery checkpoint——问题不在进程状态</td></tr>
+  <tr><td>4</td><td>宿主机 I/O 测试：O_DIRECT 写 624MB/s ✓、buffered 读写 ✓、<b>O_DIRECT 读=EINVAL（宿主机根文件系统同样失败）</b>；eventfd/epoll 宿主机级测试 ✓</td><td>块设备健康；获得「信号/唤醒路径异常」的关键线索</td></tr>
+  <tr><td>5</td><td>定位 PG18 latch 机制：所有 PG 进程共享<b>跨 fork 继承的 signalfd(fd3)+pipe(fd4)</b>，SigBlk 恰好只有 SIGURG（PG 的进程间唤醒 = kill(pid, SIGURG) → signalfd）</td><td>宿主机复现实验：自建 signalfd ✓，<b>跨 fork 继承的 signalfd 收不到子进程的 SIGURG（两种内核 7.0.0-38/-42 均复现）</b></td></tr>
+  <tr><td>6</td><td>回退 k3 内核至 7.0.0-38（grub-reboot 一次性引导后用 grub-set-default 固化），OpenBao 重新解封</td><td>复现实验在 -38 下仍失败 → <b>内核版本归因不成立</b>，但故障面明确为「容器内跨进程唤醒丢失」</td></tr>
+  <tr><td>7</td><td>切 <code>io_method=worker</code>（CNPG custom.conf 生效，io worker 0/1/2 进程出现）＋ 最终一次全新 Pod 重建后不再干预</td><td><b>实例 2/2 Ready、检查点正常、pg_backup_start 解除阻塞</b>——与此前所有失败组合的关键差异</td></tr>
+</table>
+
+<div class="callout warn">
+  <b class="tt">⚠️ 根因判定（诚实版）</b><br>
+  确定的事实：① PG18.4（CNPG 官方镜像 18.4-system-trixie）在该节点上的<b>跨进程 latch 唤醒会丢失</b>，sync 与 worker 两种 io_method 都受影响，且随运行时间累积恶化（停库时 SIGTERM 都叫不醒 idle backend）；② 同类缺陷波及面更广——vmalert 的 <code>/-/reload</code>（进程向自己发 SIGHUP）在 k2 上同样 <b>EPERM panic</b>（本处置过程中的实际观测）；③ 节点 10-30 重启（疑似内核/系统更新窗口）是故障起点。<br>
+  <b>不确定的部分</b>：内核 7.0.0-38 与 -42 的差异未构成修复（复现实验在两版上都失败），因此「回退内核」不是严格证明的修复项；当前稳定组合 = <b>内核 -38 + 全新 Pod + io_method=worker</b>。外部佐证：社区已报告 kernel 7.x 时代 PG18 唤醒/调度行为回归（AWS 侧 ~50% 吞吐下降），结论为「内核不回退、需用户态修复」。
+</div>
+
+<h3>验收（全部通过）</h3>
+<table>
+  <tr><th>项</th><th>结果</th></tr>
+  <tr><td>手动备份 <code>pg-main-manual-20261107e</code></td><td><b>completed</b>，7 秒完成（22:22:43→22:22:50），backupId 20261106T222243，minio base 目录生成</td></tr>
+  <tr><td>新鲜度探针</td><td>cnpg_backup_last_success_timestamp_seconds 更新为本次备份时间</td></tr>
+  <tr><td>告警</td><td>CNPGBackupStale / CDCConnectTaskNotRunning / CDCSlotWalRetention 全部恢复</td></tr>
+  <tr><td>应用恢复</td><td>13 个应用 60 条连接重新接入；config-center/ecommerce 全部 1/1</td></tr>
+  <tr><td>OpenBao</td><td>节点重启后已重新解封（unseal.sh，密钥来自 k1 /var/lib/k8s-installer/creds/openbao-init）</td></tr>
+</table>
+
+<!-- ============ ④ P1 ============ -->
+<h2 id="s4">④ P1 两项</h2>
+<h3>P1-1 · d.apikv.com 超时 + mcm 探针（修复 ✅）</h3>
+<table>
+  <tr><th>对象</th><th>根因（实测证据链）</th><th>处置</th></tr>
+  <tr>
+    <td><b>d.apikv.com 全链超时</b><br>（console-edge 卡片，无告警组）</td>
+    <td>逐层排除：集群侧 SNI/Host 全通（Gateway VIP 返回 200）、Pangolin 资源配置正常（与工作的 pyxis 逐字段一致）、DNS 一致、DB 后端 homepage Pod 正常；traefik 访问日志显示请求卡在<b>中间件层 20s→90s→300s 后由中间件自己回 401（OriginStatus=0，从未到后端）</b>；分界时刻 2026-11-04 01:32→01:42（恰好 gorse 迁移 K8s 的配置变更窗口）；traefik 自 10-31 起未重启过。判定：<b>traefik badger 插件的 router 级状态损坏</b>（11-04 配置变更触发），跨 pangolin/newt 重启仍在，仅 traefik 重启清除。</td>
+    <td><code>docker restart traefik</code> → curl 401/0.13s、浏览器 UA 302/0.09s，即刻恢复</td>
+  </tr>
+  <tr>
+    <td><b>mcm-site 恒 404</b></td>
+    <td>公网 mcm.apikv.com 404 而容器本机 200 → Pangolin 数据库里 mcm 资源已不存在（db.sqlite 备份名 <code>20261028-mcm-homepage-migration</code> 证实）；集群里 mcm-site HTTPRoute 的 hostname 已是 <b>pyxis.apikv.com</b>（MCM 产品 10-28 迁入集群并改名），pyxis 公网实测 200。mcm 探针属「探已下线站点」的过期规则。</td>
+    <td>删除 mcm-site 探针；新增 <b>pyxis-site</b> 探针（product-sites，200+证书，3/2 阈值）</td>
+  </tr>
+  <tr>
+    <td><b>d-console 告警盲区</b></td>
+    <td>console-edge 组设计上不带告警——本次 d.apikv.com 整链挂掉时确实无人被叫醒，属覆盖缺口而非误报。</td>
+    <td>新增 <b>d-console-edge</b> 带告警探针（public-edge，302+证书，6/4 阈值），注释明确它只证明「公网入口+Pangolin+SSO 门户」整条边</td>
+  </tr>
+</table>
+<p class="small">注：gorse 迁移当天（11-04）的配置变更窗口与 d-console 损坏起点吻合，gorse 本身的探针在迁移后经 Cilium Gateway 正常（302 ✓）。traefik 插件状态损坏建议纳入运维手册：Pangolin 配置批量变更后重启 traefik。</p>
+
+<h3>P1-2 · Tetragon→Vector 流复核（观察完成 ✅）</h3>
+<p>Tetragon 三 DaemonSet Pod + operator 全部 Running（k3 节点的 tetragon 随节点重启自愈）；日志仅良性 warn（已消亡容器 cgroup 清理）。<code>ecommerce_tetragon_security_events_total</code> 在 11-06 tetragon-j57k9 重启后无新样本——结合事件计数器「按事件注册」的特性，判定为<b>安静态而非管道断裂</b>（守卫规则 scrape_samples_scraped{service_name="vector-security"} 持续正常）。规则保留，不改；若后续证实流断，处置路径已写入审计报告（删两条事件规则+改造守卫）。</p>
+
+<!-- ============ ⑤ P2 ============ -->
+<h2 id="s5">⑤ P2 两项</h2>
+<h3>P2-1 · ecommerce 副本故障与 CDC 槽位差（修复 ✅，全部级联自数据库）</h3>
+<table>
+  <tr><th>对象</th><th>状态</th></tr>
+  <tr><td>ecommerce-behavior-deploy 0/1 / ContainerNotReady</td><td>数据库恢复后<b>自愈</b>（1/1 Running），K8sDeploymentUnavailable/Degraded 告警解除——应用本身无独立故障，是 DB 会话僵死的下游受害者</td></tr>
+  <tr><td>control-tower-gateway 1/2</td><td>清理了一个节点重启遗留的 Completed 僵尸 Pod；现存两副本 1/1</td></tr>
+  <tr><td>CDCSlotWalRetention / CDCConnectTaskNotRunning</td><td>kafka broker（k3）随节点重启后 Debezium task FAILED、槽位失活、WAL 钉住 176MB；对 KafkaConnector 打 <code>strimzi.io/restart-task=0</code> 后 task <b>RUNNING</b>、槽位 active=t、位点差回落至 176MB（&lt;256MB 阈值），告警解除</td></tr>
+</table>
+
+<h3>P2-2 · AlertBridgeNotificationFlood 噪声预算校准（修复 ✅）</h3>
+<p>试运行预算 20/h 已挂 40 天。7 天实测（VM 查询 max_over_time hourly increase）：page 峰值 <b>29/h</b>（本次证书风暴期间，21 个端点同窗口）、ticket 峰值 <b>14/h</b>——真实事故风暴即超限，属误报设计缺陷。阈值校准为 <b>40/h</b>，注释记录校准依据。规则随 ConfigMap 更新生效后该告警解除；真正的降噪失效（退避/静音失灵）仍会在 40/h 以上被抓住。</p>
+<div class="callout info"><b class="tt">附带发现（重要）</b>：vmalert 的 <code>/-/reload</code> 在当前内核上因 <code>kill(self, SIGHUP) = EPERM</code> 而 panic——<b>规则热加载在所有节点上暂不可用，规则变更需走 Pod 重启生效</b>（本次已按此方式生效）。该 EPERM 与 PG 的 pg_terminate_backend EPERM 是同一缺陷的两种表现，已列入后续跟进。</div>
+
+<!-- ============ ⑥ P3 ============ -->
+<h2 id="s6">⑥ P3 两项</h2>
+<table>
+  <tr><th>项</th><th>处置</th></tr>
+  <tr><td>node4 docker 闲置</td><td>ssh 实测：docker 已安装、<b>0 个运行容器</b>（≥1 天无容器样本）。cloud-hosts.yml 的注释口径成立（规则有 1 天前置守卫不会误报）。node3/4 同样「有 docker 无容器」，node5 无 docker。保留观察，无需改动。</td></tr>
+  <tr><td>gorse 告警提升</td><td>迁移到集群后已属于需要告警的自登录应用，新增 <code>gorse-edge-alert</code>（public-edge，302+证书，6/4），console-edge 的原探针保留作控制台卡片显示。</td></tr>
+</table>
+
+<!-- ============ ⑦ 终态 ============ -->
+<h2 id="s7">⑦ 终态验证快照（07:00 CST）</h2>
+<table>
+  <tr><th>面</th><th>状态</th></tr>
+  <tr><td>vmalert 告警</td><td><span class="tag ok">仅 Watchdog</span>（心跳，设计如此）；AlertFiringTooLong 已随源告警恢复而清除</td></tr>
+  <tr><td>业务库 pg-main</td><td><span class="tag ok">2/2 Ready</span>，io_method=worker，检查点正常处理（num_requested=num_done），13 应用 / 60 连接</td></tr>
+  <tr><td>CNPG 备份</td><td><span class="tag ok">completed</span>（20261106T222243，7s），新鲜度探针已读取；今晚 03:15 ScheduledBackup 为调度路径首次验证点</td></tr>
+  <tr><td>CDC 链路</td><td><span class="tag ok">task RUNNING</span>，槽位活跃，WAL 位点差 176MB 持续回落；对账 CronJob 恢复正常周期</td></tr>
+  <tr><td>公网证书</td><td><span class="tag ok">2027-02-04</span>，node1 Pangolin/blog + node2 minio 全部换发；自动续期链路（node1 签发→node1/node2 分发→指纹验证）端到端验收通过</td></tr>
+  <tr><td>gatus 实时探针</td><td><span class="tag ok">日志全绿</span>（40 端点含 3 个新增/替换）；证书条件全过。状态 API 的历史结果分页存在显示滞后（不影响实时告警推送），列入后续核查</td></tr>
+  <tr><td>OpenBao</td><td><span class="tag ok">unsealed</span>（两次节点重启后均按 runbook 解封）</td></tr>
+  <tr><td>k3 节点</td><td><span class="tag info">7.0.0-38</span> 已设为默认启动内核（GRUB_DEFAULT=saved + grub-set-default），-42 保留在盘可随时切回</td></tr>
+</table>
+
+<!-- ============ ⑧ 变更清单 ============ -->
+<h2 id="s8">⑧ 变更清单（仓库文件 + 环境操作）</h2>
+<table>
+  <tr><th>类型</th><th>对象</th><th>说明</th></tr>
+  <tr><td><span class="tag warn">修改</span></td><td><code>docker-deploy/certificates/apikv-wildcard/apikv-cert-receive</code></td><td>node2 接收脚本重写（去 Harbor/nginx），已部署 node2（sha256 一致）</td></tr>
+  <tr><td><span class="tag warn">修改</span></td><td><code>docker-deploy/certificates/apikv-wildcard/apikv-cert-distribute</code></td><td>移除 node1 Redis 目标，已部署 node1</td></tr>
+  <tr><td><span class="tag info">更新</span></td><td><code>docker-deploy/certificates/apikv-wildcard/README.md</code></td><td>分发矩阵更新 + 漂移标记已修复</td></tr>
+  <tr><td><span class="tag warn">修改</span></td><td><code>components/gatus/endpoints.yaml</code></td><td>gorse-edge 注释更新（11-04 审计项）；删 mcm-site、增 pyxis-site；增 d-console-edge、gorse-edge-alert；ConfigMap 已同步并重启生效（38→40 端点，27→29 带告警）</td></tr>
+  <tr><td><span class="tag warn">修改</span></td><td><code>components/vmalert/rules/observability-pipeline.yml</code></td><td>AlertBridgeNotificationFlood 阈值 20→40/h + 校准依据注释；ConfigMap 已同步生效</td></tr>
+  <tr><td><span class="tag info">环境</span></td><td>k3 节点</td><td>内核回退 7.0.0-42 → 7.0.0-38（grub 固化默认）；期间两次 cordon/reboot/uncordon</td></tr>
+  <tr><td><span class="tag info">环境</span></td><td>PG 集群 pg-main</td><td>spec.postgresql.parameters.io_method=worker（生效中）；两个卡死 Backup 对象已清理；config-center/control-tower 僵尸 Pod 清理；CDC connector task 重启注解</td></tr>
+  <tr><td><span class="tag info">环境</span></td><td>node1</td><td>证书 --force 签发+分发（nohup 落盘 /var/log/apikv-cert-force.log）；traefik/pangolin 重启（修复 badger 插件状态）</td></tr>
+  <tr><td><span class="tag ok">验收</span></td><td>—</td><td>全部变更后：告警清零、探针全绿、备份完成、应用恢复</td></tr>
+</table>
+
+<!-- ============ ⑨ 建议 ============ -->
+<h2 id="s9">⑨ 后续建议（按优先级）</h2>
+<table>
+  <tr><th>#</th><th>优先级</th><th>行动</th></tr>
+  <tr><td>1</td><td><span class="tag bad">P0</span></td><td><b>验证今晚 03:15 的 ScheduledBackup</b>（明早查 <code>kubectl -n postgresql get backup</code> 最新对象 phase=completed 即闭环）。这是调度路径的第一次真实运行。</td></tr>
+  <tr><td>2</td><td><span class="tag bad">P0</span></td><td><b>跟进内核/PG 唤醒缺陷</b>：根因是 PG18.4 latch（signalfd 跨 fork 继承）在本集群内核上的唤醒丢失，已直接观测到 PG（EPERM/卡死）与 vmalert（reload panic）两种受害形态。跟进 pgsql-bugs / CNPG issue 与内核 stable 修复；PG 18.5+ 或 CNPG 镜像更新发布后优先升级验证。当前稳定组合（内核 -38 + worker）不要主动改动。</td></tr>
+  <tr><td>3</td><td><span class="tag warn">P1</span></td><td><b>暂禁 vmalert 规则热加载</b>：在内核缺陷修复前，install.sh 里 POST /-/reload 会 panic 并造成重启风暴——建议临时改为「更新 ConfigMap 后滚动重启 vmalert」，或给 install.sh 加 kill-syscall 可用性探测。</td></tr>
+  <tr><td>4</td><td><span class="tag warn">P1</span></td><td><b>观察 k1/k2</b>：同样的 PG18/内核组合，k1/k2 上如有 StatefulSet 迁移/重建需按本报告的「完整 Pod 重建 + io_method=worker」路径处理。</td></tr>
+  <tr><td>5</td><td><span class="tag info">P2</span></td><td>核查 gatus 状态 API 的结果分页/排序显示滞后（不影响实时告警，影响 d.apikv.com 控制台卡片刷新）。</td></tr>
+  <tr><td>6</td><td><span class="tag info">P2</span></td><td>CDC WAL 位点差（176MB）确认持续回落至 0；若 24h 内不回升需要按 runbook 查 Debezium 追赶状态。</td></tr>
+  <tr><td>7</td><td><span class="tag info">P3</span></td><td>证书链路下次真实续期在 2027-01-22（ARI 窗口），此前每日 03:17 timer 会按新脚本绿灯运行；1 月下旬首次自动续期后建议再做一次 <code>--force</code> 演练验收。</td></tr>
+</table>
+
+<div class="foot">
+  处置方法：只读诊断（ssh/kubectl/openssl/VM 查询）→ 最小干预修复 → 每步验收。涉及的影响性操作：k3 两次重启（业务 Pod 随之重启，数据库中断累计约 25 分钟）、PG 多次 Pod 重建、证书分发重启 traefik/redis 已被移除/minio、CDC task 重启、gatus/vmalert 重启。<br>
+  关键证据文件：node1 <code>/var/log/apikv-cert-force.log</code>；vmalert panic 日志（observability ns）；Pangolin db.sqlite 备份序列；本机 /tmp/vmqueries.txt（27 项指标核查清单）。<br>
+  报告生成：ZCode · 2026-11-07 · 关联文档《NTFY-ALERT-RULES-AUDIT-2026-11-07.html》
+</div>
+
+</div>
+</body>
+</html>

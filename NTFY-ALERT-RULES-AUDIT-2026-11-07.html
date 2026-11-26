@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ntfy 告警规则全量审计报告 · 2026-11-07</title>
+<style>
+  :root{
+    --bg:#f6f7f9; --card:#ffffff; --ink:#1c2330; --muted:#5b6575; --line:#e3e7ee;
+    --ok:#0f8a4d; --okbg:#e8f7ee; --warn:#b7791f; --warnbg:#fdf6e7; --bad:#c0392b; --badbg:#fdeceb;
+    --info:#2563a8; --infobg:#eaf2fb; --accent:#1a4f8b;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;font-size:14px;line-height:1.65}
+  .wrap{max-width:1080px;margin:0 auto;padding:32px 20px 64px}
+  header.hero{background:linear-gradient(135deg,#123a66,#1a4f8b 55%,#2b6cb0);color:#fff;border-radius:14px;padding:28px 30px;margin-bottom:26px}
+  header.hero h1{margin:0 0 6px;font-size:24px;letter-spacing:.5px}
+  header.hero .sub{opacity:.92;font-size:13.5px}
+  header.hero .meta{margin-top:14px;display:flex;flex-wrap:wrap;gap:10px 22px;font-size:12.5px;opacity:.95}
+  h2{font-size:18px;margin:38px 0 14px;padding-left:10px;border-left:4px solid var(--accent)}
+  h3{font-size:15px;margin:22px 0 10px;color:var(--accent)}
+  .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin:14px 0}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 16px}
+  .card .num{font-size:26px;font-weight:700;line-height:1.2}
+  .card .lbl{font-size:12px;color:var(--muted);margin-top:3px}
+  .card.ok .num{color:var(--ok)} .card.bad .num{color:var(--bad)} .card.warn .num{color:var(--warn)} .card.info .num{color:var(--info)}
+  table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden;font-size:13px}
+  th{background:#eef2f7;text-align:left;padding:8px 10px;font-weight:600;border-bottom:2px solid var(--line);white-space:nowrap}
+  td{padding:7px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+  tr:last-child td{border-bottom:none}
+  code{background:#eef1f5;border-radius:4px;padding:1px 5px;font-family:"SF Mono",Menlo,Consolas,monospace;font-size:12px;word-break:break-all}
+  .codeblock{background:#0f172a;color:#dbe6f3;border-radius:8px;padding:12px 14px;font-family:"SF Mono",Menlo,Consolas,monospace;font-size:12px;overflow-x:auto;white-space:pre;margin:10px 0}
+  .tag{display:inline-block;border-radius:20px;padding:1px 9px;font-size:11.5px;font-weight:600;white-space:nowrap}
+  .tag.ok{background:var(--okbg);color:var(--ok)} .tag.warn{background:var(--warnbg);color:var(--warn)}
+  .tag.bad{background:var(--badbg);color:var(--bad)} .tag.info{background:var(--infobg);color:var(--info)}
+  .tag.muted{background:#eceff3;color:#6b7280}
+  .callout{border-radius:10px;padding:14px 16px;margin:14px 0;border:1px solid}
+  .callout.bad{background:var(--badbg);border-color:#f2c4c0}
+  .callout.warn{background:var(--warnbg);border-color:#ecd9b0}
+  .callout.ok{background:var(--okbg);border-color:#bfe6cf}
+  .callout.info{background:var(--infobg);border-color:#c3d9ef}
+  .callout b.tt{display:block;margin-bottom:6px}
+  .flow{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:20px;font-family:"SF Mono",Menlo,Consolas,monospace;font-size:12.5px;overflow-x:auto;white-space:pre;line-height:1.9}
+  .toc{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 20px;font-size:13px}
+  .toc a{color:var(--accent);text-decoration:none;margin-right:16px;white-space:nowrap}
+  .toc a:hover{text-decoration:underline}
+  details{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 16px;margin:10px 0}
+  summary{cursor:pointer;font-weight:600;color:var(--accent)}
+  .foot{margin-top:40px;color:var(--muted);font-size:12px;border-top:1px solid var(--line);padding-top:14px}
+  .small{font-size:12px;color:var(--muted)}
+  .pill{font-size:11px;color:var(--muted)}
+  .verdict-row td{font-weight:600}
+  @media print{body{background:#fff}.wrap{max-width:none;padding:0}header.hero{border-radius:0}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="hero">
+  <h1>ntfy 告警规则全量审计报告</h1>
+  <div class="sub">范围：本仓库全部 ntfy 告警规则面（vmalert / Alertmanager / alert-bridge / gatus）＋ 相邻生产者（healthchecks、host-watchdog、node1-watchdog）</div>
+  <div class="meta">
+    <span>📅 审计日期：2026-11-07</span>
+    <span>🏷️ 环境：集群 dev.test（k1/k2/k3）＋ 云主机 node1–node6</span>
+    <span>💬 ntfy：https://ntfy.apikv.com（node1）</span>
+    <span>📂 仓库：~/lens077/kubernetes @ main（4cdee70f）</span>
+  </div>
+</header>
+
+<div class="toc">
+  <a href="#s1">① 结论速览</a>
+  <a href="#s2">② ntfy 告警链路</a>
+  <a href="#s3">③ 规则文件清单</a>
+  <a href="#s4">④ vmalert 规则明细</a>
+  <a href="#s5">⑤ gatus 探针清单</a>
+  <a href="#s6">⑥ 过期/异常分析</a>
+  <a href="#s7">⑦ 当前 firing 快照</a>
+  <a href="#s8">⑧ 本次变更</a>
+  <a href="#s9">⑨ 建议行动</a>
+  <a href="#s10">⑩ 仓库外相邻面</a>
+</div>
+
+<!-- ============ ① 结论速览 ============ -->
+<h2 id="s1">① 结论速览</h2>
+<div class="cards">
+  <div class="card info"><div class="num">65</div><div class="lbl">vmalert 告警规则<br>（9 个规则文件）</div></div>
+  <div class="card info"><div class="num">27 / 38</div><div class="lbl">gatus 带 ntfy 告警探针<br>（11 个 console-edge 只显示不告警）</div></div>
+  <div class="card info"><div class="num">3</div><div class="lbl">ntfy topic（page / ticket / test）<br>＋ gatus 直推主 topic</div></div>
+  <div class="card warn"><div class="num">1</div><div class="lbl">过期项（gorse-edge 注释）<br><b>已修改并同步集群</b></div></div>
+  <div class="card ok"><div class="num">0</div><div class="lbl">需要删除的规则</div></div>
+  <div class="card bad"><div class="num">6</div><div class="lbl">环境真实问题<br>（规则正确 firing，需处置）</div></div>
+</div>
+
+<div class="callout ok">
+  <b class="tt">✅ 总体判定：规则体系健康，无「死规则」需要批量清理。</b>
+  65 条 vmalert 告警中除 2 条 Tetragon 事件规则的数据管道需人工复核外，其余规则引用的指标全部在 VictoriaMetrics 中查到实时序列（27 项逐一核查）；38 个 gatus 探针全部与当前环境拓扑一致。
+  仓库与集群 <b>零漂移</b>（vmalert 9 个文件、gatus 2 个文件 sha256 逐一比对一致）。
+  当前 ntfy 收到的告警全部对应真实环境问题（详见⑥），不存在「规则过期导致的误报」。
+</div>
+
+<div class="callout bad">
+  <b class="tt">🚨 最紧急（审计中发现的非规则问题）：apikv.com 公网证书续期已逾期。</b>
+  21 个公网探针因 <code>[CERTIFICATE_EXPIRATION] (≈464h) > 720h</code> 失败并推送 ntfy——证书约 <b>2026-11-26 到期（仅剩 ≈19 天）</b>，Let's Encrypt 通常在剩 30 天时续期，即续期已逾期约 10 天未发生。
+  到期影响面：全部 apikv.com HTTPS 站点（node1 wildcard + 集群入口两类证书）。这不是规则过期，是规则在正确地报警。
+</div>
+
+<!-- ============ ② 链路 ============ -->
+<h2 id="s2">② ntfy 告警链路（当前实际拓扑）</h2>
+<div class="flow">  数据层                规则评估(规则文件)                路由/降噪                  推送
+┌────────────┐   ┌──────────────────────────────┐   ┌──────────────┐   ┌─────────────┐
+│ VictoriaMetrics│◄──│ vmalert  65 条告警 + 15 条记录规则 │──►│ Alertmanager │──►│ alert-bridge │──┐
+│ (集群内单机)  │   │  components/vmalert/rules/*.yml  │   │ (Watchdog→null)│  │ /alerts 退避/静音│  │  ▼
+└────────────┘   └──────────────────────────────┘   └──────────────┘   └─────────────┘  ntfy
+                                                                                          ▲
+  Gatus 合成监控(38 探针) ──────────── alerting.custom 直推 ──────────────────────────────╯
+  components/gatus/{config.yaml,endpoints.yaml}        （不经 AM：链路坏了也能报信）
+
+  旁路生产者：healthchecks(check 级 ntfy integration) · host-watchdog(k1-3/node1-6) · node1-watchdog
+  预留入口  ：Bugsink → alert-bridge:9199/bugsink/&lt;token&gt;（服务未部署，链路待启用）</div>
+<p class="small">ntfy 上点「静音」经 ack.apikv.com → alert-bridge <code>/ack</code>（HMAC 签名 + 1h 有效期 + 时长白名单）。桥接器按 severity 分流：critical → page（priority 4，主 topic），其余 → ticket（priority 2，-ticket topic），test → -test topic；page 退避 1/2/4/8/24h、ticket 4/8/16/24h，同类续期上限 page 8 次 / ticket 6 次，之后 3d/7d 一条慢速心跳。</p>
+
+<!-- ============ ③ 规则文件清单 ============ -->
+<h2 id="s3">③ 规则文件清单（全部路径）</h2>
+<table>
+  <tr><th>#</th><th>文件路径</th><th>层</th><th>规则数</th><th>集群↔仓库</th><th>判定</th></tr>
+  <tr><td>1</td><td><code>components/vmalert/rules/observability-pipeline.yml</code></td><td>vmalert（告警链自监控）</td><td>9 告警</td><td><span class="tag ok">一致</span></td><td><span class="tag ok">有效</span></td></tr>
+  <tr><td>2</td><td><code>components/vmalert/rules/ecommerce-k8s.yml</code></td><td>vmalert（K8s 工作负载）</td><td>8 告警</td><td><span class="tag ok">一致</span></td><td><span class="tag ok">有效</span></td></tr>
+  <tr><td>3</td><td><code>components/vmalert/rules/ecommerce-app.yml</code></td><td>vmalert（应用 RED/配置）</td><td>5 告警</td><td><span class="tag ok">一致</span></td><td><span class="tag ok">有效</span></td></tr>
+  <tr><td>4</td><td><code>components/vmalert/rules/ecommerce-cdc.yml</code></td><td>vmalert（CDC 链）</td><td>9 告警</td><td><span class="tag ok">一致</span></td><td><span class="tag ok">有效</span></td></tr>
+  <tr><td>5</td><td><code>components/vmalert/rules/cnpg.yml</code></td><td>vmalert（PG/CNPG/备份）</td><td>13 告警</td><td><span class="tag ok">一致</span></td><td><span class="tag ok">有效</span></td></tr>
+  <tr><td>6</td><td><code>components/vmalert/rules/ecommerce-security.yml</code></td><td>vmalert（运行时安全）</td><td>5 告警</td><td><span class="tag ok">一致</span></td><td><span class="tag warn">2 条待复核*</span></td></tr>
+  <tr><td>7</td><td><code>components/vmalert/rules/ecommerce-observability-readiness.yml</code></td><td>vmalert（采集器就绪）</td><td>2 告警</td><td><span class="tag ok">一致</span></td><td><span class="tag ok">有效</span></td></tr>
+  <tr><td>8</td><td><code>components/vmalert/rules/cloud-hosts.yml</code></td><td>vmalert（云主机资源/容器）</td><td>14 告警（3 组）</td><td><span class="tag ok">一致</span></td><td><span class="tag ok">有效</span></td></tr>
+  <tr><td>9</td><td><code>components/vmalert/rules/host-recording.yml</code></td><td>vmalert（记录规则层，由 build-host-recording.py 从 hosts.json 生成）</td><td>15 记录规则</td><td><span class="tag ok">一致</span></td><td><span class="tag ok">有效（9 主机清单 1:1 匹配）</span></td></tr>
+  <tr><td>10</td><td><code>components/gatus/config.yaml</code></td><td>gatus（ntfy 直推 alerting 定义）</td><td>1 告警通道</td><td><span class="tag ok">一致</span></td><td><span class="tag ok">有效</span></td></tr>
+  <tr><td>11</td><td><code>components/gatus/endpoints.yaml</code></td><td>gatus（38 探针，27 个带告警）</td><td>27 告警端点</td><td><span class="tag ok">一致（本次已修注释并同步）</span></td><td><span class="tag warn">1 处注释过期已修</span></td></tr>
+  <tr><td>12</td><td><code>components/alertmanager/values.yaml</code> → 集群 CM <code>alertmanager</code></td><td>Alertmanager 路由</td><td>2 抑制规则 + Watchdog→null</td><td><span class="tag ok">一致</span></td><td><span class="tag ok">有效</span></td></tr>
+  <tr><td>13</td><td><code>components/alert-bridge/bridge.py</code>（→ CM alert-bridge-script）</td><td>通知分类/退避/静音规则</td><td>3 类 ×（间隔阶梯+上限+心跳）</td><td><span class="tag ok">一致</span></td><td><span class="tag ok">有效（Bugsink 入口预留）</span></td></tr>
+  <tr class="verdict-row"><td colspan="6">* Tetragon 两条事件规则的指标序列自 2026-11-06 起暂缺（见⑥-F5），规则语义本身仍有效。</td></tr>
+</table>
+
+<!-- ============ ④ vmalert 明细 ============ -->
+<h2 id="s4">④ vmalert 规则明细（65 条，逐项指标存在性核查）</h2>
+<p class="small">「序列」= 2026-11-07 在 VictoriaMetrics 对规则引用指标执行 <code>count_over_time(…[10m])</code>（探针类指标放宽到 30 分钟节奏/30 天）的实测结果。兜底类 absent() 规则依赖主规则的指标，随主指标一并生效。</p>
+<details open>
+<summary>observability-pipeline.yml —— 9 条（观测链自身）</summary>
+<table>
+  <tr><th>告警</th><th>严重度</th><th>依据指标实测</th><th>判定</th></tr>
+  <tr><td>Watchdog（心跳）</td><td>none</td><td>firing 中（设计如此，AM 不推送）</td><td><span class="tag ok">有效</span></td></tr>
+  <tr><td>VMAlertNotifierErrors</td><td>critical</td><td>vmalert_alerts_send_errors_total ✓（1 序列）</td><td><span class="tag ok">有效</span></td></tr>
+  <tr><td>VMAlertRemoteWriteErrors</td><td>warning</td><td>同上链路指标 ✓</td><td><span class="tag ok">有效</span></td></tr>
+  <tr><td>AlertmanagerNotificationFailures</td><td>critical</td><td>alertmanager_notifications_failed_total ✓（有序列，当前无增量）</td><td><span class="tag ok">有效</span></td></tr>
+  <tr><td>AlertmanagerMetricsMissing</td><td>warning</td><td>alertmanager_build_info ✓</td><td><span class="tag ok">有效</span></td></tr>
+  <tr><td>AlertBridgeMetricsMissing</td><td>warning</td><td>alert_bridge_state_entries / notifications_total ✓（2/27 序列）</td><td><span class="tag ok">有效</span></td></tr>
+  <tr><td>AlertBridgePublishFailures</td><td>critical</td><td>同上 ✓</td><td><span class="tag ok">有效</span></td></tr>
+  <tr><td>AlertBridgeNotificationFlood</td><td>warning</td><td>同上 ✓（20/h 噪声预算为试运行值，注释中已标注须校准）</td><td><span class="tag ok">有效</span></td></tr>
+  <tr><td>OTelCollectorExporterQueueHigh</td><td>warning</td><td>otelcol_exporter_queue_size ✓</td><td><span class="tag ok">有效</span></td></tr>
+</table>
+</details>
+<details>
+<summary>ecommerce-k8s.yml —— 8 条（K8s 工作负载）</summary>
+<table>
+  <tr><th>告警</th><th>严重度</th><th>当前状态</th><th>判定</th></tr>
+  <tr><td>K8sPodRestartStorm</td><td>critical</td><td>k8s_container_restarts ✓</td><td><span class="tag ok">有效</span></td></tr>
+  <tr><td>K8sContainerNotReady</td><td>warning</td><td><b>firing 中</b>（ecommerce/behavior Pod，11-06 起）</td><td><span class="tag ok">有效，真实事故</span></td></tr>
+  <tr><td>K8sDeploymentUnavailable</td><td>critical</td><td><b>firing 中</b>（ecommerce-behavior-deploy 0/1，11-05 起）</td><td><span class="tag ok">有效，真实事故</span></td></tr>
+  <tr><td>K8sDeploymentDegraded</td><td>warning</td><td><b>firing 中</b>（control-tower-gateway 1/2，11-05 起）</td><td><span class="tag ok">有效，真实事故</span></td></tr>
+  <tr><td>K8sFailedPodsAccumulating</td><td>warning</td><td>k8s_pod_phase ✓</td><td><span class="tag ok">有效</span></td></tr>
+  <tr><td>K8sNodeNotReady</td><td>critical</td><td>k8s_node_condition_ready ✓（k1-k3 均 Ready）</td><td><span class="tag ok">有效</span></td></tr>
+  <tr><td>K8sClusterMetricsMissing</td><td>critical</td><td>k8s_container_restarts ✓</td><td><span class="tag ok">有效</span></td></tr>
+  <tr><td>AlertFiringTooLong（元规则）</td><td>warning</td><td>firing 中 ×4（对上面 4 条真实事故的续期提醒）</td><td><span class="tag ok">有效</span></td></tr>
+</table>
+</details>
+<details>
+<summary>ecommerce-app.yml —— 5 条（应用层）</summary>
+<table>
+  <tr><th>告警</th><th>严重度</th><th>依据指标实测</th><th>判定</th></tr>
+  <tr><td>EcommerceServiceErrorRateHigh</td><td>critical</td><td>rpc_server_duration_milliseconds_count ✓（排除 dev 环境 + 0.02 rps 门槛）</td><td><span class="tag ok">有效</span></td></tr>
+  <tr><td>EcommerceUnknownErrorShareHigh</td><td>warning</td><td>同上 ✓</td><td><span class="tag ok">有效</span></td></tr>
+  <tr><td>EcommerceRPCMetricsMissing</td><td>warning</td><td>双条件守卫 ✓</td><td><span class="tag ok">有效</span></td></tr>
+  <tr><td>EcommerceConfigStale</td><td>warning</td><td>connectkit_config_stale ✓（17 序列）</td><td><span class="tag ok">有效</span></td></tr>
+  <tr><td>EcommerceConfigStaleMetricsMissing</td><td>warning</td><td>同上 ✓；ntfy Click 里的 Grafana UID <code>P4169E866C3094E38</code> 实测与现行数据源一致</td><td><span class="tag ok">有效</span></td></tr>
+</table>
+</details>
+<details>
+<summary>ecommerce-cdc.yml —— 9 条（CDC 链）</summary>
+<table>
+  <tr><th>告警</th><th>严重度</th><th>当前状态</th><th>判定</th></tr>
+  <tr><td>CDCSlotWalRetention</td><td>warning</td><td><b>firing 中</b>（10-31 起，槽位点差 &gt;256MB）</td><td><span class="tag ok">有效，真实事故</span></td></tr>
+  <tr><td>CDCSlotInactive / CDCSlotMetricsMissing</td><td>critical/warning</td><td>cnpg_pg_replication_slots_* ✓（槽活跃）</td><td><span class="tag ok">有效</span></td></tr>
+  <tr><td>CDCConnectTaskNotRunning / CDCDebeziumDisconnected / CDCDebeziumLagHigh</td><td>—</td><td>kafka_connect_connector_task_status ✓（2 序列）、debezium_metrics_* ✓；gatus task 探针全 OK</td><td><span class="tag ok">有效</span></td></tr>
+  <tr><td>CDCConnectMetricsMissing</td><td>warning</td><td>同上 ✓</td><td><span class="tag ok">有效</span></td></tr>
+  <tr><td>CDCReconcileMismatch / CDCReconcileStale</td><td>critical/warning</td><td>cnpg_cdc_rows_count ✓ / cdc_es_docs_count ✓ / cdc_es_reconcile_run_ok ✓</td><td><span class="tag ok">有效</span></td></tr>
+</table>
+</details>
+<details>
+<summary>cnpg.yml —— 13 条（数据库与备份）</summary>
+<table>
+  <tr><th>告警</th><th>严重度</th><th>当前状态</th><th>判定</th></tr>
+  <tr><td>CNPGBackupStale</td><td>critical</td><td><b>firing 中</b>：最后成功备份 2026-10-29 11:15（已 9 天）；探针存活（11-07 03:30 上报）</td><td><span class="tag ok">有效，真实事故</span></td></tr>
+  <tr><td>CNPGNoBackupEver / CNPGBackupProbeMissing</td><td>warning</td><td>cnpg_probe_run_timestamp_seconds ✓（探针正常）</td><td><span class="tag ok">有效</span></td></tr>
+  <tr><td>CNPGWALArchiveFailed / CNPGWALArchiveStalled / PostgresWALArchiveFailing</td><td>—</td><td>cnpg_pg_stat_archiver_* ✓（当前归档正常）</td><td><span class="tag ok">有效</span></td></tr>
+  <tr><td>PostgresDown / Restarted / ReplicationLag / XidWrapAround / ConnUsageHigh / IdleInTransaction</td><td>—</td><td>cnpg_collector_up ✓、cnpg_backends_total ✓（9 序列）、cnpg_pg_settings_setting ✓</td><td><span class="tag ok">有效</span></td></tr>
+  <tr><td>CNPGMetricsMissing</td><td>critical</td><td>cnpg_collector_up ✓</td><td><span class="tag ok">有效</span></td></tr>
+</table>
+</details>
+<details>
+<summary>ecommerce-security.yml —— 5 条（运行时安全）</summary>
+<table>
+  <tr><th>告警</th><th>严重度</th><th>依据指标实测</th><th>判定</th></tr>
+  <tr><td>EcommerceServiceAccountTokenAccess</td><td>critical</td><td>ecommerce_tetragon_security_events_total：<b>10 分钟窗口 0 序列</b>；30 天内有历史（最后样本 2026-11-06，与 tetragon-j57k9 重启时间吻合）</td><td><span class="tag warn">待复核（⑥-F5）</span></td></tr>
+  <tr><td>EcommerceSuspiciousToolExec</td><td>warning</td><td>同上</td><td><span class="tag warn">待复核（⑥-F5）</span></td></tr>
+  <tr><td>EcommerceSecurityMetricsMissing（守卫）</td><td>warning</td><td>scrape_samples_scraped{service_name="vector-security"} ✓（1h 2.4 万样本，exporter 持续被抓取）</td><td><span class="tag ok">有效</span></td></tr>
+  <tr><td>EcommerceNetworkPolicyDeniedBurst</td><td>warning</td><td>hubble_drop_total ✓（9 序列）</td><td><span class="tag ok">有效</span></td></tr>
+  <tr><td>HubbleFlowTelemetryMissing</td><td>warning</td><td>hubble_flows_processed_total ✓（54 序列）</td><td><span class="tag ok">有效</span></td></tr>
+</table>
+</details>
+<details>
+<summary>ecommerce-observability-readiness.yml —— 2 条（采集器就绪）</summary>
+<table>
+  <tr><th>告警</th><th>严重度</th><th>依据指标实测</th><th>判定</th></tr>
+  <tr><td>VectorDaemonSetReadyBelowExpected</td><td>critical</td><td>k8s_daemonset_ready_nodes{logging} ✓（vector DS 在跑）</td><td><span class="tag ok">有效</span></td></tr>
+  <tr><td>OTelClusterCollectorReadyBelowExpected</td><td>critical</td><td>otel-opentelemetry-collector ✓（Running）</td><td><span class="tag ok">有效</span></td></tr>
+</table>
+</details>
+<details>
+<summary>cloud-hosts.yml —— 14 条（3 组：主机资源 / 采集代理 / 云主机容器）＋ host-recording.yml 15 条记录规则</summary>
+<table>
+  <tr><th>告警</th><th>严重度</th><th>依据指标实测</th><th>判定</th></tr>
+  <tr><td>HostMetricsMissing / PipelineMissing / RulesStale / SignalMissing / RecordingEvaluationErrors</td><td>warning</td><td>host:expected_info ✓（9 台 = hosts.json 9/9）；host:last_seen 全部新鲜</td><td><span class="tag ok">有效</span></td></tr>
+  <tr><td>HostMemoryHigh / HostCPUSaturated / HostDiskFilling / HostDiskAlmostFull</td><td>warning/critical</td><td>host:* 记录序列 ✓（disk 仅覆盖 disk_alert_owner=vmalert 的 node3-6，与 watchdog 分工正确）</td><td><span class="tag ok">有效</span></td></tr>
+  <tr><td>CloudHostLogExportFailing</td><td>warning</td><td>otelcol_exporter_send_failed_log_records_total：0 序列 = 无失败（失败才出现）</td><td><span class="tag ok">有效</span></td></tr>
+  <tr><td>CloudHostTelemetryBacklog / CloudHostJournaldStalled</td><td>warning</td><td>otelcol_exporter_queue_size{cloud} ✓（12）、otelcol_receiver_accepted_log_records_total{journald} ✓（6）、system_memory_utilization_ratio ✓（36）</td><td><span class="tag ok">有效</span></td></tr>
+  <tr><td>CloudHostContainerInventoryLost / CloudHostContainerRestartStorm</td><td>warning</td><td>container_uptime_seconds / container_restarts_total{cloud} ✓（各 26 序列）；当前有容器上报：node1(24)、node2(1)、node6(1)；node3/5 无 docker，node4 有 docker 但 ≥1 天无运行容器（闲置口径，规则有 1 天前置守卫不误报）</td><td><span class="tag ok">有效</span></td></tr>
+  <tr><td>host-recording.yml（15 条记录规则）</td><td>—</td><td>由 build-host-recording.py --check 校验后部署；消费端 180s 新鲜度窗口与 vmalert_recording_rules_errors_total{host-recording} ✓（15 序列，无报错）</td><td><span class="tag ok">有效</span></td></tr>
+</table>
+</details>
+
+<!-- ============ ⑤ gatus 清单 ============ -->
+<h2 id="s5">⑤ gatus 探针清单（38 个，2026-11-07 实测）</h2>
+<p class="small">直推 ntfy 的告警通道：<code>alerting.custom</code> → Secret <code>ops/gatus-ntfy</code>（NTFY_URL=https://ntfy.apikv.com，主 topic 同桥接器；v5.36.0，failure-threshold 11/success 6 为主，公网组 6/4，TCP 组 3/2，无重复提醒）。探针状态取自集群内 <code>/api/v1/endpoints/statuses</code>。</p>
+<table>
+  <tr><th>组</th><th>探针（状态）</th><th>说明</th></tr>
+  <tr><td>cluster-origin（7）</td><td><span class="tag ok">全 OK</span> alert-bridge · otel-collector · healthchecks · config-center-api · config-center-web · openbao-unsealed · postgres-cnpg</td><td>全部带 ntfy 告警；bugsink 探针保持注释（服务仍未部署，注释准确）</td></tr>
+  <tr><td>observability-pipeline（2）</td><td><span class="tag ok">全 OK</span> alert-pipeline-watchdog · k8s-cluster-state-ingestion</td><td>带告警；数据真的进 VM 才算绿</td></tr>
+  <tr><td>cdc（3）</td><td><span class="tag ok">全 OK</span> cdc-source-task · cdc-sink-task · elasticsearch</td><td>带告警</td></tr>
+  <tr><td>public-edge（8）</td><td><span class="tag ok">OK</span> pg-edge · redis-edge（TCP）<br><span class="tag bad">FAIL×6</span> casdoor · shop-edge · config-center-web/api-edge · grafana-edge · metrics-edge</td><td>FAIL 全部仅栽在 <code>[CERTIFICATE_EXPIRATION] ≈461h > 720h</code>，状态码/响应时间/鉴权条件全过（服务本体正常，见⑥-F1）</td></tr>
+  <tr><td>node1-public（3）</td><td><span class="tag bad">FAIL×3</span> homepage · pangolin · ntfy</td><td>服务本体 200 正常（本机复测），仅证书条件失败（464h &lt; 720h）</td></tr>
+  <tr><td>product-sites（4）</td><td><span class="tag ok">OK</span> blog<br><span class="tag bad">FAIL</span> mcm-site（<b>404，真实宕机</b>）<br><span class="tag bad">FAIL×2</span> scorpius-site · lyrapass-site（仅证书条件）</td><td>mcm 与证书无关，是真实 404（⑥-F2）</td></tr>
+  <tr><td>console-edge（11）</td><td><span class="tag bad">FAIL×11</span> d-console（<b>超时，真实宕机</b>）＋ argocd/silo/umami/gorse/dsh/ps/traces/vmalert/alerts/hc</td><td><b>设计上不带 ntfy 告警</b>（SSO 资源 302 只证明边缘在）；其余 10 个仅证书条件失败；gorse-edge 注释已更新（⑥-F0）</td></tr>
+</table>
+<div class="callout warn">
+  <b class="tt">gatus 判定小结：</b>38 个探针与当前环境拓扑完全一致——没有指向已退役服务的探针需要删除。
+  23 个 FAIL 中 21 个是同一证书根因（规则正确），2 个是真实宕机（mcm 404、d.apikv.com 超时）。
+</div>
+
+<!-- ============ ⑥ 过期/异常分析 ============ -->
+<h2 id="s6">⑥ 过期 / 异常分析（逐项）</h2>
+
+<div class="callout ok">
+  <b class="tt">F0 ·【过期·已修改】gatus gorse-edge 探针注释过期</b>
+  <br>位置：<code>components/gatus/endpoints.yaml</code>（console-edge / gorse-edge）。
+  原注释「node2 docker；未登录 302 到 /login」——gorse 已于 <b>2026-11-04 从 node2 docker 迁回集群内 K8s</b>（gorse 命名空间，经 Cilium Gateway 暴露；见 git log 43b98e03…4cdee70f）。
+  实测探针 URL 与判据仍正确（公网 302 ✓），仅注释误导。
+  <b>处置：注释已更新为迁移后拓扑，ConfigMap gatus-config 已同步集群（行为零变化，gatus 无需重启）。</b>
+</div>
+
+<div class="callout bad">
+  <b class="tt">F1 ·【环境真实问题·最高优先级】apikv.com 公网证书续期逾期，21 个探针正确报警</b>
+  <br>证据：gatus conditionResults 显示 21 个探针唯一失败条件是 <code>[CERTIFICATE_EXPIRATION] ≈464h > 720h</code>；本机直测各站点状态码全部符合预期（200/302/401）。
+  两类证书：node1 wildcard（homepage/pangolin/ntfy/casdoor/console 一批，剩 464h22m）与集群入口证书（grafana/shop/config/metrics 一批，剩 461h52m），均约 <b>2026-11-26 到期</b>。签发于 ≈2026-08-28，LE 90 天证书按 30 天剩余阈值本应已续期。
+  <br>影响：若 2026-11-26 前不恢复，全部 apikv.com HTTPS 站点（含 ntfy 与 gatus 自身！）TLS 失效。
+  <br><b>处置建议：规则保留不动；立即排查 node1 侧续期任务（Pangolin/Traefik/acme）与集群入口证书签发方。可在恢复后观察探针自愈转绿。</b>
+</div>
+
+<div class="callout warn">
+  <b class="tt">F2 ·【环境真实问题】mcm.apikv.com 返回 404（product-sites/mcm-site）</b>
+  <br>证据：集群内探针与本机直测一致返回 404（非证书/非网络）。规则有效，正确报警。
+  node1-watchdog（仓库外）WATCH 列表含 mcm-site 容器，但只查容器进程存活，查不出「进程活着但 404」——这正是 gatus 这条规则的价值。
+  <br><b>处置建议：规则保留；修复 node1 上的 mcm 站点或其 Pangolin 资源。若站点已永久下线，再回来删除该探针。</b>
+</div>
+
+<div class="callout warn">
+  <b class="tt">F3 ·【环境真实问题】d.apikv.com（总控制台入口）超时不可达</b>
+  <br>证据：集群内探针 10s 超时；本机 curl 亦 <code>000</code> 超时（其余 node1 服务正常，排除 node1 整体故障）。
+  注意：该探针在 console-edge 组，<b>设计上不推 ntfy</b>（只给控制台卡片显示）——目前总控制台自己的入口挂了反而没有告警，属于告警覆盖盲区而非规则过期。
+  <br><b>处置建议：恢复 d.apikv.com 后端；并评估把 d-console 挪到带告警的组（它匿名 302 判据与 console-edge 组说明一致，但作为总控制台入口值得告警）。</b>
+</div>
+
+<div class="callout warn">
+  <b class="tt">F4 ·【告警覆盖缺口】CNPG 备份 9 天未成功 —— 规则正确 firing，需处理根因</b>
+  <br>证据：CNPGBackupStale 自 11-03 firing；探针值 cnpg_backup_last_success_timestamp_seconds = 2026-10-29 11:15；探针自身存活（cnpg_probe_run_timestamp_seconds = 2026-11-07 03:30，CronJob 每 30 分钟运行）。
+  <br><b>处置建议：排查 2026-10-29 之后的 ScheduledBackup / ObjectStore pg-main-backups 桶凭据（kubectl -n postgresql get backup）。规则体系（26h 阈值 + 无备份兜底 + 探针死人开关）三层设计工作正常。</b>
+</div>
+
+<div class="callout warn">
+  <b class="tt">F5 ·【待人工复核】Tetragon 安全事件指标管道可能中断</b>
+  <br>证据：ecommerce_tetragon_security_events_total 在 VM 中 10 分钟窗口 0 序列；30 天回看最后一次样本为 2026-11-06 ≈05:36，与 <b>tetragon-j57k9 当日重启 7 次</b> 时间吻合。Vector security exporter 本身仍被持续抓取（scrape_samples_scraped{service_name="vector-security"} 每小时 2.4 万样本）。
+  两种可能：① 重启后无新安全事件、计数器按事件注册（安静态，正常）；② Tetragon→Vector gRPC 流断裂（两条规则已实质失效，且守卫规则只看 scrape 看不出来）。
+  <br><b>处置建议：ssh k3 节点查 tetragon Pod 日志与 Vector 日志确认流状态。若决定退役 Tetragon，再删除该文件两条事件规则并改造守卫；确认恢复前不要改规则。</b>
+</div>
+
+<div class="callout warn">
+  <b class="tt">F6 ·【环境真实问题】ecommerce 后端两处副本异常</b>
+  <br>ecommerce-behavior-deploy <b>0/1</b>（K8sDeploymentUnavailable，11-05 起）、control-tower-gateway <b>1/2</b>（K8sDeploymentDegraded）、behavior Pod 重启后容器未就绪（K8sContainerNotReady，11-06 起）。规则与守卫工作正常。
+  <br><b>处置建议：kubectl -n ecommerce describe pod / logs --previous 处理业务故障。</b>
+</div>
+
+<div class="callout info">
+  <b class="tt">F7 ·【保留项】Bugsink 链路与归档件</b>
+  <br>① bridge.py 的 Bugsink webhook 入口（:9199）与 Secret 中 BUGSINK_BRIDGE_TOKEN 均在，但 bugsink 服务未部署（2026-09-22 起，本次复核仍 NotFound）——endpoints.yaml 里的注释探针保持注释状态是准确的，属于「预留」不是「过期」。
+  ② <code>backup/pigsty-node3-20260921/gatus/gatus-config.yaml</code> 与 <code>docker-deploy/alertmanager-ntfy/pigsty-alert-ntfy.py</code> 为 node3 时代归档/退役件，不活跃，保留作历史原件。
+</div>
+
+<!-- ============ ⑦ firing 快照 ============ -->
+<h2 id="s7">⑦ 当前 firing 告警快照（vmalert → Alertmanager，2026-11-07）</h2>
+<table>
+  <tr><th>告警</th><th>严重度</th><th>activeAt</th><th>对象 / 现象</th><th>对应分析</th></tr>
+  <tr><td>Watchdog</td><td>none</td><td>11-03 00:26</td><td>心跳（不推送）</td><td>—</td></tr>
+  <tr><td>CNPGBackupStale</td><td><span class="tag bad">critical</span></td><td>11-03 00:24</td><td>pg-main 最后成功备份 10-29 11:15</td><td>F4</td></tr>
+  <tr><td>CDCSlotWalRetention</td><td><span class="tag warn">warning</span></td><td>10-31 00:59</td><td>复制槽位差 &gt;256MB 持续 7 天</td><td>真实事故</td></tr>
+  <tr><td>K8sDeploymentUnavailable</td><td><span class="tag bad">critical</span></td><td>11-05 21:56</td><td>ecommerce-behavior-deploy 0/1</td><td>F6</td></tr>
+  <tr><td>K8sDeploymentDegraded</td><td><span class="tag warn">warning</span></td><td>11-05 20:30</td><td>control-tower-gateway 1/2</td><td>F6</td></tr>
+  <tr><td>K8sContainerNotReady</td><td><span class="tag warn">warning</span></td><td>11-06 18:13</td><td>ecommerce-behavior-deploy-xjfhv</td><td>F6</td></tr>
+  <tr><td>AlertFiringTooLong ×4</td><td>warning</td><td>11-03~11-06</td><td>上述 4 条的元规则续期提醒（已排除 Watchdog / known_gap）</td><td>设计行为</td></tr>
+</table>
+<p class="small">另有 gatus 侧推 ntfy 的证书预警（21 个端点 × 各一次 episode 通知）＝ F1。</p>
+
+<!-- ============ ⑧ 变更 ============ -->
+<h2 id="s8">⑧ 本次审计执行的变更</h2>
+<table>
+  <tr><th>动作</th><th>对象</th><th>内容</th></tr>
+  <tr><td><span class="tag warn">修改</span></td><td><code>components/gatus/endpoints.yaml</code>（gorse-edge）</td><td>注释「node2 docker；未登录 302 到 /login」→「2026-11-04 已从 node2 docker 迁回集群内 K8s（gorse 命名空间，经 Cilium Gateway 暴露），探针 URL 与判据不变；未登录 302 到 /login」。YAML 校验通过，38 端点数量不变。</td></tr>
+  <tr><td><span class="tag info">同步</span></td><td>集群 ConfigMap <code>ops/gatus-config</code></td><td>按 install.sh 同口径重建（--from-file config.yaml + endpoints.yaml），sha256 校验与仓库一致。注释级变更，gatus 行为与通知零变化，无需重启。</td></tr>
+  <tr><td><span class="tag muted">未动</span></td><td>全部 vmalert 规则 / Alertmanager 路由 / alert-bridge</td><td>经 27 项指标存在性核查与零漂移比对，无需修改或删除。</td></tr>
+</table>
+
+<!-- ============ ⑨ 建议 ============ -->
+<h2 id="s9">⑨ 建议行动（按优先级）</h2>
+<table>
+  <tr><th>#</th><th>优先级</th><th>行动</th><th>对应</th></tr>
+  <tr><td>1</td><td><span class="tag bad">P0</span></td><td>排查并恢复 apikv.com 证书续期：node1 侧（Pangolin/Traefik wildcard）＋ 集群入口证书签发链。到期日 ≈2026-11-26。</td><td>F1</td></tr>
+  <tr><td>2</td><td><span class="tag bad">P0</span></td><td>修复 CNPG 备份：检查 ScheduledBackup / Backup phase / 对象存储凭据（9 天无备份）。</td><td>F4</td></tr>
+  <tr><td>3</td><td><span class="tag warn">P1</span></td><td>恢复 mcm.apikv.com 与 d.apikv.com；评估给 d-console 增加告警（目前 console-edge 无告警是盲区）。</td><td>F2 / F3</td></tr>
+  <tr><td>4</td><td><span class="tag warn">P1</span></td><td>复核 Tetragon→Vector 流：ssh k3 查 tetragon-j57k9 日志；确认事件计数器恢复出现或决定退役（退役时删 ecommerce-security.yml 两条事件规则）。</td><td>F5</td></tr>
+  <tr><td>5</td><td><span class="tag info">P2</span></td><td>处理 ecommerce-behavior-deploy / control-tower-gateway 副本故障；处理 CDC 槽位差。</td><td>F6 / firing</td></tr>
+  <tr><td>6</td><td><span class="tag info">P2</span></td><td>规则维护项：observability-pipeline.yml 的 AlertBridgeNotificationFlood「20/h 试运行噪声预算」注释注明须校准——试运行已超 40 天，建议结合实际发布量复盘阈值。</td><td>技术债</td></tr>
+  <tr><td>7</td><td><span class="tag info">P3</span></td><td>观察项：node4 有 docker 但 ≥1 天无运行容器（若预期常驻容器需检查）；gorse 迁移后如需合成监控，可将 gorse 从 console-edge 提升到带告警的组。</td><td>低优先级</td></tr>
+</table>
+
+<!-- ============ ⑩ 相邻 ============ -->
+<h2 id="s10">⑩ 仓库外相邻 ntfy 生产者（盘点，不在本次修改范围）</h2>
+<table>
+  <tr><th>生产者</th><th>位置</th><th>说明</th></tr>
+  <tr><td>healthchecks（ops 命名空间）</td><td>check 级 ntfy integration（UI 配置）</td><td>README 约定：不配邮件，check 的 integration 用 ntfy，token 与告警桥同一份（<code>$STATE_DIR/creds/ntfy.env</code>）。规则存在 healthchecks 数据库中，仓库内无文件。</td></tr>
+  <tr><td>host-watchdog（k1-k3 / node1-node6）</td><td><code>~/lens077/ecommerce/infrastructure/host-watchdog/{watchdog.sh,notify.py}</code>；配套 <code>~/lens077/observability/bin/provision-k8s-host-watchdog.py</code> / <code>rollout-host-watchdog.py</code></td><td>systemd/docker 巡检 → 同一 ntfy 通道。与 vmalert 的分工写入 cloud-hosts.yml 头注（disk_alert_owner：k1-3/node1/2=watchdog，node3-6=vmalert，与 hosts.json 一致）。</td></tr>
+  <tr><td>node1-watchdog</td><td><code>~/lens077/docker-deploy/node1-watchdog/watchdog.sh</code>（systemd timer）</td><td>WATCH 13 项（pangolin/traefik/blog/mcm-site/homepage/vaultwarden/postgres/redis/vault/mediamtx/ntfy/webhook/casdoor）。注：该 WATCH 含 mcm-site 容器，但只查进程存活（见 F2）。</td></tr>
+  <tr><td>ntfy 服务器本体</td><td><code>~/lens077/cat/deploy/ntfy</code>（node1，https://ntfy.apikv.com）</td><td>本次实测 /v1/health 200 正常；topic ACL 由 token/发布者账号（infra-alerts-publisher）控制。</td></tr>
+  <tr><td>已退役/归档件</td><td><code>docker-deploy/alertmanager-ntfy/pigsty-alert-ntfy.py</code>；<code>kubernetes/backup/pigsty-node3-20260921/gatus/gatus-config.yaml</code></td><td>node3 Pigsty 时代原件，不活跃，保留。</td></tr>
+</table>
+
+<div class="foot">
+  审计方法：仓库全量 grep（ntfy/watchdog/alert）→ 逐文件人工审阅 → kubectl 实测（Pods/Secrets/ConfigMaps/告警 API）→ VictoriaMetrics 27 项指标存在性查询 → gatus in-cluster 探针状态与本机公网复测 → 仓库↔集群 ConfigMap sha256 比对 → Grafana 数据源 UID API 核验 → hosts.json 与 host:expected_info 比对。
+  证据查询均为只读操作；唯一写操作为 endpoints.yaml 注释修改及其 ConfigMap 同步。
+  <br>报告生成：ZCode · 2026-11-07 · dev.test 集群
+</div>
+
+</div>
+</body>
+</html>

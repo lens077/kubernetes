@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ntfy 通知复核与现状重整 · 2026-11-10</title>
+<style>
+  :root{
+    --bg:#f6f7f9; --card:#ffffff; --ink:#1c2330; --muted:#5b6575; --line:#e3e7ee;
+    --ok:#0f8a4d; --okbg:#e8f7ee; --warn:#b7791f; --warnbg:#fdf6e7; --bad:#c0392b; --badbg:#fdeceb;
+    --info:#2563a8; --infobg:#eaf2fb; --accent:#1a4f8b;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;font-size:14px;line-height:1.65}
+  .wrap{max-width:1080px;margin:0 auto;padding:32px 20px 64px}
+  header.hero{background:linear-gradient(135deg,#123a66,#1a4f8b 55%,#2b6cb0);color:#fff;border-radius:14px;padding:28px 30px;margin-bottom:26px}
+  header.hero h1{margin:0 0 6px;font-size:24px;letter-spacing:.5px}
+  header.hero .sub{opacity:.92;font-size:13.5px}
+  header.hero .meta{margin-top:14px;display:flex;flex-wrap:wrap;gap:10px 22px;font-size:12.5px;opacity:.95}
+  h2{font-size:18px;margin:38px 0 14px;padding-left:10px;border-left:4px solid var(--accent)}
+  h3{font-size:15px;margin:22px 0 10px;color:var(--accent)}
+  .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin:14px 0}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 16px}
+  .card .num{font-size:26px;font-weight:700;line-height:1.2}
+  .card .lbl{font-size:12px;color:var(--muted);margin-top:3px}
+  .card.ok .num{color:var(--ok)} .card.bad .num{color:var(--bad)} .card.warn .num{color:var(--warn)} .card.info .num{color:var(--info)}
+  table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden;font-size:13px}
+  th{background:#eef2f7;text-align:left;padding:8px 10px;font-weight:600;border-bottom:2px solid var(--line);white-space:nowrap}
+  td{padding:7px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+  tr:last-child td{border-bottom:none}
+  code{background:#eef1f5;border-radius:4px;padding:1px 5px;font-family:"SF Mono",Menlo,Consolas,monospace;font-size:12px;word-break:break-all}
+  .codeblock{background:#0f172a;color:#dbe6f3;border-radius:8px;padding:12px 14px;font-family:"SF Mono",Menlo,Consolas,monospace;font-size:12px;overflow-x:auto;white-space:pre;margin:10px 0}
+  .tag{display:inline-block;border-radius:20px;padding:1px 9px;font-size:11.5px;font-weight:600;white-space:nowrap}
+  .tag.ok{background:var(--okbg);color:var(--ok)} .tag.warn{background:var(--warnbg);color:var(--warn)}
+  .tag.bad{background:var(--badbg);color:var(--bad)} .tag.info{background:var(--infobg);color:var(--info)}
+  .tag.muted{background:#eceff3;color:#6b7280}
+  .callout{border-radius:10px;padding:14px 16px;margin:14px 0;border:1px solid}
+  .callout.bad{background:var(--badbg);border-color:#f2c4c0}
+  .callout.warn{background:var(--warnbg);border-color:#ecd9b0}
+  .callout.ok{background:var(--okbg);border-color:#bfe6cf}
+  .callout.info{background:var(--infobg);border-color:#c3d9ef}
+  .callout b.tt{display:block;margin-bottom:6px}
+  .toc{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 20px;font-size:13px}
+  .toc a{color:var(--accent);text-decoration:none;margin-right:16px;white-space:nowrap}
+  .toc a:hover{text-decoration:underline}
+  .small{font-size:12px;color:var(--muted)}
+  .foot{margin-top:40px;color:var(--muted);font-size:12px;border-top:1px solid var(--line);padding-top:14px}
+  ul{margin:8px 0 8px 18px;padding:0} li{margin:4px 0}
+  @media print{body{background:#fff}.wrap{max-width:none;padding:0}header.hero{border-radius:0}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="hero">
+  <h1>ntfy 通知复核与现状重整</h1>
+  <div class="sub">以 2026-11-10 06:40 CST 的实时取证为基线，替换 11-07 两份报告中的过时结论；识别仍在推送的过期通知及其生产者</div>
+  <div class="meta">
+    <span>📅 复核时间：06:38–06:45 CST；清理执行：20:47–20:55 CST</span>
+    <span>🏷️ 环境：集群 dev.test（k1/k2/k3）＋ 云主机 node1–node6</span>
+    <span>💬 ntfy：https://ntfy.apikv.com（node1，缓存 12h）</span>
+    <span>📂 仓库：~/lens077/kubernetes @ main（4cdee70f + 未提交改动）</span>
+  </div>
+</header>
+
+<div class="toc">
+  <a href="#s1">① 结论速览</a>
+  <a href="#s2">② 取证范围与方法</a>
+  <a href="#s3">③ 当前基线</a>
+  <a href="#s4">④ 近 12h 通知逐条还原</a>
+  <a href="#s5">⑤ 过时项：通知源</a>
+  <a href="#s6">⑥ 过时项：11-07 报告</a>
+  <a href="#s7">⑦ 新发现</a>
+  <a href="#s8">⑧ 仍待办</a>
+  <a href="#s9">⑨ 建议处置</a>
+  <a href="#s10">⑩ 变更清单</a>
+  <a href="#s11">⑪ 清理执行记录（20:47–20:55）</a>
+</div>
+
+<!-- ============ ① ============ -->
+<h2 id="s1">① 结论速览</h2>
+<div class="cards">
+  <div class="card info"><div class="num">9</div><div class="lbl">ntfy 近 12h 缓存消息<br>（6 桥接 + 3 watchdog 重发）</div></div>
+  <div class="card ok"><div class="num">3</div><div class="lbl"><b>确证过时的通知 · 已清理</b><br>node2 gorse / node1 redis，20:52 停止重发</div></div>
+  <div class="card ok"><div class="num">41 / 41</div><div class="lbl">gatus 探针全绿<br>（30 带告警 + 11 仅展示）</div></div>
+  <div class="card ok"><div class="num">0</div><div class="lbl">firing 告警（Watchdog 除外）<br>另有 1 条 pending</div></div>
+  <div class="card warn"><div class="num">14</div><div class="lbl">11-07 报告结论已过时<br>详见 ⑥</div></div>
+  <div class="card ok"><div class="num">11 / 11</div><div class="lbl">规则文件指纹<br>仓库 ↔ 集群 ConfigMap 一致</div></div>
+</div>
+
+<div class="callout bad">
+  <b class="tt">核心判断：过时的不是规则，是「主机本地的检查清单」。</b>
+  11-07 的《规则全量审计》宣称「规则体系健康、零漂移、无死规则要清理」，但它核对的只是
+  <b>仓库文件 ↔ 集群 ConfigMap</b>。真正持续制造过期通知的是仓库外的
+  <code>/etc/host-watchdog/watchdog.env</code>：它散落在各主机文件系统里，仓库只有脚本和示例配置，
+  不在版本控制与审计比对范围内。gorse 在 11-04 从 node2 迁入集群、node1 的 Redis 早在 10-30 就退役，
+  但这两台主机的 WATCH 列表从未同步，watchdog 至今每 5 分钟把「容器不存在」判为故障，
+  并按退避阶梯持续重发提醒（reminder_index 已到 9 / 14）。
+</div>
+
+<div class="callout ok">
+  <b class="tt">告警链路本身是健康的。</b>
+  11-07 处置后的三项 P0 全部闭环：证书已续至 2027-02-04、CNPG 调度备份连续 3 天成功、
+  CDC WAL 位点差回落到约 16 MiB。近 12h 的 6 条桥接通知全部是真实瞬时告警且均已恢复，
+  bridge 侧 24h <code>sent=6</code> 与缓存里的 6 条一一对应，发布失败 0、静音 0、退避抑制正常。
+  <b>目前 ntfy 里需要清理的是 3 条「探已下线服务」的旧心跳，不是新的生产事故。</b>
+</div>
+
+<!-- ============ ② ============ -->
+<h2 id="s2">② 取证范围与方法</h2>
+<table>
+<tr><th>数据源</th><th>取法</th><th>能证明什么</th></tr>
+<tr><td>ntfy 消息缓存</td><td><code>scp node1:/home/docker/ntfy/data/cache/cache.db</code> → 本地 sqlite 读取 <code>messages</code> 表</td><td>近 12h 实际推送内容、topic、优先级、发送者 IP。发布 token 仅有 publish 权限（HTTP 读取返回 403），故改读缓存库</td></tr>
+<tr><td>vmalert / Alertmanager</td><td><code>/api/v1/alerts</code>、<code>/api/v2/alerts</code></td><td>当前 firing / pending 告警与标签</td></tr>
+<tr><td>gatus</td><td>端口转发 <code>/api/v1/endpoints/statuses</code>（41 端点逐条判条件）</td><td>合成监控实时成败</td></tr>
+<tr><td>VictoriaMetrics</td><td>端口转发 <code>/api/v1/query</code>（备份新鲜度、CDC 位点差、Tetragon 事件计数、桥接器通知量）</td><td>规则依据指标是否仍有序列、是否达阈值</td></tr>
+<tr><td>Kubernetes 对象</td><td><code>kubectl -n postgresql get backup / scheduledbackup</code>、ConfigMap sha256 比对</td><td>备份调度闭环、仓库↔集群漂移</td></tr>
+<tr><td>公网证书</td><td><code>openssl s_client</code> 读 notAfter（ntfy / grafana / homepage）</td><td>续期链路是否仍有效</td></tr>
+<tr><td>主机 watchdog</td><td>ssh 读 <code>/etc/host-watchdog/watchdog.env</code>、<code>/var/lib/host-watchdog/incidents.json</code>、<code>docker ps</code>、journalctl</td><td>过期通知的生产者、起始时间、重复次数、容器实际状态</td></tr>
+</table>
+<div class="callout warn">
+  <b class="tt">取证局限（诚实说明）</b>
+  <ul>
+    <li>ntfy 服务端 <code>cache-duration: 12h</code>，消息窗口只覆盖 <b>11-09 18:45 → 11-10 06:40 CST</b>；更早的推送已被滚动清理，只能用 <code>incidents.json</code> 的 <code>first_seen / last_sent / reminder_index</code> 与桥接器累计计数推断长期行为。</li>
+    <li>healthchecks 的 check 级 ntfy integration 在该窗口内无触发，本轮未逐一审计其检查清单。</li>
+    <li><b>06:38–06:50 的复核阶段为只读</b>：只把缓存库复制到 <code>/tmp/ntfy-cache-20261110.db</code> 用于取证。<b>20:47–20:55 的清理阶段</b>按用户确认改了两台主机的 watchdog 受管行与事件状态文件，详见 ⑪；vmalert / Alertmanager / alert-bridge / gatus 始终未动。</li>
+  </ul>
+</div>
+
+<!-- ============ ③ ============ -->
+<h2 id="s3">③ 当前基线（2026-11-10 06:40 CST）</h2>
+<table>
+<tr><th>面</th><th>实测</th><th>判定</th></tr>
+<tr><td>vmalert 告警</td><td>仅 <code>Watchdog</code> firing（心跳，AM 路由到 null 不推送）；<code>CloudHostLogExportFailing / node6</code> pending（06:39 起，for 5m，值 3）</td><td><span class="tag ok">绿</span> + 1 观察项</td></tr>
+<tr><td>Alertmanager → bridge</td><td>近 12h 推送 6 条（3 对故障/恢复），全部已恢复；24h <code>sent=6</code>、<code>publish failed=0</code>、<code>acks_active=0</code>、backoff 抑制 page 804 / ticket 2400 次（累计）</td><td><span class="tag ok">降噪正常</span></td></tr>
+<tr><td>gatus 探针</td><td>41 端点、30 带告警；7 个组全部 OK（cluster-origin 7 / observability 2 / cdc 3 / public-edge 11 / node1-public 3 / product-sites 4 / console-edge 11），<b>0 FAIL</b></td><td><span class="tag ok">全绿</span></td></tr>
+<tr><td>规则体系</td><td>9 个规则文件 = 65 条告警 + 15 条记录规则；仓库与集群 11 个 ConfigMap key 的 sha256 逐一 MATCH；<code>AlertBridgeNotificationFlood</code> 阈值 40/h</td><td><span class="tag ok">零漂移</span></td></tr>
+<tr><td>公网证书</td><td>ntfy / grafana / homepage 的 wildcard 均 <code>notAfter=Feb 4 23:59:59 2027 GMT</code>；所有证书条件探针通过</td><td><span class="tag ok">已闭环</span></td></tr>
+<tr><td>CNPG 备份</td><td><code>pg-main-daily-20261107/0809…</code> 连续 3 次 <code>completed</code>；新鲜度指标最后成功 <code>2026-11-09 11:15:03 CST</code>（19h 前，&lt; 26h 阈值）</td><td><span class="tag ok">调度路径闭环</span></td></tr>
+<tr><td>CDC 链</td><td><code>slot_name=ecommerce_cdc</code> 位点差 <code>16,776,944 B ≈ 16 MiB</code>，远低于 256 MiB 阈值；告警未 firing</td><td><span class="tag ok">已恢复</span></td></tr>
+<tr><td>Tetragon → Vector</td><td><code>last_over_time(ecommerce_tetragon_security_events_total[7d])</code> 有样本（值 1，11-10 05:46 左右）；裸指标当前无序列 = 事件计数器按事件注册的安静态</td><td><span class="tag ok">管道未断</span></td></tr>
+<tr><td>数据库 / PG 集群</td><td><code>pg-main-1</code> 2/2 Running，备份探针 CronJob 11 分钟前 Completed</td><td><span class="tag ok">正常</span></td></tr>
+</table>
+
+<!-- ============ ④ ============ -->
+<h2 id="s4">④ 近 12h 通知逐条还原（9 条）</h2>
+<table>
+<tr><th>时间 (CST)</th><th>标题</th><th>topic / 优先级</th><th>生产者</th><th>性质与现状</th></tr>
+<tr><td>11-09 18:45:49</td><td>[故障][关注] gorse-gorse-1 · node2<br><span class="small">容器不存在或 Docker 不可用 · 持续 8137 分钟</span></td><td>主 / 4</td><td>host-watchdog<br>8.138.194.254 (node2)</td><td><span class="tag bad">过时</span> gorse 11-04 已迁入集群</td></tr>
+<tr><td>11-09 18:45:49</td><td>[故障][关注] gorse · node2<br><span class="small">HTTP 探测异常（状态=000）· 持续 8137 分钟</span></td><td>主 / 4</td><td>host-watchdog (node2)</td><td><span class="tag bad">过时</span> 探 <code>127.0.0.1:8088</code>，该端口随迁移下线</td></tr>
+<tr><td>11-09 19:25:27</td><td>[故障][关注] redis · node1<br><span class="small">容器不存在或 Docker 不可用 · 持续 15335 分钟</span></td><td>主 / 4</td><td>host-watchdog<br>114.132.233.129 (node1)</td><td><span class="tag bad">过时</span> WATCH 写 <code>redis</code>，实际容器名是 <code>redis-gorse</code>；业务 Redis 已由集群 Dragonfly 承担</td></tr>
+<tr><td>11-10 04:54:23</td><td>[故障][关注] K8sDeploymentUnavailable · dev.test<br><span class="small">palcommerce/pal-shop 持续无可用副本</span></td><td>主 / 4</td><td>alert-bridge<br>211.144.221.226（机房出口）</td><td><span class="tag info">真实瞬时</span> 10 分钟后恢复</td></tr>
+<tr><td>11-10 05:04:23</td><td>[恢复][关注] K8sDeploymentUnavailable · dev.test</td><td>主 / 2</td><td>alert-bridge</td><td><span class="tag ok">已恢复</span></td></tr>
+<tr><td>11-10 05:46:23</td><td>[故障][待办] vector-security · dev.test<br><span class="small">工作负载启动了 shell 或网络调试工具</span></td><td>ticket / 2</td><td>alert-bridge</td><td><span class="tag info">真实瞬时</span> 顺带证明 Tetragon 事件流是通的</td></tr>
+<tr><td>11-10 05:51:23</td><td>[恢复][待办] vector-security · dev.test</td><td>ticket / 2</td><td>alert-bridge</td><td><span class="tag ok">已恢复</span></td></tr>
+<tr><td>11-10 06:00:53</td><td>[故障][待办] EcommerceNetworkPolicyDeniedBurst · dev.test</td><td>ticket / 2</td><td>alert-bridge</td><td><span class="tag info">真实瞬时</span> 10 分钟后恢复</td></tr>
+<tr><td>11-10 06:10:53</td><td>[恢复][待办] EcommerceNetworkPolicyDeniedBurst · dev.test</td><td>ticket / 2</td><td>alert-bridge</td><td><span class="tag ok">已恢复</span></td></tr>
+</table>
+<p class="small">3 条 watchdog 通知是「持续故障的慢速心跳重发」，不是新事件：node2 两条 <code>first_seen=2026-11-04 03:08:17</code>（迁移当日）、
+node1 一条 <code>first_seen=2026-10-30 03:50:02</code>；<code>reminder_index</code> 分别为 9 / 9 / 14，说明已按退避阶梯重复推送十余轮。</p>
+
+<!-- ============ ⑤ ============ -->
+<h2 id="s5">⑤ 过时项之一：通知源本身</h2>
+<table>
+<tr><th>主机 / 检查项</th><th>配置现状</th><th>真实拓扑</th><th>事件证据</th></tr>
+<tr><td>node2 <code>docker:gorse-gorse-1</code></td><td><code>WATCH="gorse-gorse-1 minio"</code>；node2 实跑容器只剩 <code>minio</code></td><td>gorse 于 11-04 从 node2 docker 迁入集群 <code>gorse</code> 命名空间（三件套 master/server/worker），经 Cilium Gateway 暴露；公网探针 <code>gorse-edge-alert</code> 现为绿</td><td>first_seen 11-04 03:08，last_seen 11-10 06:39，reminder_index 9</td></tr>
+<tr><td>node2 <code>http:gorse</code></td><td><code>HTTP_CHECKS="gorse=http://127.0.0.1:8088/api/health/ready minio=…"</code>；该端口已无监听 → 状态 000</td><td>同上；集群内 gorse-server:8087 才是现役 API，Dashboard 302 到 /login</td><td>同上（两条同时产生）</td></tr>
+<tr><td>node1 <code>docker:redis</code></td><td><code>WATCH="pangolin gerbil traefik blog mcm-site apikv-site postgres redis ntfy-ntfy-1 webhook-webhook-1 casdoor"</code>；其中 <code>redis</code> 与实际容器 <code>redis-gorse</code>（Up 3 days）名字不匹配</td><td>node1 Redis TLS 早已被集群内 Dragonfly 替代（11-07 证书分发链修复时已确认并移除分发目标）；<code>redis-gorse</code> 容器虽在，但不再是业务缓存入口</td><td>first_seen 10-30 03:50，last_seen 11-10 06:38，reminder_index 14</td></tr>
+</table>
+<div class="callout warn">
+  <b class="tt">另有 3 处「半过时」，暂不产生误报但应一并整理</b>
+  <ul>
+    <li><b>node1 <code>mcm-site</code></b>：容器仍在（Up 3 days），watchdog 只查进程存活所以绿灯；但该站点 10-28 已迁入集群并改名 pyxis，公网资源已不存在。Gatus 侧 11-07 已把 <code>mcm-site</code> 探针换成 <code>pyxis-site</code>，watchdog 侧没动 —— 正是「进程活着但业务 404」的覆盖盲区。</li>
+    <li><b>node1 <code>incidents.json</code> 的 <code>pangolin:8</code> 残留条目</b>：<code>first_seen 10-22 14:26</code>、<code>last_seen 10-24 18:19</code> 后停滞 16 天，<code>last_sent</code> 停在 10-24、reminder_index 5。已不再产生通知，但状态文件里留着一条永不恢复确认的僵尸事件。</li>
+    <li><b>node1-watchdog（另一个生产者）</b>：11-07 报告称其 WATCH 列表含 mcm-site 且是活跃相邻生产者；实测 node1 上 <code>node1-watchdog.timer</code> 为 <code>inactive / not-found</code>，实际生效的只有 <code>host-watchdog.timer</code>（每 5 分钟）。仓库脚本里的默认 WATCH（还含 vaultwarden / vault / mediamtx 等）并未在生产运行。</li>
+  </ul>
+</div>
+<div class="callout info">
+  <b class="tt">覆盖缺口（11-07 报告口径需修正）</b>
+  报告写的是「host-watchdog：k1–k3 / node1–node6」。抽查结果：node1、node2 有 <code>/etc/host-watchdog/watchdog.env</code> 且 WATCH 非空；
+  node3 / node6（以及 node4 / node5）未找到该 env；k1 有 env 但 <code>WATCH=''</code>、只用 <code>HTTP_CHECKS=kubelet=…</code>。
+  即<b>容器级 WATCH 实际只覆盖 node1 / node2</b>，其余主机靠 vmalert 的 <code>cloud-hosts.yml</code> 指标规则覆盖。
+  k2 / k3 本轮未抽查，不做断言。
+</div>
+
+<!-- ============ ⑥ ============ -->
+<h2 id="s6">⑥ 过时项之二：11-07 两份报告的结论</h2>
+<p class="small">两份 11-07 文档（<code>NTFY-ALERT-RULES-AUDIT-2026-11-07.html</code>、<code>NTFY-ALERT-RESOLUTION-2026-11-07.html</code>）
+的<b>故障根因分析</b>仍然有效（证书分发链退役目标、PG18 latch 唤醒丢失、badger 插件状态损坏），但它们的<b>现状快照与清单</b>已整体过期，应作为历史归档而不是当前依据。</p>
+<table>
+<tr><th>#</th><th>11-07 报告的说法</th><th>11-10 实测</th><th>判定</th></tr>
+<tr><td>1</td><td>21 个公网探针因证书 ≈464h &lt; 720h 失败；证书 11-26 到期，续期链路断裂</td><td>三类站点证书均 <code>2027-02-04</code>；证书条件全过，0 FAIL</td><td><span class="tag ok">已解决</span></td></tr>
+<tr><td>2</td><td>CNPGBackupStale firing 9 天；「今晚 03:15 ScheduledBackup 首次验证」列为 P0 待办</td><td>11-07 / 08 / 09 三次 daily 备份连续 <code>completed</code>，新鲜度 19h</td><td><span class="tag ok">已闭环</span></td></tr>
+<tr><td>3</td><td>CDCSlotWalRetention firing，位点差 176MB；建议 P2 观察是否回落</td><td>位点差 ≈16 MiB，告警未 firing</td><td><span class="tag ok">已回落</span></td></tr>
+<tr><td>4</td><td>K8sDeploymentUnavailable = <code>ecommerce-behavior-deploy 0/1</code>；Degraded = <code>control-tower-gateway 1/2</code>；ContainerNotReady</td><td>均已恢复且不在告警列表；11-10 出现的是另一个对象 <code>palcommerce/pal-shop</code>，10 分钟内自愈</td><td><span class="tag warn">对象已换</span></td></tr>
+<tr><td>5</td><td>AlertFiringTooLong ×4 续期提醒在 firing</td><td>元规则随源告警恢复而清零</td><td><span class="tag ok">已清零</span></td></tr>
+<tr><td>6</td><td>gatus 38 探针 / 27 带告警（处置报告记为 40 / 29）</td><td><b>41 探针 / 30 带告警</b>，全部 OK</td><td><span class="tag warn">数字过时</span></td></tr>
+<tr><td>7</td><td>public-edge 组 8 个探针；console-edge 11 个「设计上不告警」是盲区</td><td>public-edge 11 个（新增 <code>d-console-edge</code>、<code>gorse-edge-alert</code>、11-10 新增 <code>control-tower-gateway-edge</code> 探 <code>/readyz</code>）；盲区已补</td><td><span class="tag warn">清单过时</span></td></tr>
+<tr><td>8</td><td>product-sites 含 <code>mcm-site</code>（404，真实宕机）</td><td>已删，改为 <code>pyxis-site</code>；pyxis 公网 OK</td><td><span class="tag ok">已替换</span></td></tr>
+<tr><td>9</td><td>d.apikv.com 整链超时，console-edge 无告警</td><td>已恢复并新增带告警探针，本轮 41/41 全绿</td><td><span class="tag ok">已解决</span></td></tr>
+<tr><td>10</td><td>F5：Tetragon → Vector 流可能中断，待人工复核；规则可能实质失效</td><td>11-10 05:46 真实产生 <code>vector-security</code> 事件告警，VM 7d 内查到事件计数样本 → 管道正常，属安静态，两条事件规则有效</td><td><span class="tag ok">可结案</span></td></tr>
+<tr><td>11</td><td>AlertBridgeNotificationFlood 阈值 20/h（试运行预算）</td><td>阈值已校准为 <b>40/h</b>（注释含 7 天峰值依据），告警未 firing</td><td><span class="tag warn">阈值已改</span></td></tr>
+<tr><td>12</td><td>「node2 gorse / node1 redis-gorse 已 down」</td><td>实测 <code>redis-gorse Up 3 days</code>、<code>mcm-site Up 3 days</code>；node2 确已无 gorse 容器。容器状态表述不准确</td><td><span class="tag warn">表述有误</span></td></tr>
+<tr><td>13</td><td>「node1-watchdog WATCH 列表含 mcm-site」（列为活跃相邻生产者）</td><td>该 timer 已 <code>inactive / not-found</code>，实际生效的是 host-watchdog</td><td><span class="tag warn">生产者已停用</span></td></tr>
+<tr><td>14</td><td>「host-watchdog：k1–k3 / node1–node6」全覆盖</td><td>容器级 WATCH 实际只在 node1 / node2；k1 只有 kubelet HTTP 检查，node3/4/5/6 未找到 env</td><td><span class="tag warn">口径不成立</span></td></tr>
+</table>
+<p class="small">另有 11-10 当天的大范围环境变化，两份报告完全没有覆盖：Pangolin 1.26.0 / newt 1.20.0 全量升级、Badger 自动迁移到 v1.8.0、traefik 两次重启、SafeLine 连接池修复、Gatus 新增 <code>/readyz</code> 探针、<code>gateway.apikv.com</code> 404 定性为非故障、Mac newt（siteId 6）因 LaunchAgent 未能重新注册而 offline。</p>
+
+<!-- ============ ⑦ ============ -->
+<h2 id="s7">⑦ 本轮新发现（11-07 报告未覆盖）</h2>
+<table>
+<tr><th>项</th><th>证据</th><th>判定</th></tr>
+<tr><td><b>node6 日志导出失败（唯一 pending 告警）</b></td><td>vmalert <code>CloudHostLogExportFailing{host_name="node6"}</code> 于 11-10 06:39 CST 进入 pending（<code>for 5m</code>，值 3）；node6 journalctl 06:38:18：<code>request to https://otlp-dev.apikv.com/v1/logs responded with HTTP Status Code 404</code>，<code>dropped_items: 3</code>，标为 Permanent error 不重试</td><td><span class="tag warn">尚未推送 ntfy，需观察是否转 firing</span></td></tr>
+<tr><td>同一 OTLP 入口的间歇性错误</td><td>node5 04:46:07 <code>/v1/metrics responded 500</code>，丢 180 条；本机无凭据探测 <code>POST https://otlp-dev.apikv.com/v1/logs</code> 返回 <b>401</b>（入口可达、鉴权在工作）。node2/3/4 近 2h 无 Dropping data</td><td><span class="tag info">未定性：更像后端路由/负载瞬时错误，不是入口整体消失；建议结合 11-10 traefik 重启与 Pangolin 升级窗口排查</span></td></tr>
+<tr><td>三对瞬时告警</td><td><code>palcommerce/pal-shop</code> 部署不可用（04:54→05:04）、<code>vector-security</code> 可疑工具执行（05:46→05:51）、<code>EcommerceNetworkPolicyDeniedBurst</code>（06:00→06:10），均 5–10 分钟自愈</td><td><span class="tag ok">无需处置，但说明业务工作负载清单已变化</span></td></tr>
+<tr><td>通知链路自洽性验证</td><td>bridge 累计 <code>publish failed=0</code>、<code>acks_active=0</code>、<code>state_entries active=3 / inactive=42</code>；24h sent 恰好 6 条，与缓存里 6 条 AM 通知逐一对应</td><td><span class="tag ok">退避/静音/分流均按设计工作</span></td></tr>
+<tr><td>根因级结构问题</td><td>主机 <code>/etc/host-watchdog/watchdog.env</code> 不在 git 里；仓库只有 <code>watchdog.sh</code> / <code>notify.py</code> / <code>*.example</code>。11-07 审计的「零漂移」只覆盖 ConfigMap，天然看不见这份清单</td><td><span class="tag bad">审计盲区 = 本次过时通知的真正来源</span></td></tr>
+</table>
+
+<!-- ============ ⑧ ============ -->
+<h2 id="s8">⑧ 仍然有效 / 仍待办</h2>
+<table>
+<tr><th>#</th><th>项</th><th>11-07 提出时</th><th>11-10 状态</th></tr>
+<tr><td>1</td><td>PG18 latch 跨进程唤醒丢失（内核 7.0.0-38 + io_method=worker 的稳定组合）</td><td>P0 跟进上游修复 / PG 18.5+</td><td><span class="tag warn">未解决</span> 稳定组合不要主动改动；未见新证据表明已修</td></tr>
+<tr><td>2</td><td>暂禁 vmalert 规则热加载（<code>/-/reload</code> 会触发 SIGHUP EPERM panic）</td><td>P1 建议改 install.sh 为滚动重启或加探测</td><td><span class="tag warn">未落地</span> <code>components/vmalert/install.sh</code> 第 68 行仍 POST <code>/-/reload</code></td></tr>
+<tr><td>3</td><td>gatus 状态 API 结果分页/排序显示滞后</td><td>P2 核查</td><td><span class="tag info">未证实修复</span> 本轮直接读 API 拿到 41 条实时状态正常，但历史结果分页问题没查</td></tr>
+<tr><td>4</td><td>CDC WAL 位点差持续回落至 0</td><td>P2 观察 24h</td><td><span class="tag warn">部分</span> 现 ≈16 MiB，未归零但远低于阈值、告警不 firing</td></tr>
+<tr><td>5</td><td>1 月下旬证书真续期演练（ARI 窗口 2027-01-22）</td><td>P3</td><td><span class="tag info">待日期</span></td></tr>
+<tr><td>6</td><td>Mac newt（siteId 6）隧道 offline</td><td>11-10 06:20 新问题，两份报告均无</td><td><span class="tag bad">未恢复</span> launchd 作业无法在 agent 会话里重新注册，需在本机 GUI 终端执行 <code>launchctl load -w</code></td></tr>
+<tr><td>7</td><td>node0 站点（siteId 8）消失溯源</td><td>10-28 全景图未决项</td><td><span class="tag ok">11-10 已闭环</span> 主机重装改名 node5，同一公网 IP</td></tr>
+</table>
+
+<!-- ============ ⑨ ============ -->
+<h2 id="s9">⑨ 建议处置（按优先级，本轮未执行）</h2>
+<table>
+<tr><th>优先级</th><th>动作</th><th>要点</th></tr>
+<tr><td><span class="tag bad">P0</span></td><td>清理 node2 的 gorse 检查项</td><td>备份 <code>/etc/host-watchdog/watchdog.env</code> 与 <code>incidents.json</code> 后，把 <code>WATCH</code> 改为 <code>"minio"</code>、<code>HTTP_CHECKS</code> 删掉 <code>gorse=…:8088</code>；下个 5 分钟 timer 后确认两条事件进入恢复确认/清除。集群侧已有 <code>gorse-edge-alert</code> 承担监控，不会留空档</td></tr>
+<tr><td><span class="tag bad">P0</span></td><td>清理 node1 的 <code>redis</code> 与 <code>pangolin:8</code></td><td><code>WATCH</code> 去掉永不匹配的 <code>redis</code>；同时评估 <code>mcm-site</code>（容器在、站点已退役，建议改探 <code>pyxis-site</code> 或删除）。清理 <code>incidents.json</code> 里 10-24 起停滞的 <code>pangolin:8</code> 僵尸条目</td></tr>
+<tr><td><span class="tag warn">P1</span></td><td>把主机 watchdog 清单纳入版本管理</td><td>这是根因修复：给每台主机一份受控清单（仓库内按 host 分文件 + 部署脚本下发），并把「清单 ↔ 现存服务拓扑」列入定期审计，否则下次迁移还会再漂移一次</td></tr>
+<tr><td><span class="tag warn">P1</span></td><td>排查 node6 / node5 的 OTLP 瞬时错误</td><td>查 <code>otlp-dev.apikv.com</code> 的 Pangolin 资源与后端路由、核对 11-10 04:14 与 04:50 两次 traefik 重启窗口；确认 <code>CloudHostLogExportFailing</code> 是否转 firing。当前仅 3 条日志丢弃，不宜据此改动入口</td></tr>
+<tr><td><span class="tag warn">P1</span></td><td>落地 vmalert 热加载规避</td><td>在内核缺陷修复前，把 <code>install.sh</code> 末尾的 <code>/-/reload</code> 改成滚动重启或加 kill-syscall 可用性探测，避免规则变更触发重启风暴</td></tr>
+<tr><td><span class="tag info">P2</span></td><td>归档两份 11-07 报告</td><td>在页头标注「历史快照（2026-11-07）」并链接本报告，保留其根因分析价值，避免再被当作现状依据</td></tr>
+<tr><td><span class="tag info">P2</span></td><td>补 host-watchdog 到 node3–node6（如需要）</td><td>目前这几台只有 <code>cloud-hosts.yml</code> 的指标规则；若要求容器级巡检需明确部署，否则把覆盖口径改成实际值</td></tr>
+</table>
+<div class="callout ok">
+  <b class="tt">✅ P0 两项 + 版本管理已执行（2026-11-10 20:47–20:55，详见 ⑪）</b>
+  先备份 <code>watchdog.env</code> 与 <code>incidents.json</code>，只改受管行、保留主机本地 NTFY 凭据，<b>没有 stop / restart 任何服务</b>；
+  用「先改配置、再删事件」的顺序清掉 4 条旧事件，并新增 <code>components/host-watchdog/</code> 把清单、下发、审计、退役流程固化进仓库。
+  两台主机手动巡检均为 <code>OK / sent=0 / incidents 空</code>，ntfy 缓存条数与最新时间未变化。
+  11-10 Mac LaunchAgent「unload 后注册不回来」的教训已写进脚本注释：改配置，别动服务管理器。
+</div>
+
+<!-- ============ ⑩ ============ -->
+<h2 id="s10">⑩ 本轮变更清单</h2>
+<table>
+<tr><th>类型</th><th>对象</th><th>说明</th></tr>
+<tr><td>新增</td><td><code>NTFY-ALERT-REVIEW-2026-11-10.html</code></td><td>本报告（仓库根目录）</td></tr>
+<tr><td>临时</td><td><code>/tmp/ntfy-cache-20261110.db</code>、<code>/tmp/ntfy-before-run.db</code>、<code>/tmp/ntfy-after-run.db</code></td><td>node1 缓存库的只读副本，用于取证与清理前后比对；源库未改动</td></tr>
+<tr><td>已改（20:51–20:52）</td><td>node1 / node2 的 <code>/etc/host-watchdog/watchdog.env</code> 与 <code>/var/lib/host-watchdog/incidents.json</code></td><td>只改受管检查项与事件状态；两份文件均有带时间戳备份，详见 ⑪</td></tr>
+<tr><td>未改</td><td>vmalert 规则 / Alertmanager 路由 / alert-bridge / gatus 配置 / 任何 systemd 单元</td><td>复核与清理全程未触碰</td></tr>
+</table>
+
+<!-- ============ ⑪ ============ -->
+<h2 id="s11">⑪ 清理执行记录（20:47–20:55 CST）</h2>
+
+<div class="callout info">
+  <b class="tt">执行范围（用户已确认）</b>
+  清理 node2 的 gorse 两项、node1 的 <code>redis</code> 与 <code>pangolin:8</code> 僵尸事件；把 watchdog 检查清单纳入仓库版本管理。
+  <code>mcm-site</code> 不在本次授权范围内，保持原样并在仓库清单里标注为待评估。
+</div>
+
+<h3>时间线与证据</h3>
+<table>
+<tr><th>时刻</th><th>动作</th><th>结果 / 证据</th></tr>
+<tr><td>20:49</td><td>新建 <code>components/host-watchdog/</code>（清单 + 三个脚本 + README）</td><td>清单只含检查项定义；NTFY 凭据与 topic 明确列为非受管，不入库</td></tr>
+<tr><td>20:51</td><td><code>verify.sh</code> 清理前基线</td><td>node1：WATCH 含 <code>redis</code> + 僵尸 <code>pangolin:8</code>（停滞 410h）；node2：WATCH 含 <code>gorse-gorse-1</code>、HTTP_CHECKS 含 <code>gorse</code>；其余受管键 OK</td></tr>
+<tr><td>20:51:44 / 45</td><td><code>CONFIRM=yes install.sh node1 node2</code></td><td>备份 <code>watchdog.env.bak-20261110-205144</code>（node1）、<code>…-205145</code>（node2），权限 0o600；只覆盖受管行；<b>未动 systemd</b></td></tr>
+<tr><td>20:52:11 / 13</td><td><code>retire-check.sh</code> 删除 4 条事件</td><td>node2 删 <code>docker:gorse-gorse-1</code>(idx 10)、<code>http:gorse</code>(idx 10)；node1 删 <code>docker:redis</code>(idx 15)、<code>pangolin:8</code>(idx 5)。备份 <code>incidents.json.bak-20261110-205211 / -205213</code>；两机剩余事件 <b>0 条</b></td></tr>
+<tr><td>20:52</td><td><code>verify.sh</code> 清理后审计</td><td>两机全部受管键 OK、无僵尸事件，退出码 0</td></tr>
+<tr><td>20:53</td><td>手动跑一轮 <code>/usr/local/bin/host-watchdog</code></td><td>两机均为 <code>OK — 全部检查项正常</code>、<code>sent=0 failed=0</code>、incidents 空 → 旧事件未重建</td></tr>
+<tr><td>20:53</td><td>ntfy 缓存前后比对</td><td>运行前 / 运行后均为 <b>6 条，最新 19:30:27</b>（<code>redis · node1</code>），完全一致 → 清理后没有再推送旧心跳</td></tr>
+</table>
+
+<h3>版本管理落地</h3>
+<table>
+<tr><th>文件</th><th>职责</th></tr>
+<tr><td><code>hosts/node1.env</code><br><code>hosts/node2.env</code></td><td>按主机的受管检查清单，注释里写明本次退役原因与现役拓扑（gorse = 集群 Dragonfly db0 + CNPG；Redis 已由 Dragonfly 承担）</td></tr>
+<tr><td><code>install.sh</code></td><td>默认 dry-run；<code>CONFIRM=yes</code> 才写盘。只覆盖受管行、保留本地凭据、备份 + 原子替换；不重启服务</td></tr>
+<tr><td><code>verify.sh</code></td><td>只读审计：仓库 ↔ 主机一致性 + 扫描 &gt;24h 无 <code>last_seen</code> 更新的僵尸事件；退出码 1 可挂巡检 / CI</td></tr>
+<tr><td><code>retire-check.sh</code></td><td>安全退役：强制校验待删 key 已不在活跃检查项（否则拒绝，防重建）；<code>fcntl.flock</code> 与 timer 互斥、备份后原子删条目</td></tr>
+<tr><td><code>README.md</code></td><td>受管 / 非受管边界、退役三步顺序、拓扑依据、覆盖范围口径（容器级 WATCH 实际只在 node1 / node2）</td></tr>
+</table>
+
+<div class="callout warn">
+  <b class="tt">边界与残留（诚实说明）</b>
+  <ul>
+    <li><b>手机通知栏里的旧故障不会自动消失。</b><code>notify.py</code> 对退役项刻意不合成恢复通知（缺席不等于健康）。3 条旧告警（gorse×2、redis）需手动清除；本次<b>没有</b>补发伪装成「业务恢复」的通知。</li>
+    <li><b><code>mcm-site</code> 保持原样</b>：容器仍在跑、watchdog 绿灯，但公网站点已退役，属「进程活着但业务 404」盲区。Gatus 侧已用 <code>pyxis-site</code> 覆盖；watchdog 这项要不要一并删，另议。</li>
+    <li><b>覆盖范围未变</b>：容器级 WATCH 仍只在 node1 / node2；node3–6 与 k1 没有容器检查，靠 vmalert <code>cloud-hosts.yml</code> 指标规则兜底。</li>
+    <li>本次没有改 vmalert 规则、Alertmanager 路由、alert-bridge、gatus，也没有重发或静音任何告警。</li>
+  </ul>
+</div>
+
+<div class="foot">
+  复核方法：只读诊断（ssh / kubectl / openssl / VM 查询 / ntfy 缓存库 / ConfigMap 指纹）→ 逐项交叉验证 → 现状重整。
+  关联文档：<code>NTFY-ALERT-RULES-AUDIT-2026-11-07.html</code>（历史）、<code>NTFY-ALERT-RESOLUTION-2026-11-07.html</code>（历史）、
+  <code>UPGRADE-RECORD-2026-11-10.md</code>（11-10 环境变更）。<br>
+  报告生成：WorkBuddy · 2026-11-10 · 基线时间 06:40 CST
+</div>
+
+</div>
+</body>
+</html>
